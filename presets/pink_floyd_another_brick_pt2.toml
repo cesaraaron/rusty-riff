@@ -93,6 +93,7 @@ rate     = 0.22
 depth    = 0.55
 feedback = 0.32
 mix      = 0.42
+type     = 1.0   # Phase 90 (mono, script)
 
 # ── Delay ─────────────────────────────────────────────────────────────────────
 # Tape echo, a few repeats trailing the phrases.

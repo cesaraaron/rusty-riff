@@ -97,8 +97,8 @@ both reproduced so the flag is auditable.
 | `led_zeppelin_stairway_solo` | "cranked small-amp crunch"; site "Echoplex slap" | Plexi + Greenback 4×12; tape-echo field **absent** so the delay resolves to **digital ping-pong** | **Resolved (Phase 5):** rebuilt on the Supro 1×10 combo, TS-808 removed. |
 | `pink_floyd_shine_on_crazy_diamond` | "Big Muff + TS + Uni-Vibe" | Fuzz Face + Power Boost into Hiwatt/WEM (Phase 5) | **Resolved (Phase 5):** fuzz type, TS removed, EQs/Vibe dropped, echo labelled an Echorec stand-in. |
 | `pink_floyd_*` (Echorec) | "Echorec repeat/delay" | dedicated **Binson Echorec** delay mode (`type = 0.5`) since Phase 4 | **Resolved (Phase 4):** the multi-head drum-echo mode replaces the tape stand-in. |
-| `pink_floyd_another_brick_pt2` | "slow Phase 90 sweep" | generic 4-stage stereo phaser | Named hardware is an approximation. |
-| `pink_floyd_comfortably_numb_*` | "Electric Mistress" | generic stereo flanger | Named hardware is an approximation. |
+| `pink_floyd_another_brick_pt2` | "slow Phase 90 sweep" | dedicated **Phase 90** mode (`phaser type = 1.0`, mono + script) since Phase 4 | **Resolved (Phase 4).** |
+| `pink_floyd_comfortably_numb_*` | "Electric Mistress" | dedicated **Electric Mistress** mode (`flanger type = 1.0`, mono + filter matrix) since Phase 4 | **Resolved (Phase 4).** |
 
 ---
 

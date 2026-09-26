@@ -41,6 +41,9 @@ const N_STAGES: usize = 4;
 const F_MIN: f32 = 200.0;
 /// Highest break frequency at full depth (top of the whoosh).
 const F_MAX: f32 = 1600.0;
+/// Phase 90 sweep range — the MXR's wider, more dramatic glide.
+const PHASE90_F_MIN: f32 = 130.0;
+const PHASE90_F_MAX: f32 = 2200.0;
 
 impl Phaser {
     pub fn new(sr: f32) -> Self {
@@ -79,6 +82,11 @@ impl Phaser {
         s
     }
 
+    /// `kind` < 0.5 = the generic stereo phaser; ≥ 0.5 = **Phase 90** (MXR): a
+    /// *mono*, script-style pedal — the two channels collapse to one and the
+    /// regeneration is gone (the classic script Phase 90 has no feedback), with the
+    /// MXR's wider sweep range.
+    #[allow(clippy::too_many_arguments)]
     #[inline]
     pub fn process(
         &mut self,
@@ -88,14 +96,21 @@ impl Phaser {
         depth: f32,
         feedback: f32,
         mix: f32,
+        kind: f32,
     ) -> (f32, f32) {
+        let phase90 = kind >= 0.5;
+
         // LFO advances once per sample; exponential map spreads the slow, musical
         // rates across most of the knob's travel (mirrors the flanger/chorus).
         let rate_hz = 0.05 * 100.0_f32.powf(rate.clamp(0.0, 1.0));
         self.phase = (self.phase + rate_hz / self.sr).fract();
 
-        // Right channel reads the sweep a quarter-cycle ahead for stereo drift.
         let depth = depth.clamp(0.0, 1.0);
+        let (f_min, f_max) = if phase90 {
+            (PHASE90_F_MIN, PHASE90_F_MAX)
+        } else {
+            (F_MIN, F_MAX)
+        };
         let lfo = |ph: f32| 0.5 - 0.5 * (ph.fract() * TAU).cos();
         let coeff = |lfo_val: f32| {
             // Exponential sweep of the all-pass break frequency; depth scales how far
@@ -103,21 +118,41 @@ impl Phaser {
             // has coefficient a = (tan(π·fc/sr) − 1) / (tan(π·fc/sr) + 1); the sign
             // puts the pole near z = +1 for a low `fc`, so the −90° phase point lands
             // at `fc` (not up near Nyquist) and the swept notches fall in-band.
-            let fc = F_MIN * (F_MAX / F_MIN).powf(depth * lfo_val);
+            let fc = f_min * (f_max / f_min).powf(depth * lfo_val);
             let t = (PI * fc / self.sr).tan();
             (t - 1.0) / (t + 1.0)
         };
+
+        // Phase 90 collapses to mono and drops the quarter-cycle stereo offset.
+        let (in_l, in_r) = if phase90 {
+            let m = 0.5 * (l + r);
+            (m, m)
+        } else {
+            (l, r)
+        };
         let a_l = coeff(lfo(self.phase));
-        let a_r = coeff(lfo(self.phase + 0.25));
+        let a_r = if phase90 {
+            a_l
+        } else {
+            coeff(lfo(self.phase + 0.25))
+        };
 
         // Regeneration capped below unity so the resonant loop never runs away
         // (the all-pass chain has unit gain, so feedback ≥ 1 would sustain forever).
-        let fb = feedback.clamp(0.0, 1.0) * 0.9;
-        let wet_l = Self::run_channel(&mut self.z_l, &mut self.fb_l, l, a_l, fb);
-        let wet_r = Self::run_channel(&mut self.z_r, &mut self.fb_r, r, a_r, fb);
+        // The script Phase 90 has none.
+        let fb = if phase90 {
+            0.0
+        } else {
+            feedback.clamp(0.0, 1.0) * 0.9
+        };
+        let wet_l = Self::run_channel(&mut self.z_l, &mut self.fb_l, in_l, a_l, fb);
+        let wet_r = Self::run_channel(&mut self.z_r, &mut self.fb_r, in_r, a_r, fb);
 
         let mix = mix.clamp(0.0, 1.0);
-        (l * (1.0 - mix) + wet_l * mix, r * (1.0 - mix) + wet_r * mix)
+        (
+            in_l * (1.0 - mix) + wet_l * mix,
+            in_r * (1.0 - mix) + wet_r * mix,
+        )
     }
 }
 
@@ -158,7 +193,7 @@ mod tests {
         let mut p = Phaser::new(SR);
         for n in 0..2000 {
             let x = (n as f32 * 0.03).sin();
-            let (l, r) = p.process(x, x * 0.7, 0.4, 0.8, 0.6, 0.0);
+            let (l, r) = p.process(x, x * 0.7, 0.4, 0.8, 0.6, 0.0, 0.0);
             assert!((l - x).abs() < 1e-6 && (r - x * 0.7).abs() < 1e-6);
         }
     }
@@ -171,7 +206,7 @@ mod tests {
         let mut max_abs = 0.0f32;
         for n in 0..(SR as usize) {
             let x = (2.0 * PI * 300.0 * n as f32 / SR).sin() * 0.9;
-            let (l, r) = p.process(x, x, 1.0, 1.0, 1.0, 0.5);
+            let (l, r) = p.process(x, x, 1.0, 1.0, 1.0, 0.5, 0.0);
             assert!(l.is_finite() && r.is_finite(), "non-finite at {n}");
             max_abs = max_abs.max(l.abs()).max(r.abs());
         }
@@ -187,7 +222,7 @@ mod tests {
         let mut p = Phaser::new(SR);
         let peaks = window_peaks(SR as usize * 3, SR as usize, 256, |n| {
             let x = (2.0 * PI * 600.0 * n as f32 / SR).sin();
-            p.process(x, x, 0.6, 1.0, 0.1, 0.5).0
+            p.process(x, x, 0.6, 1.0, 0.1, 0.5, 0.0).0
         });
         let hi = peaks.iter().cloned().fold(0.0f32, f32::max);
         let lo = peaks.iter().cloned().fold(f32::INFINITY, f32::min);
@@ -205,7 +240,7 @@ mod tests {
             let mut p = Phaser::new(SR);
             let peaks = window_peaks(SR as usize * 2, SR as usize, 256, |n| {
                 let x = (2.0 * PI * 600.0 * n as f32 / SR).sin();
-                p.process(x, x, 0.6, depth, 0.4, 0.5).0
+                p.process(x, x, 0.6, depth, 0.4, 0.5, 0.0).0
             });
             let hi = peaks.iter().cloned().fold(0.0f32, f32::max);
             let lo = peaks.iter().cloned().fold(f32::INFINITY, f32::min);
@@ -225,7 +260,7 @@ mod tests {
             let mut p = Phaser::new(SR);
             let peaks = window_peaks(SR as usize * 2, SR as usize / 2, 256, |n| {
                 let x = (2.0 * PI * 600.0 * n as f32 / SR).sin();
-                p.process(x, x, rate, 1.0, 0.5, 0.5).0
+                p.process(x, x, rate, 1.0, 0.5, 0.5, 0.0).0
             });
             let mean = peaks.iter().sum::<f32>() / peaks.len().max(1) as f32;
             peaks
@@ -247,7 +282,7 @@ mod tests {
             let mut p = Phaser::new(SR);
             let peaks = window_peaks(SR as usize * 2, SR as usize, 256, |n| {
                 let x = (2.0 * PI * 500.0 * n as f32 / SR).sin();
-                p.process(x, x, 0.6, 1.0, fb, 0.5).0
+                p.process(x, x, 0.6, 1.0, fb, 0.5, 0.0).0
             });
             let hi = peaks.iter().cloned().fold(0.0f32, f32::max);
             let lo = peaks.iter().cloned().fold(f32::INFINITY, f32::min);
@@ -256,6 +291,43 @@ mod tests {
         assert!(
             envelope_range(0.85) > envelope_range(0.0) * 1.2,
             "feedback does not deepen the resonance"
+        );
+    }
+
+    /// Phase 90 mode is a mono, script-style pedal: it collapses any stereo input
+    /// to one signal, so the two output channels are identical, and it has no
+    /// regeneration — a maxed feedback knob must not destabilise it.
+    #[test]
+    fn phase90_mode_is_mono_and_script() {
+        let mut p = Phaser::new(SR);
+        let mut max_diff = 0.0f32;
+        let mut max_abs = 0.0f32;
+        for n in 0..(SR as usize) {
+            let x = (2.0 * PI * 440.0 * n as f32 / SR).sin();
+            let (l, r) = p.process(x, x * 0.3, 0.5, 1.0, 1.0, 0.5, 1.0);
+            max_diff = max_diff.max((l - r).abs());
+            max_abs = max_abs.max(l.abs());
+        }
+        assert!(max_diff < 1e-6, "phase 90 not mono (L/R diff {max_diff})");
+        assert!(
+            max_abs.is_finite() && max_abs < 4.0,
+            "phase 90 unstable at max feedback: {max_abs}"
+        );
+    }
+
+    /// Phase 90 mode must still sweep (its whole point), and over its own range.
+    #[test]
+    fn phase90_mode_still_sweeps() {
+        let mut p = Phaser::new(SR);
+        let peaks = window_peaks(SR as usize * 3, SR as usize, 256, |n| {
+            let x = (2.0 * PI * 600.0 * n as f32 / SR).sin();
+            p.process(x, x, 0.6, 1.0, 0.0, 0.5, 1.0).0
+        });
+        let hi = peaks.iter().cloned().fold(0.0f32, f32::max);
+        let lo = peaks.iter().cloned().fold(f32::INFINITY, f32::min);
+        assert!(
+            hi - lo > 0.1,
+            "phase 90 output not modulated (env {lo:.3}..{hi:.3})"
         );
     }
 }

@@ -102,6 +102,7 @@ rate     = 0.18
 depth    = 0.42
 feedback = 0.25
 mix      = 0.26
+type     = 1.0   # Electric Mistress (mono)
 
 # ── Delay ─────────────────────────────────────────────────────────────────────
 # A long ~450 ms Echorec repeat blooming behind each phrase — the

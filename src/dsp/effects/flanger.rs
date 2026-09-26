@@ -29,6 +29,9 @@ const MIN_MS: f32 = 0.5;
 const SWEEP_MS: f32 = 4.5;
 /// Buffer headroom above the deepest possible delay (`MIN_MS + SWEEP_MS`).
 const MAX_MS: f32 = 6.0;
+/// Electric Mistress sweep range — a shorter throw than the generic flanger.
+const MISTRESS_MIN_MS: f32 = 0.4;
+const MISTRESS_SWEEP_MS: f32 = 3.0;
 
 impl Flanger {
     pub fn new(sr: f32) -> Self {
@@ -54,6 +57,10 @@ impl Flanger {
         buf[a] * (1.0 - frac) + buf[b] * frac
     }
 
+    /// `kind` < 0.5 = the generic stereo flanger; ≥ 0.5 = **Electric Mistress**
+    /// (EHX): a *mono* pedal with a shorter sweep throw, and its signature
+    /// **Filter Matrix** — with DEPTH at zero the sweep freezes into a static comb.
+    #[allow(clippy::too_many_arguments)]
     #[inline]
     pub fn process(
         &mut self,
@@ -63,17 +70,45 @@ impl Flanger {
         depth: f32,
         feedback: f32,
         mix: f32,
+        kind: f32,
     ) -> (f32, f32) {
+        let mistress = kind >= 0.5;
+
         // LFO advances once per sample; exponential map spreads the slow, musical
         // rates across most of the knob's travel.
         let rate_hz = 0.05 * 100.0_f32.powf(rate.clamp(0.0, 1.0));
         self.phase = (self.phase + rate_hz / self.sr).fract();
 
-        // Right channel reads the sweep a quarter-cycle ahead for stereo drift.
-        let span = MIN_MS + SWEEP_MS * depth.clamp(0.0, 1.0);
-        let lfo = |ph: f32| 0.5 - 0.5 * (ph.fract() * TAU).cos();
-        let del_l = (MIN_MS + span * lfo(self.phase)) * self.sr / 1000.0;
-        let del_r = (MIN_MS + span * lfo(self.phase + 0.25)) * self.sr / 1000.0;
+        let depth = depth.clamp(0.0, 1.0);
+        let (min_ms, sweep_ms) = if mistress {
+            (MISTRESS_MIN_MS, MISTRESS_SWEEP_MS)
+        } else {
+            (MIN_MS, SWEEP_MS)
+        };
+        // Filter Matrix: DEPTH at zero freezes the sweep into a static comb.
+        let frozen = mistress && depth < 0.05;
+        let lfo = |ph: f32| {
+            if frozen {
+                0.5
+            } else {
+                0.5 - 0.5 * (ph.fract() * TAU).cos()
+            }
+        };
+        let span = min_ms + sweep_ms * depth;
+
+        // The Mistress is mono and drops the quarter-cycle stereo offset.
+        let (in_l, in_r) = if mistress {
+            let m = 0.5 * (l + r);
+            (m, m)
+        } else {
+            (l, r)
+        };
+        let del_l = (min_ms + span * lfo(self.phase)) * self.sr / 1000.0;
+        let del_r = if mistress {
+            del_l
+        } else {
+            (min_ms + span * lfo(self.phase + 0.25)) * self.sr / 1000.0
+        };
 
         let wet_l = Self::read(&self.buf_l, self.write, del_l);
         let wet_r = Self::read(&self.buf_r, self.write, del_r);
@@ -81,13 +116,16 @@ impl Flanger {
         // Regeneration feeds the swept tap back in; capped below unity so the comb
         // never runs away.
         let fb = feedback.clamp(0.0, 1.0) * 0.9;
-        self.buf_l[self.write] = l + wet_l * fb;
-        self.buf_r[self.write] = r + wet_r * fb;
+        self.buf_l[self.write] = in_l + wet_l * fb;
+        self.buf_r[self.write] = in_r + wet_r * fb;
         let len = self.buf_l.len();
         self.write = (self.write + 1) % len;
 
         let mix = mix.clamp(0.0, 1.0);
-        (l * (1.0 - mix) + wet_l * mix, r * (1.0 - mix) + wet_r * mix)
+        (
+            in_l * (1.0 - mix) + wet_l * mix,
+            in_r * (1.0 - mix) + wet_r * mix,
+        )
     }
 }
 
@@ -104,7 +142,7 @@ mod tests {
         let mut f = Flanger::new(SR);
         for n in 0..2000 {
             let x = (n as f32 * 0.03).sin();
-            let (l, r) = f.process(x, x * 0.7, 0.4, 0.8, 0.6, 0.0);
+            let (l, r) = f.process(x, x * 0.7, 0.4, 0.8, 0.6, 0.0, 0.0);
             assert!((l - x).abs() < 1e-6 && (r - x * 0.7).abs() < 1e-6);
         }
     }
@@ -117,7 +155,7 @@ mod tests {
         let mut max_abs = 0.0f32;
         for n in 0..(SR as usize) {
             let x = (2.0 * PI * 220.0 * n as f32 / SR).sin() * 0.9;
-            let (l, r) = f.process(x, x, 1.0, 1.0, 1.0, 0.5);
+            let (l, r) = f.process(x, x, 1.0, 1.0, 1.0, 0.5, 0.0);
             assert!(l.is_finite() && r.is_finite(), "non-finite at {n}");
             max_abs = max_abs.max(l.abs()).max(r.abs());
         }
@@ -134,7 +172,7 @@ mod tests {
         // Skip the first sweep so the buffer has filled.
         for n in 0..(SR as usize * 3) {
             let x = (2.0 * PI * 1500.0 * n as f32 / SR).sin();
-            let (l, _r) = f.process(x, x, 0.6, 1.0, 0.5, 0.5);
+            let (l, _r) = f.process(x, x, 0.6, 1.0, 0.5, 0.5, 0.0);
             if n > SR as usize {
                 min_e = min_e.min(l.abs());
                 max_e = max_e.max(l.abs());
@@ -161,7 +199,7 @@ mod tests {
             let mut peak = 0.0f32;
             for n in 0..(SR as usize * 2) {
                 let x = (2.0 * PI * 300.0 * n as f32 / SR).sin();
-                let (l, _r) = f.process(x, x, 0.6, depth, 0.4, 0.5);
+                let (l, _r) = f.process(x, x, 0.6, depth, 0.4, 0.5, 0.0);
                 if n > SR as usize {
                     peak = peak.max(l.abs());
                     if n % 200 == 0 {
@@ -186,10 +224,10 @@ mod tests {
     fn feedback_extends_the_tail() {
         let tail_energy = |fb: f32| {
             let mut f = Flanger::new(SR);
-            f.process(1.0, 1.0, 0.2, 0.5, fb, 1.0);
+            f.process(1.0, 1.0, 0.2, 0.5, fb, 1.0, 0.0);
             let mut e = 0.0f64;
             for n in 1..4000 {
-                let (l, _r) = f.process(0.0, 0.0, 0.2, 0.5, fb, 1.0);
+                let (l, _r) = f.process(0.0, 0.0, 0.2, 0.5, fb, 1.0, 0.0);
                 if n > 500 {
                     e += (l * l) as f64;
                 }
@@ -199,6 +237,55 @@ mod tests {
         assert!(
             tail_energy(0.85) > tail_energy(0.0) * 2.0,
             "feedback does not lengthen the tail"
+        );
+    }
+
+    /// Electric Mistress mode is mono: any stereo input collapses to one signal, so
+    /// the two output channels are identical.
+    #[test]
+    fn mistress_mode_is_mono() {
+        let mut f = Flanger::new(SR);
+        let mut max_diff = 0.0f32;
+        for n in 0..(SR as usize) {
+            let x = (2.0 * PI * 700.0 * n as f32 / SR).sin();
+            let (l, r) = f.process(x, x * 0.3, 0.5, 0.6, 0.4, 0.5, 1.0);
+            max_diff = max_diff.max((l - r).abs());
+        }
+        assert!(max_diff < 1e-6, "mistress not mono (L/R diff {max_diff})");
+    }
+
+    /// The Electric Mistress **Filter Matrix**: with DEPTH at zero the sweep freezes,
+    /// so a steady tone's envelope stops moving (a static comb, not a sweep).
+    #[test]
+    fn mistress_filter_matrix_freezes_the_sweep() {
+        let envelope_range = |depth: f32| {
+            let mut f = Flanger::new(SR);
+            let mut window_peaks = Vec::new();
+            let mut peak = 0.0f32;
+            for n in 0..(SR as usize * 3) {
+                let x = (2.0 * PI * 300.0 * n as f32 / SR).sin();
+                let (l, _r) = f.process(x, x, 0.6, depth, 0.3, 0.5, 1.0);
+                if n > SR as usize {
+                    peak = peak.max(l.abs());
+                    if n % 200 == 0 {
+                        window_peaks.push(peak);
+                        peak = 0.0;
+                    }
+                }
+            }
+            let hi = window_peaks.iter().cloned().fold(0.0f32, f32::max);
+            let lo = window_peaks.iter().cloned().fold(f32::INFINITY, f32::min);
+            hi - lo
+        };
+        assert!(
+            envelope_range(0.0) < 0.02,
+            "filter matrix still sweeps: {}",
+            envelope_range(0.0)
+        );
+        assert!(
+            envelope_range(1.0) > 0.1,
+            "mistress sweep dead at full depth: {}",
+            envelope_range(1.0)
         );
     }
 }

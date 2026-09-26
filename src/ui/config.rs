@@ -81,11 +81,11 @@ pub(super) const GEQ_END: usize = GEQ_START + 8;
 pub(super) const EQ_START: usize = GEQ_END;
 pub(super) const EQ_END: usize = EQ_START + 3;
 pub(super) const FL_START: usize = EQ_END;
-pub(super) const FL_END: usize = FL_START + 4;
+pub(super) const FL_END: usize = FL_START + 5;
 pub(super) const CH_START: usize = FL_END;
 pub(super) const CH_END: usize = CH_START + 3;
 pub(super) const PH_START: usize = CH_END;
-pub(super) const PH_END: usize = PH_START + 4;
+pub(super) const PH_END: usize = PH_START + 5;
 pub(super) const TREM_START: usize = PH_END;
 pub(super) const TREM_END: usize = TREM_START + 4;
 pub(super) const DELAY_START: usize = TREM_END;
@@ -359,7 +359,11 @@ pub(super) const KNOBS: &[Knob] = &[
         label: "MIX",
         param: |p| &p.fl_mix,
     },
-    // 57–59: Chorus
+    Knob {
+        label: "TYPE",
+        param: |p| &p.fl_type,
+    },
+    // Chorus
     Knob {
         label: "RATE",
         param: |p| &p.ch_rate,
@@ -389,7 +393,11 @@ pub(super) const KNOBS: &[Knob] = &[
         label: "MIX",
         param: |p| &p.ph_mix,
     },
-    // 64–67: Tremolo / Vibrato
+    Knob {
+        label: "TYPE",
+        param: |p| &p.ph_type,
+    },
+    // Tremolo / Vibrato
     Knob {
         label: "RATE",
         param: |p| &p.trem_rate,
@@ -739,7 +747,7 @@ mod tests {
         // Deliberate tripwire: bump these when you add or remove a pedal/knob so
         // the change is a conscious, reviewed edit rather than an accident.
         assert_eq!(PEDALS.len(), 19, "pedal count changed");
-        assert_eq!(KNOBS.len(), 79, "knob count changed");
+        assert_eq!(KNOBS.len(), 81, "knob count changed");
     }
 
     #[test]

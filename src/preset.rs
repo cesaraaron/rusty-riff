@@ -256,6 +256,13 @@ pub struct FlangerSection {
     pub depth: f32,
     pub feedback: f32,
     pub mix: f32,
+    /// 0 = generic stereo flanger, 1 = Electric Mistress.
+    #[serde(default = "flanger_type_default")]
+    pub r#type: f32,
+}
+
+fn flanger_type_default() -> f32 {
+    0.0
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -273,6 +280,13 @@ pub struct PhaserSection {
     pub depth: f32,
     pub feedback: f32,
     pub mix: f32,
+    /// 0 = generic stereo phaser, 1 = Phase 90.
+    #[serde(default = "phaser_type_default")]
+    pub r#type: f32,
+}
+
+fn phaser_type_default() -> f32 {
+    0.0
 }
 
 /// Tremolo / Vibrato: one LFO, blended between amplitude (tremolo) and pitch
@@ -528,6 +542,7 @@ impl Preset {
                 depth: params.fl_depth.load(Relaxed),
                 feedback: params.fl_feedback.load(Relaxed),
                 mix: params.fl_mix.load(Relaxed),
+                r#type: params.fl_type.load(Relaxed),
             }),
             chorus: Some(ChorusSection {
                 enabled: Some(params.ch_enabled.load(Relaxed)),
@@ -541,6 +556,7 @@ impl Preset {
                 depth: params.ph_depth.load(Relaxed),
                 feedback: params.ph_feedback.load(Relaxed),
                 mix: params.ph_mix.load(Relaxed),
+                r#type: params.ph_type.load(Relaxed),
             }),
             tremolo: Some(TremoloSection {
                 enabled: Some(params.trem_enabled.load(Relaxed)),
@@ -799,6 +815,7 @@ impl Preset {
                 .fl_feedback
                 .store(fl.feedback.clamp(0.0, 1.0), Relaxed);
             params.fl_mix.store(fl.mix.clamp(0.0, 1.0), Relaxed);
+            params.fl_type.store(fl.r#type.clamp(0.0, 1.0), Relaxed);
         } else {
             params.fl_enabled.store(false, Relaxed);
         }
@@ -820,6 +837,7 @@ impl Preset {
                 .ph_feedback
                 .store(ph.feedback.clamp(0.0, 1.0), Relaxed);
             params.ph_mix.store(ph.mix.clamp(0.0, 1.0), Relaxed);
+            params.ph_type.store(ph.r#type.clamp(0.0, 1.0), Relaxed);
         } else {
             params.ph_enabled.store(false, Relaxed);
         }
@@ -1153,9 +1171,9 @@ mod tests {
             geq_level
         );
         knobs!(eq_enabled, eq_low, eq_mid, eq_high);
-        knobs!(fl_enabled, fl_rate, fl_depth, fl_feedback, fl_mix);
+        knobs!(fl_enabled, fl_rate, fl_depth, fl_feedback, fl_mix, fl_type);
         knobs!(ch_enabled, ch_rate, ch_depth, ch_mix);
-        knobs!(ph_enabled, ph_rate, ph_depth, ph_feedback, ph_mix);
+        knobs!(ph_enabled, ph_rate, ph_depth, ph_feedback, ph_mix, ph_type);
         knobs!(trem_enabled, trem_rate, trem_depth, trem_shape, trem_mode);
         knobs!(
             delay_enabled,

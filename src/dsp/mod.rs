@@ -606,6 +606,8 @@ const DEFAULT_DELAY_FEEDBACK: f32 = 0.40;
 const DEFAULT_DELAY_MIX: f32 = 0.30;
 // 0 = digital ping-pong, 1 = tape (Echoplex-style).
 const DEFAULT_DELAY_TYPE: f32 = 0.0;
+const DEFAULT_FL_TYPE: f32 = 0.0;
+const DEFAULT_PH_TYPE: f32 = 0.0;
 
 const DEFAULT_FL_ENABLED: bool = false;
 const DEFAULT_FL_RATE: f32 = 0.30;
@@ -778,6 +780,7 @@ pub struct Params {
     pub fl_depth: Arc<AtomicF32>,
     pub fl_feedback: Arc<AtomicF32>,
     pub fl_mix: Arc<AtomicF32>,
+    pub fl_type: Arc<AtomicF32>,
 
     // Chorus (stereo rack, post-cab modulation, after the flanger)
     pub ch_enabled: Arc<AtomicBool>,
@@ -791,6 +794,7 @@ pub struct Params {
     pub ph_depth: Arc<AtomicF32>,
     pub ph_feedback: Arc<AtomicF32>,
     pub ph_mix: Arc<AtomicF32>,
+    pub ph_type: Arc<AtomicF32>,
 
     // Tremolo / Vibrato (stereo rack, post-cab modulation, after the phaser)
     pub trem_enabled: Arc<AtomicBool>,
@@ -962,6 +966,7 @@ impl Params {
             fl_depth: p!(DEFAULT_FL_DEPTH),
             fl_feedback: p!(DEFAULT_FL_FEEDBACK),
             fl_mix: p!(DEFAULT_FL_MIX),
+            fl_type: p!(DEFAULT_FL_TYPE),
 
             ch_enabled: b!(DEFAULT_CH_ENABLED),
             ch_rate: p!(DEFAULT_CH_RATE),
@@ -973,6 +978,7 @@ impl Params {
             ph_depth: p!(DEFAULT_PH_DEPTH),
             ph_feedback: p!(DEFAULT_PH_FEEDBACK),
             ph_mix: p!(DEFAULT_PH_MIX),
+            ph_type: p!(DEFAULT_PH_TYPE),
 
             trem_enabled: b!(DEFAULT_TREM_ENABLED),
             trem_rate: p!(DEFAULT_TREM_RATE),
@@ -1101,6 +1107,7 @@ impl Params {
         self.fl_depth.store(DEFAULT_FL_DEPTH, Relaxed);
         self.fl_feedback.store(DEFAULT_FL_FEEDBACK, Relaxed);
         self.fl_mix.store(DEFAULT_FL_MIX, Relaxed);
+        self.fl_type.store(DEFAULT_FL_TYPE, Relaxed);
 
         self.ch_enabled.store(DEFAULT_CH_ENABLED, Relaxed);
         self.ch_rate.store(DEFAULT_CH_RATE, Relaxed);
@@ -1112,6 +1119,7 @@ impl Params {
         self.ph_depth.store(DEFAULT_PH_DEPTH, Relaxed);
         self.ph_feedback.store(DEFAULT_PH_FEEDBACK, Relaxed);
         self.ph_mix.store(DEFAULT_PH_MIX, Relaxed);
+        self.ph_type.store(DEFAULT_PH_TYPE, Relaxed);
 
         self.trem_enabled.store(DEFAULT_TREM_ENABLED, Relaxed);
         self.trem_rate.store(DEFAULT_TREM_RATE, Relaxed);
@@ -1681,7 +1689,8 @@ impl DspChain {
                 fl_rate,
                 fl_depth,
                 fl_feedback,
-                fl_mix
+                fl_mix,
+                fl_type
             ),
             ChainStage::Chorus => {
                 stereo_stage!(self, p, l, r, ch_enabled, chorus, ch_rate, ch_depth, ch_mix)
@@ -1696,7 +1705,8 @@ impl DspChain {
                 ph_rate,
                 ph_depth,
                 ph_feedback,
-                ph_mix
+                ph_mix,
+                ph_type
             ),
             ChainStage::Trem => stereo_stage!(
                 self,
