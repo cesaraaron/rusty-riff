@@ -89,7 +89,8 @@ External impulse responses (IRs) for cabinet simulation are stored in `~/.config
 The user-facing guide is the in-app help overlay (`K`) plus the README. The
 design/as-built notes live at the repository root (`fidelity-plan.md`,
 `fidelity-implement.md`, `timeline-sessions-plan.md`,
-`timeline-sessions-implement.md`). There is no separate docs website.
+`timeline-sessions-implement.md`), and the off-path product/engineering roadmap
+is `roadmap-next.md`. There is no separate docs website.
 
 ---
 
