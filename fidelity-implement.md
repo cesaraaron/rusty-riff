@@ -22,16 +22,17 @@ before reviewing or continuing. (This file was formerly
 | Phase 1 — bypass transparency, order snapshot, route tests, studio-master width | **Done** (see review: the order snapshot needs A1) | below |
 | Phase 2 items 1–4 — Amp/Cab split, migration, UI | **Done** | below |
 | Phase 2 item 5 — real preamp/loop/power-amp split | Not started | plan Phase 2.5 |
-| Phase 0 — reference matrix | **Scaffold only**: no sources logged | `docs/fidelity-references.md` |
+| Phase 0 — reference matrix | **Done** (evidence-as-available) | `docs/fidelity-references.md` |
 | Phase 0 — offline harness, CPU/latency capture | **Done** (B1, B2) | plan "Next increments" |
 | Workstream A — routing hardening (review findings) | **Done** (A1–A5) | increment log |
 | Workstream B — input calibration + harness | **Done** (B1–B8) | increment log |
-| Phases 3–5 — amp/cab fidelity, named pedals, preset rebuild | Not started | plan Phases 3–5 |
+| Phase 3 — amp/cab fidelity | **Plexi rectifier + Hiwatt/Twin audit done**; measured-IR match **blocked** (no re-amp/mic captures) | plan Phase 3 |
+| Phase 4 — named pedal/echo/reverb behavior | **Partial**: spring tank, Clean Boost, Supro 1×10 + Tweed 1×12 cabs done; fuzz-family split, TS doc/code reconciliation, Binson Echorec, manual-wah expression remain | plan Phase 4 |
+| Phase 5 — rebuild the bundled presets | **All 4 batches done** (17 presets audited/rebuilt; **pending maintainer listening**) | increment log |
 
-The work below changed routing, topology, and documentation only. **No voicing
-has changed yet**, so none of the bundled Pink Floyd / Eagles / Led Zeppelin
-presets is closer to the records than before this roadmap started. That is
-expected: the plan requires references and a measurement harness first.
+The Workstream A/B work below changed routing, topology, and documentation only.
+Later commits (Phase 3–5 in the increment log) do change voicing; each logs its
+before/after evidence.
 
 Fidelity phases (0, 3, 4, 5) — see
 [Open gaps](#open-gaps-for-a-following-agent) for the references and decisions
