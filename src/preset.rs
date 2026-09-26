@@ -1008,10 +1008,8 @@ mod tests {
     /// Known anachronisms accepted for now — fixed by the Phase 5 rebuild. An
     /// enabled device outside this list whose debut postdates the preset's `year`
     /// fails the test, so a new anachronism cannot slip in unnoticed.
-    const KNOWN_ANACHRONISMS: &[(&str, &str)] = &[
-        ("pink_floyd_shine_on_crazy_diamond", "tube_screamer"),
-        ("eagles_hotel_california_solo", "tube_screamer"),
-    ];
+    const KNOWN_ANACHRONISMS: &[(&str, &str)] =
+        &[("eagles_hotel_california_solo", "tube_screamer")];
 
     /// A bundled preset must not enable a device that did not exist when the tone
     /// was recorded, except for the documented known cases above.

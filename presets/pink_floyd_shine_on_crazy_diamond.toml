@@ -1,5 +1,5 @@
 name        = "Pink Floyd — Shine On You Crazy Diamond"
-description = "Inspired by the 'Shine On You Crazy Diamond' lead (Wish You Were Here, 1975): a Big Muff-style fuzz into a Hiwatt and Fane 4×12, with a Uni-Vibe swirl and a long tape echo. Singing, wide and mournful. Not a verified session rig."
+description = "Inspired by the 'Shine On You Crazy Diamond' lead (Wish You Were Here, 1975): a Fuzz Face into a Hiwatt and Fane 4×12, pushed by a Power-Boost-style clean boost, with a long tape echo standing in for the Binson Echorec. Not a verified session rig."
 year        = 1975
 
 # ── Noise Gate ────────────────────────────────────────────────────────────────
@@ -9,57 +9,44 @@ enabled   = true
 threshold = 0.10
 release   = 0.50
 
+# ── Compressor ────────────────────────────────────────────────────────────────
+# A light studio squeeze so the sustained bends stay even.
 [compressor]
 enabled = true
-sustain = 0.34
+sustain = 0.30
 attack  = 0.40
 level   = 0.52
 
-# ── Big Muff ──────────────────────────────────────────────────────────────────
-# type 0.0 = the scooped, wall-of-sound Ram's-Head Muff that carries the lead.
+# ── Fuzz ──────────────────────────────────────────────────────────────────────
+# A Fuzz Face — Gilmour's fuzz through 1975 (the Big Muff arrives ~1977).
 [fuzz]
 enabled = true
-type    = 0.0   # 0 = Big Muff, 0.5 = Fuzz Face, 1 = Tone Bender
+type    = 0.5   # 0 = Big Muff, 0.5 = Fuzz Face, 1 = Tone Bender
 fuzz    = 0.66
 tone    = 0.54
 level   = 0.58
 
-# ── Tube Screamer ─────────────────────────────────────────────────────────────
-# A touch of mid push after the Muff to keep the lead vocal.
+# TS off — the Tube Screamer is a 1979 pedal; the Shine On lead predates it.
 [tube_screamer]
-enabled = true
+enabled = false
 drive = 0.16
 tone  = 0.56
 level = 0.66
 
-[distortion]
-enabled = false
-drive = 0.40
-tone  = 0.50
-level = 0.65
-
-# ── Pre-amp EQ ────────────────────────────────────────────────────────────────
-# Mids lifted to restore what the Muff scoops out.
-[preamp_eq]
+# ── Clean boost ───────────────────────────────────────────────────────────────
+# Colorsound Power Boost, used heavily on Wish You Were Here — hits the Hiwatt's
+# front end for the singing sustain without adding a pedal's own clipping.
+[boost]
 enabled = true
-low  = 0.42
-mid  = 0.62
-high = 0.56
-
-# ── Uni-Vibe ──────────────────────────────────────────────────────────────────
-# The slow, deep swirl under the lead — chorus mode, fairly wet.
-[uni_vibe]
-enabled = true
-rate    = 0.22
-depth   = 0.55
-mix     = 0.50
-mode    = 0.0
+gain    = 0.50
+treble  = 0.50
+bass    = 0.50
 
 # ── Amp ───────────────────────────────────────────────────────────────────────
-# Hiwatt DR103, clean and tight, letting the Muff and Uni-Vibe define the voice.
+# Hiwatt DR103, clean and tight, letting the Fuzz Face and boost carry the voice.
 [amp]
 model  = "hiwatt"
-gain   = 0.44
+gain   = 0.50
 bass   = 0.42
 treble = 0.60
 mid    = 0.58
@@ -74,36 +61,9 @@ mic_pos   = 0.54
 mic_blend = 0.22
 mic_room  = 0.24
 
-# ── Parametric EQ ─────────────────────────────────────────────────────────────
-# Mid-forward finish, lows in check.
-[eq]
-enabled = true
-low  = 0.42
-mid  = 0.58
-high = 0.58
-
-[chorus]
-enabled = false
-rate  = 0.22
-depth = 0.40
-mix   = 0.0
-
-[flanger]
-enabled  = false
-rate     = 0.20
-depth    = 0.30
-feedback = 0.20
-mix      = 0.0
-
-[phaser]
-enabled  = false
-rate     = 0.28
-depth    = 0.50
-feedback = 0.30
-mix      = 0.0
-
 # ── Delay ─────────────────────────────────────────────────────────────────────
-# A long Echorec-style tape echo — the repeats that bloom behind the lead.
+# A long tape echo — the closest stand-in for the Binson Echorec (the main echo
+# until ~1977; no Echorec model yet).
 [delay]
 enabled  = true
 type     = 1.0

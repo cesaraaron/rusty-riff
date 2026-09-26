@@ -1186,94 +1186,94 @@ db = -19.241951
 
 [[render]]
 preset = "pink_floyd_shine_on_crazy_diamond"
-lufs_i = -12.3362875
-crest_db = 15.718948
-correlation = 0.79925483
-centroid_hz = 2982.2322
+lufs_i = -11.893393
+crest_db = 15.486324
+correlation = 0.83765185
+centroid_hz = 2428.843
 
 [[render.ltas]]
 hz = 70.0
-db = 5.2111206
+db = 10.619362
 
 [[render.ltas]]
 hz = 88.19447
-db = -1.895607
+db = 12.838619
 
 [[render.ltas]]
 hz = 111.11807
-db = -0.85059357
+db = 12.356026
 
 [[render.ltas]]
 hz = 140.0
-db = 4.831726
+db = 15.156132
 
 [[render.ltas]]
 hz = 176.38895
-db = 0.39984894
+db = 9.001816
 
 [[render.ltas]]
 hz = 222.23615
-db = 16.956593
+db = 11.256775
 
 [[render.ltas]]
 hz = 280.0
-db = 7.2578964
+db = -3.3566093
 
 [[render.ltas]]
 hz = 352.7779
-db = -4.4249344
+db = -3.6680717
 
 [[render.ltas]]
 hz = 444.4723
-db = 4.188484
+db = 2.373684
 
 [[render.ltas]]
 hz = 560.0
-db = -2.5890503
+db = -6.6326714
 
 [[render.ltas]]
 hz = 705.5558
-db = 5.276127
+db = 6.963829
 
 [[render.ltas]]
 hz = 888.9446
-db = 0.32826996
+db = -0.35118484
 
 [[render.ltas]]
 hz = 1120.0
-db = 3.2088432
+db = -1.0771751
 
 [[render.ltas]]
 hz = 1411.1116
-db = -6.8922424
+db = -5.7045784
 
 [[render.ltas]]
 hz = 1777.8892
-db = -5.1991043
+db = -6.6984215
 
 [[render.ltas]]
 hz = 2240.0
-db = -4.259201
+db = -7.9915047
 
 [[render.ltas]]
 hz = 2822.2231
-db = 3.757965
+db = 0.34243393
 
 [[render.ltas]]
 hz = 3555.7783
-db = -2.7495651
+db = -5.070118
 
 [[render.ltas]]
 hz = 4480.0
-db = 7.5985947
+db = 1.1260452
 
 [[render.ltas]]
 hz = 5644.4463
-db = -8.492142
+db = -17.126652
 
 [[render.ltas]]
 hz = 7111.5566
-db = -21.66304
+db = -24.357716
 
 [[render]]
 preset = "pink_floyd_time_chorus"
