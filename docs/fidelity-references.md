@@ -47,10 +47,11 @@ before any tone, amp, cabinet, or preset changes. It has two jobs:
 
 ## Echo mapping (from `src/dsp/effects/delay.rs`)
 
-`[delay] type`: `0.0` = digital stereo ping-pong, `1.0` = EP-3-style tape echo
-(single-time, mono-on-channel, wow/flutter). There is **no** Binson Echorec
-model; a "Echorec" description currently selects the tape approximation. The
-`time` knob maps `0..1` to `0..500 ms`.
+`[delay] type`: `0.0` = digital stereo ping-pong, `0.5` = **Binson Echorec**
+(multi-head drum echo: a cluster of unevenly spaced repeats per pass, band-limited
+and mono-on-channel), `1.0` = EP-3-style tape echo (single-time, mono-on-channel,
+wow/flutter). The `time` knob maps `0..1` to `0..500 ms` and, in Echorec mode, sets
+the drum period (the furthest head).
 
 ---
 
@@ -95,7 +96,7 @@ both reproduced so the flag is auditable.
 | `acdc_highway_to_hell` | "no pedals in the way" | pre-EQ + parametric EQ + reverb (+ gate) | **Resolved (Phase 5):** same as above. |
 | `led_zeppelin_stairway_solo` | "cranked small-amp crunch"; site "Echoplex slap" | Plexi + Greenback 4×12; tape-echo field **absent** so the delay resolves to **digital ping-pong** | **Resolved (Phase 5):** rebuilt on the Supro 1×10 combo, TS-808 removed. |
 | `pink_floyd_shine_on_crazy_diamond` | "Big Muff + TS + Uni-Vibe" | Fuzz Face + Power Boost into Hiwatt/WEM (Phase 5) | **Resolved (Phase 5):** fuzz type, TS removed, EQs/Vibe dropped, echo labelled an Echorec stand-in. |
-| `pink_floyd_*` (Echorec) | "Echorec repeat/delay" | generic EP-3-style **tape** delay, no Binson model | Named hardware is an approximation. |
+| `pink_floyd_*` (Echorec) | "Echorec repeat/delay" | dedicated **Binson Echorec** delay mode (`type = 0.5`) since Phase 4 | **Resolved (Phase 4):** the multi-head drum-echo mode replaces the tape stand-in. |
 | `pink_floyd_another_brick_pt2` | "slow Phase 90 sweep" | generic 4-stage stereo phaser | Named hardware is an approximation. |
 | `pink_floyd_comfortably_numb_*` | "Electric Mistress" | generic stereo flanger | Named hardware is an approximation. |
 
@@ -189,7 +190,8 @@ both reproduced so the flag is auditable.
   <https://www.gilmourish.com/?page_id=7748>
 - **Contradiction:** many Floyd leads are double-tracked and carry studio
   EQ/compression; the two-EQ stack in the presets may be compensating. The DSP
-  has no Echorec (the tape mode approximates). (Phase 5)
+  now has a dedicated Echorec drum-echo mode (Phase 4); double-tracking and
+  studio EQ remain outside a single preset.
 
 ### `guns_n_roses_november_rain_solo.toml`
 

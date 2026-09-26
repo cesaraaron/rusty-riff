@@ -24,6 +24,11 @@ pub struct Delay {
     flutter_phase: f32,
     damp_l: Biquad,
     damp_r: Biquad,
+    // Echorec drum band-limiting (high-cut + low-cut), per channel.
+    ec_lp_l: Biquad,
+    ec_lp_r: Biquad,
+    ec_hp_l: Biquad,
+    ec_hp_r: Biquad,
 }
 
 /// Tape speed modulation: a slow wow plus a faster flutter, as fractions of the
@@ -38,6 +43,20 @@ const TAPE_DAMP_HZ: f32 = 3200.0;
 /// Tape saturation: gentle, so repeated echoes thicken rather than distort.
 const TAPE_SAT: f32 = 0.8;
 
+/// Echorec multi-head taps: `(fractional position within the drum period, weight)`.
+/// The Binson's playback heads sit at fixed points on the drum, so one pass yields
+/// a *cluster* of unevenly spaced repeats rather than a single echo. The drum
+/// period is the base delay (`time`), and the cluster recirculates through the
+/// first head.
+const ECHOREC_HEADS: [(f32, f32); 3] = [(0.30, 0.55), (0.58, 0.80), (1.00, 1.0)];
+/// Echorec band limitation: the drum/head gap loss high-cuts, and the tube
+/// record/replay electronics low-cut, so repeats are dark and slightly thin.
+const ECHOREC_LP_HZ: f32 = 2400.0;
+const ECHOREC_HP_HZ: f32 = 90.0;
+/// Echorec feedback ceiling (fraction of the knob), below tape's so the cluster
+/// doesn't build up.
+const ECHOREC_FB: f32 = 0.72;
+
 impl Delay {
     pub fn new(sr: f32) -> Self {
         let max_samples = (sr * 0.5) as usize + 1; // 500 ms max
@@ -50,10 +69,15 @@ impl Delay {
             flutter_phase: 0.0,
             damp_l: Biquad::lowpass(sr, TAPE_DAMP_HZ, 0.707),
             damp_r: Biquad::lowpass(sr, TAPE_DAMP_HZ, 0.707),
+            ec_lp_l: Biquad::lowpass(sr, ECHOREC_LP_HZ, 0.707),
+            ec_lp_r: Biquad::lowpass(sr, ECHOREC_LP_HZ, 0.707),
+            ec_hp_l: Biquad::highpass(sr, ECHOREC_HP_HZ, 0.707),
+            ec_hp_r: Biquad::highpass(sr, ECHOREC_HP_HZ, 0.707),
         }
     }
 
-    /// `time`, `feedback`, `mix` 0–1; `kind` 0 = digital ping-pong, 1 = tape.
+    /// `time`, `feedback`, `mix` 0–1; `kind` 0 = digital ping-pong, 0.5 = Echorec
+    /// drum echo, 1 = tape. The thresholds keep `0.0`/`1.0` exactly as before.
     #[inline]
     pub fn process(
         &mut self,
@@ -64,27 +88,46 @@ impl Delay {
         mix: f32,
         kind: f32,
     ) -> (f32, f32) {
-        let tape = kind >= 0.5;
+        let echorec = kind > 0.25 && kind < 0.75;
+        let tape = kind >= 0.75;
         let len = self.buf_l.len();
         let base = time * self.sr * 0.5;
 
-        // Tape wow + flutter modulate the read position; digital is rock steady.
-        let delay = if tape {
+        // Wow + flutter modulate the read position for the moving-media modes;
+        // digital is rock steady.
+        let wobble = if tape || echorec {
             self.wow_phase = (self.wow_phase + WOW_HZ / self.sr).fract();
             self.flutter_phase = (self.flutter_phase + FLUTTER_HZ / self.sr).fract();
             let wow = (TAU * self.wow_phase).sin() * WOW_DEPTH;
             let flutter = (TAU * self.flutter_phase).sin() * FLUTTER_DEPTH;
-            base * (1.0 + wow + flutter)
+            1.0 + wow + flutter
         } else {
-            base
+            1.0
         };
-        let d = delay.clamp(1.0, (len - 2) as f32);
-        let i0 = d.floor() as usize;
-        let frac = d - i0 as f32;
-        let r0 = (self.write + len - i0) % len;
-        let r1 = (self.write + len - i0 - 1) % len;
-        let delayed_l = self.buf_l[r0] * (1.0 - frac) + self.buf_l[r1] * frac;
-        let delayed_r = self.buf_r[r0] * (1.0 - frac) + self.buf_r[r1] * frac;
+
+        if echorec {
+            // Sum the fixed head taps into one cluster, normalised so the total
+            // weight keeps the wet level comparable to the other modes.
+            let p = (base * wobble).clamp(1.0, (len - 2) as f32);
+            let (mut wl, mut wr) = (0.0f32, 0.0f32);
+            for &(frac, w) in &ECHOREC_HEADS {
+                wl += w * read_tap(&self.buf_l, self.write, len, p * frac);
+                wr += w * read_tap(&self.buf_r, self.write, len, p * frac);
+            }
+            let norm = 1.0 / ECHOREC_HEADS.iter().map(|&(_, w)| w).sum::<f32>();
+            let wl = tape_sat(self.ec_hp_l.process(self.ec_lp_l.process(wl * norm)));
+            let wr = tape_sat(self.ec_hp_r.process(self.ec_lp_r.process(wr * norm)));
+            self.buf_l[self.write] = l + wl * feedback * ECHOREC_FB;
+            self.buf_r[self.write] = r + wr * feedback * ECHOREC_FB;
+            self.write = (self.write + 1) % len;
+            let out_l = l * (1.0 - mix) + wl * mix;
+            let out_r = r * (1.0 - mix) + wr * mix;
+            return (out_l, out_r);
+        }
+
+        let delay = base * wobble;
+        let delayed_l = read_tap(&self.buf_l, self.write, len, delay);
+        let delayed_r = read_tap(&self.buf_r, self.write, len, delay);
 
         if tape {
             let fb = feedback * 0.7;
@@ -106,6 +149,18 @@ impl Delay {
     }
 }
 
+/// Fractional read of `buf` at `delay` samples behind `write` (linear
+/// interpolation), clamped so it never reads the future or wraps past the buffer.
+#[inline]
+fn read_tap(buf: &[f32], write: usize, len: usize, delay: f32) -> f32 {
+    let d = delay.clamp(1.0, (len - 2) as f32);
+    let i0 = d.floor() as usize;
+    let frac = d - i0 as f32;
+    let r0 = (write + len - i0) % len;
+    let r1 = (write + len - i0 - 1) % len;
+    buf[r0] * (1.0 - frac) + buf[r1] * frac
+}
+
 /// Soft tape saturation on the feedback path — thickens the repeats and tames
 /// the runaway without an audible fuzz.
 #[inline]
@@ -117,10 +172,10 @@ fn tape_sat(x: f32) -> f32 {
 mod tests {
     use super::*;
 
-    /// `mix = 0` must pass the dry signal through unchanged, in both voicings.
+    /// `mix = 0` must pass the dry signal through unchanged, in every voicing.
     #[test]
     fn fully_dry_is_passthrough() {
-        for kind in [0.0f32, 1.0] {
+        for kind in [0.0f32, 0.5, 1.0] {
             let mut d = Delay::new(48_000.0);
             for n in 0..1000 {
                 let x = (n as f32 * 0.02).sin();
@@ -197,6 +252,67 @@ mod tests {
         assert!(
             right_energy < left_energy * 0.05,
             "tape should not ping-pong: right {right_energy:.4} vs left {left_energy:.4}"
+        );
+    }
+
+    /// The Echorec sums several fixed playback heads, so one impulse yields a
+    /// *cluster* of unevenly spaced repeats — not the single echo of tape/digital.
+    #[test]
+    fn echorec_produces_a_multi_head_cluster() {
+        let sr = 48_000.0;
+        let mut d = Delay::new(sr);
+        let time = 0.2;
+        let base = time * sr * 0.5; // 4800 samples
+        // Impulse, fully wet, no feedback — isolates the single-pass head cluster.
+        d.process(1.0, 1.0, time, 0.0, 1.0, 0.5);
+        let n = (base * 1.2) as usize;
+        let mut out = Vec::with_capacity(n);
+        for _ in 0..n {
+            let (l, _r) = d.process(0.0, 0.0, time, 0.0, 1.0, 0.5);
+            out.push(l.abs());
+        }
+        let peak_near = |center: f32| {
+            let c = center as usize;
+            let lo = c.saturating_sub(48);
+            let hi = (c + 48).min(out.len());
+            out[lo..hi].iter().cloned().fold(0.0f32, f32::max)
+        };
+        let head = |frac: f32| peak_near(frac * base);
+        let (p1, p2, p3) = (head(0.30), head(0.58), head(1.00));
+        assert!(
+            p1 > 0.02 && p2 > 0.02 && p3 > 0.02,
+            "missing head echoes: {p1:.3} {p2:.3} {p3:.3}"
+        );
+        // The gaps between heads must be clearly quieter than the heads themselves:
+        // a genuine cluster, not a smear.
+        let gap = head(0.44).max(head(0.79));
+        assert!(
+            gap < p1 * 0.7,
+            "heads not distinct: gap {gap:.4} vs first head {p1:.4}"
+        );
+    }
+
+    /// Like tape, the Echorec is a mono drum deck: a left-only impulse stays left.
+    #[test]
+    fn echorec_stays_on_the_same_channel() {
+        let sr = 48_000.0;
+        let mut d = Delay::new(sr);
+        let time = 0.2;
+        let n = (time * sr * 0.5 * 3.0) as usize;
+        d.process(1.0, 0.0, time, 0.6, 1.0, 0.5);
+        let (mut le, mut re) = (0.0f32, 0.0f32);
+        for i in 1..n {
+            let (l, r) = d.process(0.0, 0.0, time, 0.6, 1.0, 0.5);
+            assert!(l.is_finite() && r.is_finite());
+            if i > 8 {
+                le += l.abs();
+                re += r.abs();
+            }
+        }
+        assert!(le > 0.1, "echorec echo missing on the left");
+        assert!(
+            re < le * 0.05,
+            "echorec should not ping-pong: right {re:.4} vs left {le:.4}"
         );
     }
 }

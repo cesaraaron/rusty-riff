@@ -27,7 +27,7 @@ Guitar input
   → Cabinet sim         (switchable: Mesa 4×12 | Marshall 4×12 | Orange PPC412 | WEM 4×12 | Vox 2×12 | Fender 2×12 | Supro 1×10 | Tweed 1×12 — multi-mic IR)
   → Parametric EQ       (low shelf 120 Hz / mid peak 800 Hz Q 1.5 / high shelf 5 kHz)
   → Flanger             (stereo LFO-swept comb: 0.5–5 ms delay, 0.05–5 Hz rate, feedback capped at 90%, L/R a quarter-cycle apart)
-  → Delay               (stereo ping-pong, 0–500 ms, feedback capped at 85%)
+  → Delay               (three modes: digital ping-pong | tape/EP-3 | Binson Echorec drum echo; 0–500 ms)
   → Stereo Reverb       (dual decorrelated Freeverb cores: 8 parallel combs → 4 series allpasses each)
   → Master-bus widener  (stereo mid/side enhancement)
   → Output limiter      (per-channel soft-clip)

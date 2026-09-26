@@ -109,10 +109,10 @@ feedback = 0.30
 mix      = 0.0
 
 # ── Delay ─────────────────────────────────────────────────────────────────────
-# Echorec-style tape echo, a few repeats trailing the riff.
+# Echorec drum echo, a few repeats trailing the riff.
 [delay]
 enabled  = true
-type     = 1.0
+type     = 0.5   # Echorec drum echo
 time     = 0.58
 feedback = 0.34
 mix      = 0.22

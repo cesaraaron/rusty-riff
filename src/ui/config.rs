@@ -406,7 +406,7 @@ pub(super) const KNOBS: &[Knob] = &[
         label: "MODE",
         param: |p| &p.trem_mode,
     },
-    // 68–71: Delay (TYPE: 0 = digital ping-pong, 1 = tape)
+    // 68–71: Delay (TYPE: 0 = digital ping-pong, 0.5 = Echorec, 1 = tape)
     Knob {
         label: "TIME",
         param: |p| &p.delay_time,

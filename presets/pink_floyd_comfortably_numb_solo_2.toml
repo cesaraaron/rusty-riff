@@ -104,10 +104,10 @@ feedback = 0.25
 mix      = 0.26
 
 # ── Delay ─────────────────────────────────────────────────────────────────────
-# A long ~450 ms Echorec-style tape repeat blooming behind each phrase — the
+# A long ~450 ms Echorec repeat blooming behind each phrase — the
 # outro's sense of space. Feedback/mix held below the point of turning to fog.
 [delay]
-type     = 1.0   # tape (Echorec-style drum echo approximates as tape)
+type     = 0.5   # Echorec drum echo
 enabled  = true
 time     = 0.90
 feedback = 0.36

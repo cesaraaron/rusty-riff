@@ -62,11 +62,10 @@ mic_blend = 0.22
 mic_room  = 0.24
 
 # ── Delay ─────────────────────────────────────────────────────────────────────
-# A long tape echo — the closest stand-in for the Binson Echorec (the main echo
-# until ~1977; no Echorec model yet).
+# A long Echorec drum echo — the Binson that was Gilmour's main echo until ~1977.
 [delay]
 enabled  = true
-type     = 1.0
+type     = 0.5   # Echorec drum echo
 time     = 0.66
 feedback = 0.40
 mix      = 0.26
