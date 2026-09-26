@@ -875,17 +875,17 @@ mod tests {
         p.cab_model.store(CabModel::Wem as u8, Relaxed);
         assert_eq!(init_amp_cursor(&p), 3);
         assert_eq!(init_cab_cursor(&p), 3);
-        assert_eq!(amp_choices(false), 8);
-        assert_eq!(amp_choices(true), 9);
-        assert_eq!(cab_choices(false), 7);
-        assert_eq!(cab_choices(true), 8);
+        assert_eq!(amp_choices(false), 9);
+        assert_eq!(amp_choices(true), 10);
+        assert_eq!(cab_choices(false), 8);
+        assert_eq!(cab_choices(true), 9);
         // Active externals point at their trailing rows.
         p.amp_external_active.store(true, Relaxed);
         p.amp_external_loaded.store(true, Relaxed);
         p.cab_external_active.store(true, Relaxed);
         p.cab_external_loaded.store(true, Relaxed);
-        assert_eq!(init_amp_cursor(&p), 8);
-        assert_eq!(init_cab_cursor(&p), 7);
+        assert_eq!(init_amp_cursor(&p), 9);
+        assert_eq!(init_cab_cursor(&p), 8);
     }
 
     // ── board membership & toggles ──────────────────────────────────────────────

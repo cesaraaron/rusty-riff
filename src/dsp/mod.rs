@@ -39,6 +39,7 @@ pub enum AmpModel {
     Plexi = 5,
     Fender = 6,
     Supro = 7,
+    Tweed = 8,
 }
 
 impl AmpModel {
@@ -51,6 +52,7 @@ impl AmpModel {
             5 => Self::Plexi,
             6 => Self::Fender,
             7 => Self::Supro,
+            8 => Self::Tweed,
             _ => Self::Marshall,
         }
     }
@@ -65,6 +67,7 @@ impl AmpModel {
             Self::Plexi => "Marshall Plexi",
             Self::Fender => "Fender Twin Reverb",
             Self::Supro => "Supro Combo",
+            Self::Tweed => "Tweed Deluxe",
         }
     }
 
@@ -78,6 +81,7 @@ impl AmpModel {
             Self::Plexi => "PLEXI",
             Self::Fender => "TWIN",
             Self::Supro => "SUPRO",
+            Self::Tweed => "TWEED",
         }
     }
 
@@ -90,7 +94,8 @@ impl AmpModel {
             Self::Hiwatt => Self::Plexi,
             Self::Plexi => Self::Fender,
             Self::Fender => Self::Supro,
-            Self::Supro => Self::Marshall,
+            Self::Supro => Self::Tweed,
+            Self::Tweed => Self::Marshall,
         }
     }
 
@@ -104,12 +109,13 @@ impl AmpModel {
             Self::Plexi => Self::Hiwatt,
             Self::Fender => Self::Plexi,
             Self::Supro => Self::Fender,
+            Self::Tweed => Self::Supro,
         }
     }
 
     /// All models in picker order — the single source for the amp modal,
     /// cursor init, and tests.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Marshall,
         Self::Mesa,
         Self::Randall,
@@ -118,6 +124,7 @@ impl AmpModel {
         Self::Plexi,
         Self::Fender,
         Self::Supro,
+        Self::Tweed,
     ];
 
     /// The model's front-panel controls, in the order its DSP decodes them.
@@ -131,6 +138,7 @@ impl AmpModel {
             Self::Plexi => amp::plexi::KNOBS,
             Self::Fender => amp::fender::KNOBS,
             Self::Supro => amp::supro::KNOBS,
+            Self::Tweed => amp::tweed::KNOBS,
         }
     }
 
@@ -155,6 +163,7 @@ pub enum CabModel {
     Vox = 4,
     Fender = 5,
     Supro = 6,
+    Tweed = 7,
 }
 
 impl CabModel {
@@ -166,6 +175,7 @@ impl CabModel {
             4 => Self::Vox,
             5 => Self::Fender,
             6 => Self::Supro,
+            7 => Self::Tweed,
             _ => Self::Mesa,
         }
     }
@@ -180,6 +190,7 @@ impl CabModel {
             Self::Vox => "Vox 2×12 (Alnico Blue)",
             Self::Fender => "Fender 2×12 (Jensen)",
             Self::Supro => "Supro 1×10 (small)",
+            Self::Tweed => "Tweed 1×12 (small)",
         }
     }
 
@@ -192,6 +203,7 @@ impl CabModel {
             Self::Vox => "VOX BLUE",
             Self::Fender => "FENDER 12",
             Self::Supro => "SUPRO 10",
+            Self::Tweed => "TWEED 12",
         }
     }
 
@@ -203,13 +215,14 @@ impl CabModel {
             Self::Wem => Self::Vox,
             Self::Vox => Self::Fender,
             Self::Fender => Self::Supro,
-            Self::Supro => Self::Mesa,
+            Self::Supro => Self::Tweed,
+            Self::Tweed => Self::Mesa,
         }
     }
 
     /// All models in picker order — the single source for the cab modal,
     /// cursor init, and tests.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Mesa,
         Self::Marshall,
         Self::Orange,
@@ -217,6 +230,7 @@ impl CabModel {
         Self::Vox,
         Self::Fender,
         Self::Supro,
+        Self::Tweed,
     ];
 }
 
@@ -2791,11 +2805,12 @@ mod tests {
     // controls, so a future tweak that re-introduces the problem fails loudly.
 
     /// Amp model paired with the cab it is voiced against.
-    const RIGS: [(AmpModel, CabModel); 4] = [
+    const RIGS: [(AmpModel, CabModel); 5] = [
         (AmpModel::Marshall, CabModel::Marshall),
         (AmpModel::Mesa, CabModel::Mesa),
         (AmpModel::Randall, CabModel::Orange),
         (AmpModel::Supro, CabModel::Supro),
+        (AmpModel::Tweed, CabModel::Tweed),
     ];
 
     /// Notes spanning the full usable range, low-E open up into the top octave —

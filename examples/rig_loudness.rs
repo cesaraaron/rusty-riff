@@ -21,6 +21,7 @@ fn cab_for(am: AmpModel) -> CabModel {
         AmpModel::Plexi => CabModel::Marshall,
         AmpModel::Fender => CabModel::Fender,
         AmpModel::Supro => CabModel::Supro,
+        AmpModel::Tweed => CabModel::Fender,
     }
 }
 

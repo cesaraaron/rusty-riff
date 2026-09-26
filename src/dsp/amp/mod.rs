@@ -5,6 +5,7 @@ pub mod mesa;
 pub mod plexi;
 pub mod randall;
 pub mod supro;
+pub mod tweed;
 pub mod vox;
 
 use crate::dsp::AmpModel;
@@ -17,6 +18,7 @@ pub use mesa::Mesa;
 pub use plexi::Plexi;
 pub use randall::Randall;
 pub use supro::Supro;
+pub use tweed::Tweed;
 pub use vox::Vox;
 
 /// Maximum number of front-panel knobs any single amp model exposes. Each model's
@@ -546,6 +548,7 @@ pub struct AmpBank {
     plexi: Plexi,
     fender: Fender,
     supro: Supro,
+    tweed: Tweed,
 }
 
 impl AmpBank {
@@ -559,6 +562,7 @@ impl AmpBank {
             plexi: Plexi::new(sr),
             fender: Fender::new(sr),
             supro: Supro::new(sr),
+            tweed: Tweed::new(sr),
         }
     }
 
@@ -573,6 +577,7 @@ impl AmpBank {
             AmpModel::Plexi => self.plexi.process(sample, knobs),
             AmpModel::Fender => self.fender.process(sample, knobs),
             AmpModel::Supro => self.supro.process(sample, knobs),
+            AmpModel::Tweed => self.tweed.process(sample, knobs),
         }
     }
 }
@@ -601,6 +606,7 @@ mod tests {
             ("Plexi", AmpModel::Plexi, Box::new(Plexi::new(SR))),
             ("Fender", AmpModel::Fender, Box::new(Fender::new(SR))),
             ("Supro", AmpModel::Supro, Box::new(Supro::new(SR))),
+            ("Tweed", AmpModel::Tweed, Box::new(Tweed::new(SR))),
         ]
     }
 
@@ -1217,6 +1223,7 @@ mod tests {
             ("Plexi", AmpModel::Plexi, Box::new(Plexi::new(SR))),
             ("Fender", AmpModel::Fender, Box::new(Fender::new(SR))),
             ("Supro", AmpModel::Supro, Box::new(Supro::new(SR))),
+            ("Tweed", AmpModel::Tweed, Box::new(Tweed::new(SR))),
         ]
     }
 

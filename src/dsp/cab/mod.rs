@@ -5,6 +5,7 @@ pub mod marshall;
 pub mod mesa;
 pub mod orange;
 pub mod supro;
+pub mod tweed;
 pub mod vox;
 pub mod wem;
 
@@ -17,6 +18,7 @@ pub use marshall::MarshallCab;
 pub use mesa::MesaCab;
 pub use orange::OrangeCab;
 pub use supro::SuproCab;
+pub use tweed::TweedCab;
 pub use vox::VoxCab;
 pub use wem::WemCab;
 
@@ -775,6 +777,7 @@ pub struct CabBank {
     vox: VoxCab,
     fender: FenderCab,
     supro: SuproCab,
+    tweed: TweedCab,
 }
 
 impl CabBank {
@@ -787,6 +790,7 @@ impl CabBank {
             vox: VoxCab::new(sr),
             fender: FenderCab::new(sr),
             supro: SuproCab::new(sr),
+            tweed: TweedCab::new(sr),
         }
     }
 
@@ -807,6 +811,7 @@ impl CabBank {
             super::CabModel::Vox => self.vox.process(sample, mic_pos, blend, room),
             super::CabModel::Fender => self.fender.process(sample, mic_pos, blend, room),
             super::CabModel::Supro => self.supro.process(sample, mic_pos, blend, room),
+            super::CabModel::Tweed => self.tweed.process(sample, mic_pos, blend, room),
         }
     }
 }
@@ -1243,6 +1248,7 @@ mod tests {
             CabModel::Vox,
             CabModel::Fender,
             CabModel::Supro,
+            CabModel::Tweed,
         ] {
             for &pos in &[0.0f32, 0.25, 0.5, 0.75, 1.0] {
                 let mut bank = CabBank::new(SR);
