@@ -24,7 +24,7 @@ level = 0.70
 
 # ── Pre-amp EQ ────────────────────────────────────────────────────────────────
 [preamp_eq]
-enabled = true
+enabled = false
 low  = 0.44
 mid  = 0.60
 high = 0.56
@@ -50,7 +50,7 @@ mic_room  = 0.24
 
 # ── Parametric EQ ─────────────────────────────────────────────────────────────
 [eq]
-enabled = true
+enabled = false
 low  = 0.44
 mid  = 0.56
 high = 0.56

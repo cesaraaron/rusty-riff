@@ -45,7 +45,7 @@ level = 0.65
 # Shapes what the amp clips: lows trimmed so the low strings stay clear (the old
 # mud), mids lifted for the vocal vowel, top left open and glassy.
 [preamp_eq]
-enabled = true
+enabled = false
 low  = 0.42
 mid  = 0.60
 high = 0.54
@@ -82,7 +82,7 @@ mic_room  = 0.28
 # ── Parametric EQ ─────────────────────────────────────────────────────────────
 # Gentle final shaping: lows tucked, mids reinforced, a breath of air on top.
 [eq]
-enabled = true
+enabled = false
 low  = 0.42
 mid  = 0.58
 high = 0.56

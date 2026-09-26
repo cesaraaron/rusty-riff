@@ -72,12 +72,12 @@ everywhere.
 | `guns_n_roses_november_rain_solo` | marshall | marshall | gate, delay, reverb | tape, 0.40 | off |
 | `led_zeppelin_stairway_solo` | plexi | marshall | gate, comp, ts, preeq, eq, delay, reverb | digital (default), 0.26 | off |
 | `led_zeppelin_whole_lotta_love` | plexi | marshall | gate, fuzz, preeq, eq, delay, reverb | tape, 0.30 | Tone Bender MkII |
-| `pink_floyd_another_brick_pt2` | hiwatt | wem | gate, comp, fuzz, preeq, eq, phaser, delay, reverb | tape, 0.60 | Big Muff |
-| `pink_floyd_comfortably_numb_solo_1` | hiwatt | wem | gate, comp, fuzz, preeq, eq, flanger, delay, reverb | tape, 0.88 | Big Muff |
-| `pink_floyd_comfortably_numb_solo_2` | hiwatt | wem | gate, comp, fuzz, preeq, eq, flanger, delay, reverb | tape, 0.90 | Big Muff |
-| `pink_floyd_have_a_cigar_solo` | hiwatt | wem | gate, comp, preeq, eq, delay, reverb | tape, 0.50 | off |
+| `pink_floyd_another_brick_pt2` | hiwatt | wem | gate, comp, fuzz, phaser, delay, reverb | tape, 0.60 | Big Muff |
+| `pink_floyd_comfortably_numb_solo_1` | hiwatt | wem | gate, comp, fuzz, flanger, delay, reverb | tape, 0.88 | Big Muff |
+| `pink_floyd_comfortably_numb_solo_2` | hiwatt | wem | gate, comp, fuzz, flanger, delay, reverb | tape, 0.90 | Big Muff |
+| `pink_floyd_have_a_cigar_solo` | hiwatt | wem | gate, comp, delay, reverb | tape, 0.50 | off |
 | `pink_floyd_money` | hiwatt | wem | gate, wah, fuzz, delay, reverb | tape, 0.58 | Fuzz Face |
-| `pink_floyd_mother_solo` | hiwatt | wem | gate, comp, preeq, eq, delay, reverb | tape, 0.55 | off |
+| `pink_floyd_mother_solo` | hiwatt | wem | gate, comp, delay, reverb | tape, 0.55 | off |
 | `pink_floyd_shine_on_crazy_diamond` | hiwatt | wem | gate, comp, fuzz, boost, delay, reverb | tape, 0.66 | Fuzz Face |
 | `pink_floyd_time_chorus` | hiwatt | wem | gate, vibe, delay, reverb | tape, 0.75 | off |
 | `pink_floyd_time_solo` | hiwatt | wem | gate, comp, fuzz, vibe, delay, reverb | tape, 0.62 | Fuzz Face |

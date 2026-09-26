@@ -35,7 +35,7 @@ tone  = 0.50
 level = 0.65
 
 [preamp_eq]
-enabled = true
+enabled = false
 low  = 0.42
 mid  = 0.60
 high = 0.58
@@ -67,7 +67,7 @@ mic_blend = 0.22
 mic_room  = 0.22
 
 [eq]
-enabled = true
+enabled = false
 low  = 0.44
 mid  = 0.56
 high = 0.58

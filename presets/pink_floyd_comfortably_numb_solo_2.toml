@@ -44,7 +44,7 @@ level = 0.65
 # Push the vocal mids, cut the lows hard (this is where the old preset went
 # muddy), and keep the top open enough to cut through the wash.
 [preamp_eq]
-enabled = true
+enabled = false
 low  = 0.40
 mid  = 0.62
 high = 0.54
@@ -81,7 +81,7 @@ mic_room  = 0.30
 # ── Parametric EQ ─────────────────────────────────────────────────────────────
 # Low end trimmed again at the end of the chain, mids forward, air on top.
 [eq]
-enabled = true
+enabled = false
 low  = 0.40
 mid  = 0.58
 high = 0.55
