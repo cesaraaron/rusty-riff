@@ -1,5 +1,5 @@
 name        = "Eagles — Hotel California (Solo)"
-description = "Inspired by the harmonized 'Hotel California' outro (1976), recorded as two separate lead parts (commonly a tweed Deluxe and a small solid-state combo). This single preset approximates one lead voice. Not a verified session rig."
+description = "Inspired by the harmonized 'Hotel California' outro (1976), recorded as two separate lead parts (Felder: 1959 Les Paul into a cranked tweed Deluxe; Walsh: Telecaster into a small solid-state combo). This single preset approximates the tweed Deluxe voice. Not a verified session rig."
 year        = 1976
 
 # ── Noise Gate ────────────────────────────────────────────────────────────────
@@ -11,108 +11,31 @@ enabled   = true
 threshold = 0.14
 release   = 0.42
 
-# ── Compressor ────────────────────────────────────────────────────────────────
-# The studio "sing" of the solo: compression feeds the amp an even level so a held
-# bend blooms and sustains instead of fading. A mid attack keeps the pick
-# definition so the fast 16th runs still articulate.
-[compressor]
-enabled = true
-sustain = 0.52
-attack  = 0.38
-level   = 0.54
-
-[fuzz]
-enabled = false
-fuzz  = 0.50
-tone  = 0.50
-level = 0.60
-
-# ── Tube Screamer ─────────────────────────────────────────────────────────────
-# The classic mid-hump boost in front of an already-cranked amp — it thickens the
-# vocal upper-mids and adds sustain without piling on a wall of gain. Tone just
-# under noon smooths the top rather than making it bite.
+# No drive pedals — the lead is guitar straight into the amp.
 [tube_screamer]
-enabled = true
+enabled = false
 drive = 0.30
 tone  = 0.56
 level = 0.78
 
-[distortion]
-enabled = false
-drive = 0.40
-tone  = 0.50
-level = 0.65
-
-# ── Pre-amp EQ ────────────────────────────────────────────────────────────────
-# Shapes what the amp clips: lows tucked so the low strings stay piano-clear, mids
-# pushed where the melody lives, top left open but kept away from glassy.
-[preamp_eq]
-enabled = true
-low  = 0.44
-mid  = 0.62
-high = 0.52
-
-# Uni-Vibe off — not part of this tone; stored so it is explicitly bypassed.
-[uni_vibe]
-enabled = false
-rate    = 0.24
-depth   = 0.40
-mix     = 0.0
-mode    = 0.0
-
 # ── Amp ───────────────────────────────────────────────────────────────────────
-# Marshall Super Lead "Plexi" — the cranked non-master head the Eagles actually
-# used, with the power section supplying the soft, vocal breakup (not the JCM800,
-# which was a decade later). Mids well forward — the solo is a singing midrange
-# voice, never scooped.
+# Tweed Deluxe, Volume up: the cathode-biased 6V6 power section supplies the warm,
+# compressed, vocal breakup, and its 5Y3 sag gives held bends their bloom.
 [amp]
-model  = "plexi"
-gain   = 0.62   # hot and singing — the channel volume well up
-bass   = 0.46   # tight low end so bends don't turn to mud
-mid    = 0.66   # the vocal vowel — the whole character of the tone
-treble = 0.58   # open and articulate without ice-pick
-presence = 0.52
+model  = "tweed"
+gain   = 0.82
+treble = 0.62
 
 # ── Cabinet ───────────────────────────────────────────────────────────────────
-# Greenbacks slightly off-axis with a ribbon blend: warm and vocal on top, with
-# enough room to hear the amp breathe under the sustained notes.
+# Tweed 1×12 open-back — warm and vocal, with enough room to hear the amp breathe.
 [cabinet]
-model     = "marshall"
+model     = "tweed"
 mic_pos   = 0.48
 mic_blend = 0.30
-mic_room  = 0.30
-
-# ── Parametric EQ ─────────────────────────────────────────────────────────────
-# A final lift around 800 Hz for the vocal vowel, lows tucked so the delay and
-# reverb have somewhere to sit.
-[eq]
-enabled = true
-low  = 0.44
-mid  = 0.58
-high = 0.52
-
-# ── Wah ───────────────────────────────────────────────────────────────────────
-# Stored but off: the recorded vowel comes from the mids, not a sweeping pedal.
-# Nudge enabled for the parked-wah "talk" on the live outros.
-[wah]
-enabled = false
-freq = 0.62
-sens = 0.40
-q    = 0.55
-mix  = 0.35
-
-# ── Chorus ────────────────────────────────────────────────────────────────────
-# Off — the solo is a single singing voice, not a doubled shimmer (that's the
-# clean intro preset).
-[chorus]
-enabled = false
-rate  = 0.22
-depth = 0.45
-mix   = 0.28
+mic_room  = 0.28
 
 # ── Delay ─────────────────────────────────────────────────────────────────────
-# A modest ~200 ms repeat for depth and to let phrase-ends hang. Low enough in the
-# mix that the fast bends don't smear.
+# A modest ~200 ms repeat for depth and to let phrase-ends hang.
 [delay]
 enabled  = true
 time     = 0.40

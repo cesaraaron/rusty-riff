@@ -1009,11 +1009,10 @@ mod tests {
         ("boost", 1972),         // Colorsound Power Boost (approx.)
     ];
 
-    /// Known anachronisms accepted for now — fixed by the Phase 5 rebuild. An
-    /// enabled device outside this list whose debut postdates the preset's `year`
-    /// fails the test, so a new anachronism cannot slip in unnoticed.
-    const KNOWN_ANACHRONISMS: &[(&str, &str)] =
-        &[("eagles_hotel_california_solo", "tube_screamer")];
+    /// Known anachronisms accepted for now. Empty — Phase 5 Batch 1 removed the
+    /// last cases (the TS-808 in Shine On and Hotel California, replaced by the
+    /// Power Boost and the tweed Deluxe respectively).
+    const KNOWN_ANACHRONISMS: &[(&str, &str)] = &[];
 
     /// A bundled preset must not enable a device that did not exist when the tone
     /// was recorded, except for the documented known cases above.

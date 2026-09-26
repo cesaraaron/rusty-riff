@@ -276,94 +276,94 @@ db = -9.896896
 
 [[render]]
 preset = "eagles_hotel_california_solo"
-lufs_i = -16.087645
-crest_db = 13.396618
-correlation = 0.5148562
-centroid_hz = 2752.4932
+lufs_i = -19.52999
+crest_db = 16.381199
+correlation = 0.7515185
+centroid_hz = 2634.7886
 
 [[render.ltas]]
 hz = 70.0
-db = 18.446548
+db = 17.904015
 
 [[render.ltas]]
 hz = 88.19447
-db = 0.9312973
+db = 0.4166336
 
 [[render.ltas]]
 hz = 111.11807
-db = -4.0589523
+db = -4.628044
 
 [[render.ltas]]
 hz = 140.0
-db = 10.426788
+db = 17.838436
 
 [[render.ltas]]
 hz = 176.38895
-db = -0.38128662
+db = 2.8066635
 
 [[render.ltas]]
 hz = 222.23615
-db = 18.70618
+db = 17.915009
 
 [[render.ltas]]
 hz = 280.0
-db = 5.3783264
+db = 6.053917
 
 [[render.ltas]]
 hz = 352.7779
-db = 3.4630432
+db = 2.8354492
 
 [[render.ltas]]
 hz = 444.4723
-db = 15.2359085
+db = 6.5742416
 
 [[render.ltas]]
 hz = 560.0
-db = 1.362915
+db = -8.635262
 
 [[render.ltas]]
 hz = 705.5558
-db = 15.972912
+db = 4.262802
 
 [[render.ltas]]
 hz = 888.9446
-db = 9.63076
+db = 4.97818
 
 [[render.ltas]]
 hz = 1120.0
-db = -13.760529
+db = -8.050255
 
 [[render.ltas]]
 hz = 1411.1116
-db = -1.9636993
+db = -4.8649216
 
 [[render.ltas]]
 hz = 1777.8892
-db = -0.3258133
+db = -0.008354187
 
 [[render.ltas]]
 hz = 2240.0
-db = -8.37249
+db = -4.0863113
 
 [[render.ltas]]
 hz = 2822.2231
-db = -5.1592712
+db = 2.8533783
 
 [[render.ltas]]
 hz = 3555.7783
-db = -12.935272
+db = -9.446922
 
 [[render.ltas]]
 hz = 4480.0
-db = 4.5366287
+db = 1.8691483
 
 [[render.ltas]]
 hz = 5644.4463
-db = -18.388077
+db = -9.793106
 
 [[render.ltas]]
 hz = 7111.5566
-db = -38.745926
+db = -36.794823
 
 [[render]]
 preset = "guns_n_roses_november_rain_solo"

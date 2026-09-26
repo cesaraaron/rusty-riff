@@ -68,7 +68,7 @@ everywhere.
 | `acdc_back_in_black` | plexi | marshall | gate | off | off |
 | `acdc_highway_to_hell` | plexi | marshall | gate | off | off |
 | `eagles_hotel_california_clean` | fender | fender | gate, comp, eq, chorus, delay, reverb | digital, 0.42 | off |
-| `eagles_hotel_california_solo` | plexi | marshall | gate, comp, ts, preeq, eq, delay, reverb | digital (default), 0.40 | off |
+| `eagles_hotel_california_solo` | tweed | tweed | gate, delay, reverb | digital, 0.40 | off |
 | `guns_n_roses_november_rain_solo` | marshall | marshall | gate, delay, reverb | tape, 0.40 | off |
 | `led_zeppelin_stairway_solo` | plexi | marshall | gate, comp, ts, preeq, eq, delay, reverb | digital (default), 0.26 | off |
 | `led_zeppelin_whole_lotta_love` | plexi | marshall | gate, fuzz, preeq, eq, delay, reverb | tape, 0.30 | Tone Bender MkII |
@@ -137,9 +137,10 @@ both reproduced so the flag is auditable.
   Deluxe** (guitar straight in); **Walsh — Telecaster into a Roland Cube**; the
   two trade and harmonize the outro. · Supports: `plausible` · Source:
   <https://www.guitarworld.com/artists/guitarists/the-eagles-hotel-california-guitar-gear>
-- **Contradiction:** the clean preset (Twin + chorus + digital delay + two
-  reverbs) does not map to a 12-string intro; one mono preset cannot represent two
-  separately recorded, harmonized lead players. (Phase 5)
+- **Resolved (Phase 5):** the **solo** preset now sits on a Tweed-Deluxe amp +
+  1×12 cab (Felder's cited Les Paul → cranked tweed), TS-808 removed. The **clean**
+  preset still maps to the Twin rather than a 12-string intro, and one mono preset
+  cannot represent two separately recorded, harmonized lead players.
 
 ### `led_zeppelin_stairway_solo.toml` / `_whole_lotta_love.toml`
 
