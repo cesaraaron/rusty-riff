@@ -154,6 +154,7 @@ pub enum CabModel {
     Wem = 3,
     Vox = 4,
     Fender = 5,
+    Supro = 6,
 }
 
 impl CabModel {
@@ -164,6 +165,7 @@ impl CabModel {
             3 => Self::Wem,
             4 => Self::Vox,
             5 => Self::Fender,
+            6 => Self::Supro,
             _ => Self::Mesa,
         }
     }
@@ -177,6 +179,7 @@ impl CabModel {
             Self::Wem => "WEM 4×12 (Fane)",
             Self::Vox => "Vox 2×12 (Alnico Blue)",
             Self::Fender => "Fender 2×12 (Jensen)",
+            Self::Supro => "Supro 1×10 (small)",
         }
     }
 
@@ -188,6 +191,7 @@ impl CabModel {
             Self::Wem => "WEM FANE",
             Self::Vox => "VOX BLUE",
             Self::Fender => "FENDER 12",
+            Self::Supro => "SUPRO 10",
         }
     }
 
@@ -198,19 +202,21 @@ impl CabModel {
             Self::Orange => Self::Wem,
             Self::Wem => Self::Vox,
             Self::Vox => Self::Fender,
-            Self::Fender => Self::Mesa,
+            Self::Fender => Self::Supro,
+            Self::Supro => Self::Mesa,
         }
     }
 
     /// All models in picker order — the single source for the cab modal,
     /// cursor init, and tests.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Mesa,
         Self::Marshall,
         Self::Orange,
         Self::Wem,
         Self::Vox,
         Self::Fender,
+        Self::Supro,
     ];
 }
 
@@ -2785,10 +2791,11 @@ mod tests {
     // controls, so a future tweak that re-introduces the problem fails loudly.
 
     /// Amp model paired with the cab it is voiced against.
-    const RIGS: [(AmpModel, CabModel); 3] = [
+    const RIGS: [(AmpModel, CabModel); 4] = [
         (AmpModel::Marshall, CabModel::Marshall),
         (AmpModel::Mesa, CabModel::Mesa),
         (AmpModel::Randall, CabModel::Orange),
+        (AmpModel::Supro, CabModel::Supro),
     ];
 
     /// Notes spanning the full usable range, low-E open up into the top octave —
@@ -3125,30 +3132,44 @@ mod tests {
                 }
             }
             let rms = (out.iter().map(|s| (s * s) as f64).sum::<f64>() / out.len() as f64).sqrt();
+            // Perceived (mid-band) level, not raw RMS — see `amps_are_loudness_matched`.
+            let mut hp = crate::dsp::biquad::Biquad::highpass(sr, 300.0, 0.707);
+            let mut lp = crate::dsp::biquad::Biquad::lowpass(sr, 5000.0, 0.707);
+            let mid: Vec<f32> = out.iter().map(|&x| lp.process(hp.process(x))).collect();
+            let mid_rms =
+                (mid.iter().map(|s| (s * s) as f64).sum::<f64>() / mid.len() as f64).sqrt();
             let m = |f| goertzel(&out, f, sr) as f64;
             let sub = m(41.0) + m(55.0); // sub / difference-tone fart
             let body = m(164.81) + m(247.0) + m(330.0); // musical body harmonics
-            (rms, sub / body.max(1e-9))
+            (rms, mid_rms, sub / body.max(1e-9))
         };
 
         let mut rms = Vec::new();
+        let mut mid = Vec::new();
         for model in [AmpModel::Marshall, AmpModel::Mesa, AmpModel::Randall] {
-            let (r, sub_body) = run(model);
+            let (r, mr, sub_body) = run(model);
             assert!(
                 sub_body < 0.45,
                 "{} low end is farty: sub/body = {sub_body:.2}",
                 model.name()
             );
             rms.push(r);
+            mid.push(mr);
         }
-        // Loudness match: the quietest amp must be within ~6 dB of the loudest, so
-        // switching models doesn't produce the old 4–7× volume jump.
-        let lo = rms.iter().cloned().fold(f64::INFINITY, f64::min);
-        let hi = rms.iter().cloned().fold(0.0, f64::max);
+        // Perceived (mid-band) loudness match so switching models doesn't jump the
+        // volume. Raw RMS is retained above only as a headroom sanity check.
+        let lo = mid.iter().cloned().fold(f64::INFINITY, f64::min);
+        let hi = mid.iter().cloned().fold(0.0, f64::max);
         assert!(
-            hi / lo < 2.0,
-            "amps not level-matched: rms spread {hi:.4}/{lo:.4} = {:.2}x",
+            hi / lo < 1.6,
+            "amps not perceptually level-matched: mid-band spread {hi:.4}/{lo:.4} = {:.2}x",
             hi / lo
+        );
+        // No model may run away in absolute (broadband) level.
+        let raw_hi = rms.iter().cloned().fold(0.0, f64::max);
+        assert!(
+            raw_hi.is_finite() && raw_hi < 10.0,
+            "amp runaway: {raw_hi:.4}"
         );
     }
 

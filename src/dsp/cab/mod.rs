@@ -4,6 +4,7 @@ pub mod ir;
 pub mod marshall;
 pub mod mesa;
 pub mod orange;
+pub mod supro;
 pub mod vox;
 pub mod wem;
 
@@ -15,6 +16,7 @@ pub use fender::FenderCab;
 pub use marshall::MarshallCab;
 pub use mesa::MesaCab;
 pub use orange::OrangeCab;
+pub use supro::SuproCab;
 pub use vox::VoxCab;
 pub use wem::WemCab;
 
@@ -235,11 +237,13 @@ const SOUND_SPEED_M_S: f32 = 343.0;
 
 /// Physical speaker layout a cab is built from. It sets only the neighbour-cone
 /// interference geometry — a closed 4×12's three surrounding cones versus an
-/// open-back 2×12's single stacked partner.
+/// open-back 2×12's single stacked partner, or a small combo's lone speaker.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CabLayout {
     FourByTwelve,
     TwoByTwelve,
+    /// A single speaker: no neighbour cone, so the spread stage is a passthrough.
+    Single,
 }
 /// Off-axis + cardioid-rejection loss applied on top of 1/r spreading,
 /// calibrated so the summed tap gains (~0.22 side / ~0.07 diagonal) keep the
@@ -305,6 +309,9 @@ impl ConeSpread {
                 let d = delay(p).max(1);
                 ((MIC_DIST_M / p) * NEIGHBOR_AXIS_LOSS_SIDE, 0.0, d, d + 4)
             }
+            // A single speaker has no neighbour cone: zero taps make the stage an
+            // exact passthrough (the delays just size the scratch buffer).
+            CabLayout::Single => (0.0, 0.0, 1, 4),
         };
         // Sub-tap spreads (samples ≈ the extra path across the cone face); the
         // nearest-rim tap leads each cluster so `d_side`/`d_diag` stay the
@@ -719,6 +726,10 @@ pub struct BlendedCab {
     grille: GrilleEcho,
     blend: MicBlend,
     mic: MicPosition,
+    /// Fixed per-cab level trim so switching cabs (or presets built on them) doesn't
+    /// jump the volume. The cabs' captures were not level-normalized against each
+    /// other; this pulls their perceived (mid-band) output together.
+    level: f32,
 }
 
 impl BlendedCab {
@@ -732,7 +743,13 @@ impl BlendedCab {
             grille: GrilleEcho::new(sr),
             blend: MicBlend::new(irs),
             mic: MicPosition::new(sr),
+            level: 1.0,
         }
+    }
+
+    /// Set the per-cab output level trim (see the `level` field).
+    pub fn set_level(&mut self, level: f32) {
+        self.level = level;
     }
 
     #[inline]
@@ -745,7 +762,7 @@ impl BlendedCab {
             .process(self.spread.process(self.speaker.process(sample)));
         let (l, r) = self.blend.process(drive);
         let (l, r) = self.mic.process(l, r);
-        (mic_sat(l), mic_sat(r))
+        (mic_sat(l) * self.level, mic_sat(r) * self.level)
     }
 }
 
@@ -757,6 +774,7 @@ pub struct CabBank {
     wem: WemCab,
     vox: VoxCab,
     fender: FenderCab,
+    supro: SuproCab,
 }
 
 impl CabBank {
@@ -768,6 +786,7 @@ impl CabBank {
             wem: WemCab::new(sr),
             vox: VoxCab::new(sr),
             fender: FenderCab::new(sr),
+            supro: SuproCab::new(sr),
         }
     }
 
@@ -787,6 +806,7 @@ impl CabBank {
             super::CabModel::Wem => self.wem.process(sample, mic_pos, blend, room),
             super::CabModel::Vox => self.vox.process(sample, mic_pos, blend, room),
             super::CabModel::Fender => self.fender.process(sample, mic_pos, blend, room),
+            super::CabModel::Supro => self.supro.process(sample, mic_pos, blend, room),
         }
     }
 }
@@ -1222,6 +1242,7 @@ mod tests {
             CabModel::Wem,
             CabModel::Vox,
             CabModel::Fender,
+            CabModel::Supro,
         ] {
             for &pos in &[0.0f32, 0.25, 0.5, 0.75, 1.0] {
                 let mut bank = CabBank::new(SR);

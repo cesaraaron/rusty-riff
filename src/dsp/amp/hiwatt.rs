@@ -266,7 +266,7 @@ impl Amplifier for Hiwatt {
 
         // Output trim: level-matched to the other models so switching amps doesn't
         // jump in volume. Lands the DR103 mid-band alongside the Vox/Mesa/Randall.
-        x * master * 4.8
+        x * master * 14.33
     }
 }
 

@@ -1,5 +1,5 @@
 name        = "Led Zeppelin — Stairway to Heaven (Solo)"
-description = "Inspired by the 'Stairway to Heaven' solo (1971), commonly reported as a Telecaster into a small Supro combo: our Supro-style small combo through an open-back 2×12, with a short slap and a touch of room. Not a verified session rig."
+description = "Inspired by the 'Stairway to Heaven' solo (1971), commonly reported as a Telecaster into a small Supro combo: our Supro-style small combo through a 1×10, with a short slap and a touch of room. Not a verified session rig."
 year        = 1971
 
 # ── Noise Gate ────────────────────────────────────────────────────────────────
@@ -22,14 +22,14 @@ level = 0.66
 # compressed small-amp voice.
 [amp]
 model  = "supro"
-gain   = 0.88
+gain   = 1.00
 treble = 0.60
 
 # ── Cabinet ───────────────────────────────────────────────────────────────────
-# Open-back 2×12 (Jensen-style) — the closest approximation to a small combo's
-# open, boxy cab. A dedicated small-combo cab is a later build.
+# Supro 1×10 small combo — the boxy, top-limited small speaker the solo is built
+# on. A close mic with a little room.
 [cabinet]
-model     = "fender"
+model     = "supro"
 mic_pos   = 0.50
 mic_blend = 0.20
 mic_room  = 0.22

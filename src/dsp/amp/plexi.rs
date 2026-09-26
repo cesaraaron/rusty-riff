@@ -224,7 +224,7 @@ impl Amplifier for Plexi {
 
         // Fixed output trim (no master volume) — level-matches the Plexi to the
         // other models so switching amps doesn't jump the volume.
-        x * 2.4
+        x * 3.39
     }
 }
 

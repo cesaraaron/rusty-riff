@@ -128,9 +128,10 @@ impl FenderCab {
             synth(&mut Self::voicing_room(sr), &ROOM_TEX_L),
             synth(&mut Self::voicing_room(sr), &ROOM_TEX_R),
         ];
-        Self {
-            inner: BlendedCab::new(sr, irs, CabLayout::TwoByTwelve),
-        }
+        let mut inner = BlendedCab::new(sr, irs, CabLayout::TwoByTwelve);
+        // Per-cab level trim (see `BlendedCab::set_level`).
+        inner.set_level(1.549);
+        Self { inner }
     }
 
     /// SM57 close-mic: the clean, sparkly Jensen voicing.

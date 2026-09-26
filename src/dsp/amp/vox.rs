@@ -230,7 +230,7 @@ impl Amplifier for Vox {
 
         // Output trim: the AC30 has no master volume (the Top Boost Volume is the
         // gain), so this fixed trim level-matches it to the other models.
-        x * 11.0
+        x * 10.03
     }
 }
 

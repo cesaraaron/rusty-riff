@@ -877,15 +877,15 @@ mod tests {
         assert_eq!(init_cab_cursor(&p), 3);
         assert_eq!(amp_choices(false), 8);
         assert_eq!(amp_choices(true), 9);
-        assert_eq!(cab_choices(false), 6);
-        assert_eq!(cab_choices(true), 7);
+        assert_eq!(cab_choices(false), 7);
+        assert_eq!(cab_choices(true), 8);
         // Active externals point at their trailing rows.
         p.amp_external_active.store(true, Relaxed);
         p.amp_external_loaded.store(true, Relaxed);
         p.cab_external_active.store(true, Relaxed);
         p.cab_external_loaded.store(true, Relaxed);
         assert_eq!(init_amp_cursor(&p), 8);
-        assert_eq!(init_cab_cursor(&p), 6);
+        assert_eq!(init_cab_cursor(&p), 7);
     }
 
     // ── board membership & toggles ──────────────────────────────────────────────

@@ -146,9 +146,10 @@ impl MarshallCab {
             synth(&mut Self::voicing_room(sr), &ROOM_TEX_L),
             synth(&mut Self::voicing_room(sr), &ROOM_TEX_R),
         ];
-        Self {
-            inner: BlendedCab::new(sr, irs, CabLayout::FourByTwelve),
-        }
+        let mut inner = BlendedCab::new(sr, irs, CabLayout::FourByTwelve);
+        // Per-cab level trim (see `BlendedCab::set_level`).
+        inner.set_level(0.832);
+        Self { inner }
     }
 
     /// SM57 close-mic: the bright Greenback voicing (the original skeleton).

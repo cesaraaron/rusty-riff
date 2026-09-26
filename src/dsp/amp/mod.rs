@@ -810,24 +810,45 @@ mod tests {
     /// At equal settings the models must sit within a sane loudness window of each
     /// other, so flipping models on stage doesn't jump the volume. The output
     /// trims in each amp exist precisely to enforce this.
+    ///
+    /// Measured on a short broadband chug DI in the **300 Hz–5 kHz** band, not raw
+    /// RMS: the ear weights the mids far more than the low end a chug is full of, so
+    /// raw RMS let bass-heavy voicings (and the low-headroom small combos) drift out
+    /// of perceptual balance. See `examples/rig_loudness.rs`.
     #[test]
     fn amps_are_loudness_matched() {
+        use crate::dsp::biquad::Biquad;
+        let di = {
+            let mut di = vec![0.0f32; (SR * 3.0) as usize];
+            for k in 0..8 {
+                let start = (SR * 0.35) as usize * k;
+                for i in 0..(SR * 0.25) as usize {
+                    let t = i as f32 / SR;
+                    let env = (-t * 9.0).exp();
+                    di[start + i] += 0.6 * env * (2.0 * PI * 82.41 * t).sin().signum() * 0.5;
+                }
+            }
+            di
+        };
+        let mid_rms = |s: &[f32]| {
+            let mut hp = Biquad::highpass(SR, 300.0, 0.707);
+            let mut lp = Biquad::lowpass(SR, 5000.0, 0.707);
+            let mid: Vec<f32> = s.iter().map(|&x| lp.process(hp.process(x))).collect();
+            rms(&mid)
+        };
+
         let mut levels = Vec::new();
         for (_name, model, mut amp) in each_amp() {
             // Driven hard — the regime the per-amp output trims are tuned to match.
-            let out = run_tone(
-                &mut *amp,
-                110.0,
-                0.6,
-                &standard_knobs(model, 0.93, 0.5, 0.5, 0.65, 0.5, 0.65),
-            );
-            levels.push(rms(&out));
+            let knobs = standard_knobs(model, 0.93, 0.5, 0.5, 0.65, 0.5, 0.65);
+            let out: Vec<f32> = di.iter().map(|&x| amp.process(x, &knobs)).collect();
+            levels.push(mid_rms(&out));
         }
         let lo = levels.iter().cloned().fold(f32::INFINITY, f32::min);
-        let hi = levels.iter().cloned().fold(0.0, f32::max);
+        let hi = levels.iter().cloned().fold(0.0f32, f32::max);
         assert!(
-            hi / lo < 2.5,
-            "amps not loudness-matched: rms spread {hi:.4}/{lo:.4} = {:.2}x",
+            hi / lo < 1.7,
+            "amps not perceptually loudness-matched: mid-band rms spread {hi:.4}/{lo:.4} = {:.2}x",
             hi / lo
         );
     }

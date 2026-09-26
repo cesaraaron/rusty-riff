@@ -398,6 +398,7 @@ impl Preset {
             CabModel::Wem => "wem",
             CabModel::Vox => "vox",
             CabModel::Fender => "fender",
+            CabModel::Supro => "supro",
         };
         Self {
             name,
@@ -736,6 +737,7 @@ impl Preset {
                 Some("wem") => CabModel::Wem,
                 Some("vox") => CabModel::Vox,
                 Some("fender") => CabModel::Fender,
+                Some("supro") => CabModel::Supro,
                 _ => CabModel::Mesa,
             };
             params.cab_model.store(cab_model as u8, Relaxed);

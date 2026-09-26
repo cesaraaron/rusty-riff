@@ -289,7 +289,7 @@ impl Amplifier for Marshall {
 
         // Output trim: level-matches the JCM800 to the other models so switching
         // doesn't jump in volume (re-measured after the power-drive increase).
-        x * master * 6.0
+        x * master * 6.73
     }
 }
 

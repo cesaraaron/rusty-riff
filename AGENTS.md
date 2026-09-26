@@ -24,7 +24,7 @@ Guitar input
   → Pre-amp EQ          (low shelf 100 Hz / mid peak 650 Hz / high shelf 3 kHz — shapes what the amp clips)
   → Clean boost         (linear Power-Boost-style front-end gain; Bass/Treble shelves, no clipping)
   → Amp model           (switchable: Marshall JCM800 | Mesa Dual Rectifier | Randall Warhead — 8× oversampled)
-  → Cabinet sim         (switchable: Mesa 4×12 Vintage 30 | Marshall 4×12 Greenback | Orange PPC412 Vintage 30 — multi-mic IR)
+  → Cabinet sim         (switchable: Mesa 4×12 | Marshall 4×12 | Orange PPC412 | WEM 4×12 | Vox 2×12 | Fender 2×12 | Supro 1×10 — multi-mic IR)
   → Parametric EQ       (low shelf 120 Hz / mid peak 800 Hz Q 1.5 / high shelf 5 kHz)
   → Flanger             (stereo LFO-swept comb: 0.5–5 ms delay, 0.05–5 Hz rate, feedback capped at 90%, L/R a quarter-cycle apart)
   → Delay               (stereo ping-pong, 0–500 ms, feedback capped at 85%)
