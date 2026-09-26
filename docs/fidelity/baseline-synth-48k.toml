@@ -3,185 +3,185 @@ phrase = "chugs"
 
 [[render]]
 preset = "acdc_back_in_black"
-lufs_i = -18.854855
-crest_db = 15.811328
-correlation = 0.74977607
-centroid_hz = 3275.9026
+lufs_i = -18.655073
+crest_db = 15.489739
+correlation = 0.802394
+centroid_hz = 3290.7043
 
 [[render.ltas]]
 hz = 70.0
-db = 15.626732
+db = 19.151344
 
 [[render.ltas]]
 hz = 88.19447
-db = 1.7625961
+db = 4.1525803
 
 [[render.ltas]]
 hz = 111.11807
-db = -2.0414505
+db = -0.47107697
 
 [[render.ltas]]
 hz = 140.0
-db = 21.494942
+db = 22.641186
 
 [[render.ltas]]
 hz = 176.38895
-db = 5.621521
+db = 6.645378
 
 [[render.ltas]]
 hz = 222.23615
-db = 20.25455
+db = 20.708534
 
 [[render.ltas]]
 hz = 280.0
-db = 6.596077
+db = 6.1954727
 
 [[render.ltas]]
 hz = 352.7779
-db = -0.27894592
+db = -1.866066
 
 [[render.ltas]]
 hz = 444.4723
-db = 11.3705635
+db = 9.359287
 
 [[render.ltas]]
 hz = 560.0
-db = -5.6694183
+db = -7.616379
 
 [[render.ltas]]
 hz = 705.5558
-db = 7.9085197
+db = 3.8525696
 
 [[render.ltas]]
 hz = 888.9446
-db = 1.2311478
+db = -1.6946487
 
 [[render.ltas]]
 hz = 1120.0
-db = -12.868584
+db = -13.174622
 
 [[render.ltas]]
 hz = 1411.1116
-db = -5.473503
+db = -5.518135
 
 [[render.ltas]]
 hz = 1777.8892
-db = -5.5021973
+db = -5.6691895
 
 [[render.ltas]]
 hz = 2240.0
-db = -8.20874
+db = -7.852051
 
 [[render.ltas]]
 hz = 2822.2231
-db = -3.285614
+db = -2.568512
 
 [[render.ltas]]
 hz = 3555.7783
-db = -10.006454
+db = -8.930923
 
 [[render.ltas]]
 hz = 4480.0
-db = 6.2594147
+db = 6.990364
 
 [[render.ltas]]
 hz = 5644.4463
-db = -13.466362
+db = -13.240364
 
 [[render.ltas]]
 hz = 7111.5566
-db = -31.324814
+db = -31.094673
 
 [[render]]
 preset = "acdc_highway_to_hell"
-lufs_i = -19.161348
-crest_db = 16.5002
-correlation = 0.75417334
-centroid_hz = 3519.395
+lufs_i = -19.32345
+crest_db = 15.725935
+correlation = 0.79722995
+centroid_hz = 3372.1052
 
 [[render.ltas]]
 hz = 70.0
-db = 14.462563
+db = 18.440426
 
 [[render.ltas]]
 hz = 88.19447
-db = 2.0765533
+db = 4.1200256
 
 [[render.ltas]]
 hz = 111.11807
-db = -1.2082291
+db = -0.2722168
 
 [[render.ltas]]
 hz = 140.0
-db = 20.78128
+db = 22.074776
 
 [[render.ltas]]
 hz = 176.38895
-db = 4.520775
+db = 6.3235855
 
 [[render.ltas]]
 hz = 222.23615
-db = 19.628746
+db = 20.165726
 
 [[render.ltas]]
 hz = 280.0
-db = 5.7343674
+db = 6.1437225
 
 [[render.ltas]]
 hz = 352.7779
-db = -1.4026871
+db = -2.1010513
 
 [[render.ltas]]
 hz = 444.4723
-db = 10.746475
+db = 9.142735
 
 [[render.ltas]]
 hz = 560.0
-db = -6.164345
+db = -7.583206
 
 [[render.ltas]]
 hz = 705.5558
-db = 7.1413956
+db = 3.664482
 
 [[render.ltas]]
 hz = 888.9446
-db = 0.7774887
+db = -1.639061
 
 [[render.ltas]]
 hz = 1120.0
-db = -11.20591
+db = -12.466064
 
 [[render.ltas]]
 hz = 1411.1116
-db = -5.0770493
+db = -5.5203476
 
 [[render.ltas]]
 hz = 1777.8892
-db = -6.64666
+db = -5.8896255
 
 [[render.ltas]]
 hz = 2240.0
-db = -8.176033
+db = -7.7870865
 
 [[render.ltas]]
 hz = 2822.2231
-db = -2.9122238
+db = -2.301712
 
 [[render.ltas]]
 hz = 3555.7783
-db = -8.632309
+db = -8.49662
 
 [[render.ltas]]
 hz = 4480.0
-db = 7.812744
+db = 7.212044
 
 [[render.ltas]]
 hz = 5644.4463
-db = -12.457985
+db = -12.925545
 
 [[render.ltas]]
 hz = 7111.5566
-db = -29.799164
+db = -30.304848
 
 [[render]]
 preset = "eagles_hotel_california_clean"

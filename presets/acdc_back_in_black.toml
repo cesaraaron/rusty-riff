@@ -1,5 +1,5 @@
 name        = "AC/DC — Back in Black"
-description = "Inspired by Angus Young's rhythm crunch (Back in Black, 1980): guitar straight into a cranked Plexi and Greenbacks, no drive pedals (just a light pre-amp/parametric EQ and room). Not a verified session rig."
+description = "Inspired by Angus Young's rhythm crunch (Back in Black, 1980): guitar straight into a cranked Plexi and Greenbacks — no pedals, no reverb. Not a verified session rig."
 year        = 1980
 
 # ── Noise Gate ────────────────────────────────────────────────────────────────
@@ -9,46 +9,12 @@ enabled   = true
 threshold = 0.10
 release   = 0.44
 
-[compressor]
-enabled = false
-sustain = 0.40
-attack  = 0.30
-level   = 0.50
-
-# No fuzz, no overdrive: the Plexi alone carries the gain.
-[fuzz]
-enabled = false
-type    = 0.0
-fuzz    = 0.50
-tone    = 0.50
-level   = 0.60
-
+# No drive pedals: the Plexi alone carries the gain.
 [tube_screamer]
 enabled = false
 drive = 0.30
 tone  = 0.55
 level = 0.70
-
-[distortion]
-enabled = false
-drive = 0.40
-tone  = 0.50
-level = 0.65
-
-# ── Pre-amp EQ ────────────────────────────────────────────────────────────────
-# Mids up, lows tightened and a little top rolled off — the dry, woody AC/DC bite.
-[preamp_eq]
-enabled = true
-low  = 0.42
-mid  = 0.64
-high = 0.50
-
-[uni_vibe]
-enabled = false
-rate    = 0.24
-depth   = 0.40
-mix     = 0.0
-mode    = 0.0
 
 # ── Amp ───────────────────────────────────────────────────────────────────────
 # Marshall Super Lead "Plexi" pushed hard on the channel volume: the power amp's
@@ -70,51 +36,11 @@ mic_pos   = 0.52
 mic_blend = 0.22
 mic_room  = 0.14
 
-# ── Parametric EQ ─────────────────────────────────────────────────────────────
-# A final mid-forward shaping with the lows tucked for the tight rhythm chug.
-[eq]
-enabled = true
-low  = 0.42
-mid  = 0.58
-high = 0.52
-
-[chorus]
-enabled = false
-rate  = 0.22
-depth = 0.40
-mix   = 0.0
-
-[flanger]
-enabled  = false
-rate     = 0.20
-depth    = 0.30
-feedback = 0.20
-mix      = 0.0
-
-[phaser]
-enabled  = false
-rate     = 0.28
-depth    = 0.50
-feedback = 0.30
-mix      = 0.0
-
-# ── Delay ─────────────────────────────────────────────────────────────────────
-# Off — the whole point of the tone is that there is nothing between the guitar
-# and the amp.
-[delay]
-enabled  = false
-type     = 0.0
-time     = 0.30
-feedback = 0.28
-mix      = 0.0
-
-# ── Reverb ────────────────────────────────────────────────────────────────────
-# A short room, barely there — just enough to place the cab.
 [reverb]
-enabled = true
+enabled = false
 room = 0.30
 damp = 0.58
-mix  = 0.10
+mix  = 0.0
 
 [master]
 width = 1.0

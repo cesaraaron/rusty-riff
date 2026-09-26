@@ -1,51 +1,19 @@
 name        = "AC/DC — Highway to Hell"
-description = "Inspired by the cleaner end of the Young tone (Highway to Hell, 1979): a Plexi at edge-of-breakup with Greenbacks, no drive pedals (just a light EQ and room). Not a verified session rig."
+description = "Inspired by the cleaner end of the Young tone (Highway to Hell, 1979): a Plexi at edge-of-breakup with Greenbacks — no pedals, no reverb. Not a verified session rig."
 year        = 1979
 
+# ── Noise Gate ────────────────────────────────────────────────────────────────
 [noise_gate]
 enabled   = true
 threshold = 0.09
 release   = 0.46
 
-[compressor]
-enabled = false
-sustain = 0.40
-attack  = 0.30
-level   = 0.50
-
-[fuzz]
-enabled = false
-type    = 0.0
-fuzz    = 0.50
-tone    = 0.50
-level   = 0.60
-
+# No drive pedals: the Plexi alone carries the gain.
 [tube_screamer]
 enabled = false
 drive = 0.30
 tone  = 0.55
 level = 0.70
-
-[distortion]
-enabled = false
-drive = 0.40
-tone  = 0.50
-level = 0.65
-
-# ── Pre-amp EQ ────────────────────────────────────────────────────────────────
-# Mids and top up, lows trimmed — the bright, jangly AC/DC chord voice.
-[preamp_eq]
-enabled = true
-low  = 0.40
-mid  = 0.62
-high = 0.56
-
-[uni_vibe]
-enabled = false
-rate    = 0.24
-depth   = 0.40
-mix     = 0.0
-mode    = 0.0
 
 # ── Amp ───────────────────────────────────────────────────────────────────────
 # Plexi at edge of breakup: chords ring clean until you dig in, then the power
@@ -65,46 +33,11 @@ mic_pos   = 0.52
 mic_blend = 0.22
 mic_room  = 0.18
 
-[eq]
-enabled = true
-low  = 0.42
-mid  = 0.58
-high = 0.54
-
-[chorus]
-enabled = false
-rate  = 0.22
-depth = 0.40
-mix   = 0.0
-
-[flanger]
-enabled  = false
-rate     = 0.20
-depth    = 0.30
-feedback = 0.20
-mix      = 0.0
-
-[phaser]
-enabled  = false
-rate     = 0.28
-depth    = 0.50
-feedback = 0.30
-mix      = 0.0
-
-[delay]
-enabled  = false
-type     = 0.0
-time     = 0.30
-feedback = 0.28
-mix      = 0.0
-
-# ── Reverb ────────────────────────────────────────────────────────────────────
-# A short, bright room — barely there.
 [reverb]
-enabled = true
+enabled = false
 room = 0.32
 damp = 0.52
-mix  = 0.10
+mix  = 0.0
 
 [master]
 width = 1.0

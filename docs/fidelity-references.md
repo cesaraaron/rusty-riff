@@ -65,8 +65,8 @@ everywhere.
 
 | Preset | Amp | Cab | Enabled effects (in signal order) | Delay | Fuzz |
 | ------ | --- | --- | --------------------------------- | ----- | ---- |
-| `acdc_back_in_black` | plexi | marshall | gate, preeq, eq, reverb | off | off |
-| `acdc_highway_to_hell` | plexi | marshall | gate, preeq, eq, reverb | off | off |
+| `acdc_back_in_black` | plexi | marshall | gate | off | off |
+| `acdc_highway_to_hell` | plexi | marshall | gate | off | off |
 | `eagles_hotel_california_clean` | fender | fender | gate, comp, eq, chorus, delay, reverb | digital, 0.42 | off |
 | `eagles_hotel_california_solo` | plexi | marshall | gate, comp, ts, preeq, eq, delay, reverb | digital (default), 0.40 | off |
 | `guns_n_roses_november_rain_solo` | marshall | marshall | gate, delay, reverb | tape, 0.40 | off |
@@ -78,7 +78,7 @@ everywhere.
 | `pink_floyd_have_a_cigar_solo` | hiwatt | wem | gate, comp, preeq, eq, delay, reverb | tape, 0.50 | off |
 | `pink_floyd_money` | hiwatt | wem | gate, wah, fuzz, eq, delay, reverb | tape, 0.58 | Fuzz Face |
 | `pink_floyd_mother_solo` | hiwatt | wem | gate, comp, preeq, eq, delay, reverb | tape, 0.55 | off |
-| `pink_floyd_shine_on_crazy_diamond` | hiwatt | wem | gate, comp, fuzz, ts, preeq, vibe, eq, delay, reverb | tape, 0.66 | Big Muff |
+| `pink_floyd_shine_on_crazy_diamond` | hiwatt | wem | gate, comp, fuzz, boost, delay, reverb | tape, 0.66 | Fuzz Face |
 | `pink_floyd_time_chorus` | hiwatt | wem | gate, preeq, vibe, eq, delay, reverb | tape, 0.75 | off |
 | `pink_floyd_time_solo` | hiwatt | wem | gate, comp, fuzz, preeq, vibe, eq, delay, reverb | tape, 0.62 | Fuzz Face |
 | `van_halen_beat_it_solo` | plexi | marshall | gate, phaser, delay, reverb | tape, 0.22 | off |
@@ -91,9 +91,10 @@ both reproduced so the flag is auditable.
 
 | Preset | Claimed | Actual enabled path | Flag |
 | ------ | ------- | ------------------- | ---- |
-| `acdc_back_in_black` | "no pedals" | pre-EQ + parametric EQ + reverb (+ gate) | Overclaim; there is no pitch/wah/drive/fuzz, but the path has EQ + reverb. |
-| `acdc_highway_to_hell` | "no pedals in the way" | pre-EQ + parametric EQ + reverb (+ gate) | Same as above. |
-| `led_zeppelin_stairway_solo` | "cranked small-amp crunch"; site "Echoplex slap" | Plexi + Greenback 4×12; tape-echo field **absent** so the delay resolves to **digital ping-pong** | Amp description and echo type both mismatch. |
+| `acdc_back_in_black` | "no pedals" | pre-EQ + parametric EQ + reverb (+ gate) | **Resolved (Phase 5):** EQs/reverb removed — guitar → Plexi → Greenbacks, gate only; description now matches. |
+| `acdc_highway_to_hell` | "no pedals in the way" | pre-EQ + parametric EQ + reverb (+ gate) | **Resolved (Phase 5):** same as above. |
+| `led_zeppelin_stairway_solo` | "cranked small-amp crunch"; site "Echoplex slap" | Plexi + Greenback 4×12; tape-echo field **absent** so the delay resolves to **digital ping-pong** | **Resolved (Phase 5):** rebuilt on the Supro 1×10 combo, TS-808 removed. |
+| `pink_floyd_shine_on_crazy_diamond` | "Big Muff + TS + Uni-Vibe" | Fuzz Face + Power Boost into Hiwatt/WEM (Phase 5) | **Resolved (Phase 5):** fuzz type, TS removed, EQs/Vibe dropped, echo labelled an Echorec stand-in. |
 | `pink_floyd_*` (Echorec) | "Echorec repeat/delay" | generic EP-3-style **tape** delay, no Binson model | Named hardware is an approximation. |
 | `pink_floyd_another_brick_pt2` | "slow Phase 90 sweep" | generic 4-stage stereo phaser | Named hardware is an approximation. |
 | `pink_floyd_comfortably_numb_*` | "Electric Mistress" | generic stereo flanger | Named hardware is an approximation. |
