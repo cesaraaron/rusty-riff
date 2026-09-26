@@ -159,9 +159,10 @@ both reproduced so the flag is auditable.
   Supports: `plausible` · Source:
   <https://www.guitarworld.com/news/jimmy-page-reveals-the-amp-he-really-used-to-record-whole-lotta-love>
   and <https://themusicologygroup.com/2022/05/22/whole-lotta-love-tone/>
-- **Contradiction:** `stairway_solo` uses Plexi + Greenback 4×12 + TS, which does
-  not match the cited Telecaster→Supro; `whole_lotta_love` uses a Big-Muff-style
-  fuzz, not a Tone Bender. (Phase 5)
+- **Resolved (Phase 5):** `stairway_solo` was rebuilt on the cited Telecaster→Supro
+  (small combo + 1×10 cab), and `whole_lotta_love` already uses the Tone Bender
+  MkII (`fuzz type = 1.0`) matching the Page quote. Its Plexi/Greenback amp+cab
+  remains a labelled approximation (the cited Vox Super Beatle isn't modelled).
 
 ### `pink_floyd_*` (9 files)
 
