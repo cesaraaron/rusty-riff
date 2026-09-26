@@ -83,7 +83,7 @@ mic_room  = 0.22
 # ── Parametric EQ ─────────────────────────────────────────────────────────────
 # A mid-forward finish with the lows kept tight.
 [eq]
-enabled = true
+enabled = false
 low  = 0.42
 mid  = 0.56
 high = 0.58

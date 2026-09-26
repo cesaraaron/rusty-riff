@@ -45,7 +45,7 @@ level = 0.65
 # Lows trimmed for clarity, mids left open, top lifted for the bright, glassy
 # top the isolated guitar carries.
 [preamp_eq]
-enabled = true
+enabled = false
 low  = 0.40
 mid  = 0.52
 high = 0.56
@@ -83,7 +83,7 @@ mic_room  = 0.08
 # ── Parametric EQ ─────────────────────────────────────────────────────────────
 # Final shaping: lows cut for clarity, mids left open, a lift of air on top.
 [eq]
-enabled = true
+enabled = false
 low  = 0.40
 mid  = 0.52
 high = 0.56

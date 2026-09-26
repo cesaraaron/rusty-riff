@@ -45,7 +45,7 @@ level = 0.65
 # ── Pre-amp EQ ────────────────────────────────────────────────────────────────
 # Mids pushed for the vocal snarl, lows trimmed so fast low-note runs stay clear.
 [preamp_eq]
-enabled = true
+enabled = false
 low  = 0.42
 mid  = 0.62
 high = 0.58
@@ -83,7 +83,7 @@ mic_room  = 0.24
 # ── Parametric EQ ─────────────────────────────────────────────────────────────
 # A mid-forward finish with the lows kept in check and a little air up top.
 [eq]
-enabled = true
+enabled = false
 low  = 0.42
 mid  = 0.56
 high = 0.58

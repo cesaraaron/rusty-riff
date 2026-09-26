@@ -76,11 +76,11 @@ everywhere.
 | `pink_floyd_comfortably_numb_solo_1` | hiwatt | wem | gate, comp, fuzz, preeq, eq, flanger, delay, reverb | tape, 0.88 | Big Muff |
 | `pink_floyd_comfortably_numb_solo_2` | hiwatt | wem | gate, comp, fuzz, preeq, eq, flanger, delay, reverb | tape, 0.90 | Big Muff |
 | `pink_floyd_have_a_cigar_solo` | hiwatt | wem | gate, comp, preeq, eq, delay, reverb | tape, 0.50 | off |
-| `pink_floyd_money` | hiwatt | wem | gate, wah, fuzz, eq, delay, reverb | tape, 0.58 | Fuzz Face |
+| `pink_floyd_money` | hiwatt | wem | gate, wah, fuzz, delay, reverb | tape, 0.58 | Fuzz Face |
 | `pink_floyd_mother_solo` | hiwatt | wem | gate, comp, preeq, eq, delay, reverb | tape, 0.55 | off |
 | `pink_floyd_shine_on_crazy_diamond` | hiwatt | wem | gate, comp, fuzz, boost, delay, reverb | tape, 0.66 | Fuzz Face |
-| `pink_floyd_time_chorus` | hiwatt | wem | gate, preeq, vibe, eq, delay, reverb | tape, 0.75 | off |
-| `pink_floyd_time_solo` | hiwatt | wem | gate, comp, fuzz, preeq, vibe, eq, delay, reverb | tape, 0.62 | Fuzz Face |
+| `pink_floyd_time_chorus` | hiwatt | wem | gate, vibe, delay, reverb | tape, 0.75 | off |
+| `pink_floyd_time_solo` | hiwatt | wem | gate, comp, fuzz, vibe, delay, reverb | tape, 0.62 | Fuzz Face |
 | `van_halen_beat_it_solo` | plexi | marshall | gate, phaser, delay, reverb | tape, 0.22 | off |
 
 ### Description-vs-path flags
