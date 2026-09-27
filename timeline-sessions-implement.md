@@ -146,6 +146,16 @@ metronome are monitor-only.
   (Ctrl combos are deliberately unused: Kitty resizes fonts on `Ctrl`+`+`/`-`
   and macOS takes `Ctrl`+arrows.)
 
+### D4 — timeline polish
+- Arming a take (`R`) expands its row to the full pane via `record_zoom`, and the
+  previous zoom is restored when the take stops or aborts.
+- The cursor no longer rests on the transport/header row: `move_selection` clamps
+  to track rows (`reselect_after_removal` keeps a neighbour selected after a
+  delete), and the transport cursor was removed.
+- The transport readout is indented to the waveform gutter; ruler tick labels use
+  the subdued `GRID` grey and a compact form (seconds only under a minute), and
+  the empty timeline draws no labels.
+
 ---
 
 ## 3. Invariants — do not break

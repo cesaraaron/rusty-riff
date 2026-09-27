@@ -131,9 +131,10 @@ as, `Enter` load, `D` delete. Abandoned dry takes also appear here as
 - **Backing track** — `B` opens the import browser (MP3 / WAV / FLAC). Selecting
   a file adds it as a track at the playhead.
 - **Dry-take recording** — `R` arms and stops a dry (pre-rig) raw take. The take
-  auto-plays and lands on the timeline. Backing tracks and recorded takes are
-  summed into the output **after** the recording tap, so they are never captured
-  into a rendered WAV.
+  auto-plays and lands on the timeline; its row expands to the full pane while
+  recording (it returns to the previous height when you stop). Backing tracks and
+  recorded takes are summed into the output **after** the recording tap, so they
+  are never captured into a rendered WAV.
 - **Timeline** — focus it with `3`. `Space` plays/pauses any row, `↑`/`↓`
   select a track, `←`/`→` seek, `+`/`−` pick the step (0.5/1/5/10/30 s), `M`
   mutes, `G` sets track gain, `H` moves a clip (its arrows move by the step and

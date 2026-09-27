@@ -24,7 +24,7 @@ use ratatui::{
 };
 use std::sync::atomic::Ordering::Relaxed;
 
-use super::styles::{ACCENT, AMBER, CHROME, DIM, HOT, SAFE, WARN};
+use super::styles::{ACCENT, AMBER, CHROME, DIM, GRID, HOT, SAFE, WARN};
 use crate::audio::AudioEngine;
 use crate::audio::calibration::{InputCalibration, REFERENCE_VERSION};
 use crate::dsp::Params;
@@ -75,7 +75,7 @@ struct PendingDecode {
 }
 
 /// Which row owns the pane cursor.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Selection {
     Transport,
     Track(TrackId),
@@ -191,6 +191,9 @@ pub(super) struct PracticeUi {
     view_secs: Option<f64>,
     /// Waveform glyph family (cycled with `Shift+Tab`).
     wave_glyphs: WaveGlyphs,
+    /// Row zoom to restore when the active take stops (recording auto-expands
+    /// its row to the full pane).
+    record_zoom: Option<RowZoom>,
 
     /// Capture plumbing (attached per engine).
     capture_cmd: Option<Sender<CaptureCommand>>,
@@ -224,6 +227,7 @@ impl PracticeUi {
             row_zoom: RowZoom::Normal,
             view_secs: None,
             wave_glyphs: WaveGlyphs::Braille,
+            record_zoom: None,
             capture_cmd: None,
             capture_result: None,
             recording_id: None,
@@ -475,7 +479,7 @@ impl PracticeUi {
         }
         let Some(player_track) = result.track else {
             self.session.remove(result.generation);
-            self.selection = Selection::Transport;
+            self.reselect_after_removal();
             self.sanitize_zoom();
             self.message = Some("Empty take discarded".to_owned());
             return touched;
@@ -571,35 +575,35 @@ impl PracticeUi {
         practice.loop_enabled.store(now, Relaxed);
     }
 
-    /// Move the selection between the transport and the track rows.
+    /// Move the cursor between track rows. The transport/header row is not a
+    /// landing spot: with tracks present the cursor always sits on one of them
+    /// (the first/last when nothing is selected yet).
     pub(super) fn move_selection(&mut self, forward: bool) {
-        match self.selection {
-            Selection::Transport => {
-                if forward && let Some(id) = self.session.tracks().first().map(|t| t.id) {
-                    self.selection = Selection::Track(id);
-                    self.session.select(id);
-                }
+        if self.selected_track().is_none() {
+            let id = if forward {
+                self.session.tracks().first().map(|t| t.id)
+            } else {
+                self.session.tracks().last().map(|t| t.id)
+            };
+            if let Some(id) = id {
+                self.selection = Selection::Track(id);
+                self.session.select(id);
             }
-            Selection::Track(id) => {
-                let idx = self.session.index_of(id);
-                let last = self.session.len().saturating_sub(1);
-                match idx {
-                    Some(i) if forward && i >= last => {
-                        self.selection = Selection::Transport;
-                    }
-                    Some(0) if !forward => {
-                        self.selection = Selection::Transport;
-                    }
-                    Some(_) => {
-                        self.session.select_next(forward);
-                        if let Some(next) = self.session.selected() {
-                            self.selection = Selection::Track(next);
-                        }
-                    }
-                    None => self.selection = Selection::Transport,
-                }
-            }
+            return;
         }
+        self.session.select_next(forward);
+        if let Some(next) = self.session.selected() {
+            self.selection = Selection::Track(next);
+        }
+    }
+
+    /// After a row disappears, keep the cursor on a track (or the empty
+    /// transport state when the timeline is now empty).
+    fn reselect_after_removal(&mut self) {
+        self.selection = match self.session.selected() {
+            Some(id) => Selection::Track(id),
+            None => Selection::Transport,
+        };
     }
 
     /// `Tab` on the timeline: cycle the focused row's zoom state.
@@ -756,7 +760,7 @@ impl PracticeUi {
         }
         let _ = engine.remove_track(id);
         self.session.remove(id);
-        self.selection = Selection::Transport;
+        self.reselect_after_removal();
         self.sanitize_zoom();
     }
 
@@ -831,6 +835,10 @@ impl PracticeUi {
             TrackLifecycle::Recording,
         );
         self.selection = Selection::Track(id);
+        // A recording gets the whole pane so its waveform is easy to watch;
+        // restore whatever was shown when it stops.
+        self.record_zoom = Some(self.row_zoom);
+        self.row_zoom = RowZoom::Expanded(id);
 
         let path = self
             .session
@@ -851,7 +859,7 @@ impl PracticeUi {
         {
             self.message = Some("Capture writer unavailable".to_owned());
             self.session.remove(id);
-            self.selection = Selection::Transport;
+            self.reselect_after_removal();
             return;
         }
         self.capture_result = Some(rx);
@@ -870,6 +878,9 @@ impl PracticeUi {
         }
         // Stopping a take pauses the timeline so the playhead stays on the take.
         practice.playing.store(false, Relaxed);
+        if let Some(z) = self.record_zoom.take() {
+            self.row_zoom = z;
+        }
         self.message = Some("Finalizing take…".to_owned());
     }
 
@@ -882,9 +893,12 @@ impl PracticeUi {
         if let Some(id) = self.recording_id.take() {
             self.session.remove(id);
         }
+        if let Some(z) = self.record_zoom.take() {
+            self.row_zoom = z;
+        }
         self.capture_result = None;
         self.live_peaks = None;
-        self.selection = Selection::Transport;
+        self.reselect_after_removal();
     }
 
     pub(super) fn is_recording(&self) -> bool {
@@ -923,6 +937,7 @@ impl PracticeUi {
         self.selection = Selection::Transport;
         self.row_zoom = RowZoom::Normal;
         self.view_secs = None;
+        self.record_zoom = None;
         practice.reset();
         metronome.active.store(false, Relaxed);
         self.message = Some("New session".to_owned());
@@ -1104,6 +1119,7 @@ impl PracticeUi {
         self.live_peaks = None;
         self.row_zoom = RowZoom::Normal;
         self.view_secs = None;
+        self.record_zoom = None;
 
         manifest.rig.apply(params);
 
@@ -1131,7 +1147,7 @@ impl PracticeUi {
 
         self.session = new_session;
         self.rate_adopted = true;
-        self.selection = Selection::Transport;
+        self.reselect_after_removal();
 
         let pending: Vec<(TrackId, TrackKind, PathBuf)> = self
             .session
@@ -1437,9 +1453,9 @@ impl PracticeUi {
             (rows[1], rows[2])
         };
 
-        self.render_transport(f, rows[0], practice, focused, blink, recording);
+        self.render_transport(f, rows[0], practice, blink, recording);
         if show_ruler {
-            self.render_ruler(f, rows[1], practice, focused);
+            self.render_ruler(f, rows[1], practice);
         }
         self.render_tracks(f, tracks_row, practice, focused);
         self.render_hint(f, hint_row, focused);
@@ -1447,7 +1463,7 @@ impl PracticeUi {
 
     /// The time axis under the transport: `m:ss` tick labels at a spacing that
     /// never collides, plus the playhead marker, aligned to the waveform gutter.
-    fn render_ruler(&self, f: &mut Frame, area: Rect, practice: &Practice, focused: bool) {
+    fn render_ruler(&self, f: &mut Frame, area: Rect, practice: &Practice) {
         let width = area.width as usize;
         let wave_w = width.saturating_sub(GUTTER);
         if wave_w == 0 {
@@ -1455,16 +1471,22 @@ impl PracticeUi {
         }
         let (view_start, view_len) = self.view(practice);
         let secs = view_len as f64 / f64::from(self.sample_rate.max(1.0));
+        // An empty timeline has no meaningful times to label.
+        let empty = self.session.is_empty();
         // Coarsest tick whose labels do not collide at this window width.
-        let tick = RULER_TICKS
-            .iter()
-            .copied()
-            .find(|&t| {
-                secs > 0.0
-                    && (t / secs) * wave_w as f64
-                        >= ruler_label(view_start, self.sample_rate, t).len() as f64 + 1.0
-            })
-            .unwrap_or(*RULER_TICKS.last().unwrap_or(&1.0));
+        let tick = if empty {
+            f64::INFINITY
+        } else {
+            RULER_TICKS
+                .iter()
+                .copied()
+                .find(|&t| {
+                    secs > 0.0
+                        && (t / secs) * wave_w as f64
+                            >= ruler_label(view_start, self.sample_rate, t).len() as f64 + 1.0
+                })
+                .unwrap_or(*RULER_TICKS.last().unwrap_or(&1.0))
+        };
 
         let mut cells: Vec<(char, bool)> = vec![(' ', false); wave_w];
         let mut t = 0.0f64;
@@ -1474,7 +1496,7 @@ impl PracticeUi {
             } else {
                 0
             };
-            if col < wave_w {
+            if col < wave_w && !empty {
                 let clock = view_start + (t * f64::from(self.sample_rate)) as usize;
                 let label = ruler_label(clock, self.sample_rate, tick);
                 for (k, ch) in label.chars().enumerate() {
@@ -1497,18 +1519,17 @@ impl PracticeUi {
             }
         }
 
-        let label_color = if focused { AMBER } else { DIM };
         let mut spans = vec![Span::styled(
             format!("{:>width$}", "", width = GUTTER),
-            Style::default().fg(DIM),
+            Style::default(),
         )];
         for (ch, playhead) in cells {
             let style = if playhead {
                 Style::default().fg(HOT).add_modifier(Modifier::BOLD)
             } else if ch == ' ' {
-                Style::default().fg(DIM)
+                Style::default()
             } else {
-                Style::default().fg(label_color)
+                Style::default().fg(GRID)
             };
             spans.push(Span::styled(ch.to_string(), style));
         }
@@ -1520,7 +1541,6 @@ impl PracticeUi {
         f: &mut Frame,
         area: Rect,
         practice: &Practice,
-        focused: bool,
         blink: bool,
         recording: bool,
     ) {
@@ -1528,21 +1548,14 @@ impl PracticeUi {
         let total = self.span_frames(practice);
         let position = practice.position().min(total);
         let state = if playing {
-            Span::styled(
-                " ▶ ",
-                Style::default().fg(SAFE).add_modifier(Modifier::BOLD),
-            )
+            Span::styled("▶ ", Style::default().fg(SAFE).add_modifier(Modifier::BOLD))
         } else {
-            Span::styled(" ⏸ ", Style::default().fg(DIM))
-        };
-        let cursor = if focused && self.selection == Selection::Transport && blink {
-            "▌"
-        } else {
-            " "
+            Span::styled("⏸ ", Style::default().fg(DIM))
         };
         let loop_on = practice.loop_enabled.load(Relaxed);
         let mut transport = vec![
-            Span::styled(cursor.to_owned(), Style::default().fg(ACCENT)),
+            // Align the readout with the waveform/ruler gutter.
+            Span::styled(format!("{:>width$}", "", width = GUTTER), Style::default()),
             state,
             if recording && blink {
                 Span::styled(
@@ -2282,8 +2295,8 @@ const fn build_sextants() -> [char; 64] {
     table
 }
 
-/// Ruler tick label; precision follows the tick size so a zoomed-in window gets
-/// sub-second readouts (`m:ss.d` / `m:ss.dd`).
+/// Ruler tick label. Kept as short as the context allows — seconds only under a
+/// minute, and the precision follows the tick so zoomed windows read cleanly.
 fn ruler_label(frames: usize, sr: f32, tick: f64) -> String {
     let secs = if sr > 0.0 {
         frames as f64 / f64::from(sr)
@@ -2293,11 +2306,21 @@ fn ruler_label(frames: usize, sr: f32, tick: f64) -> String {
     let m = (secs / 60.0).floor() as u64;
     let s = secs - m as f64 * 60.0;
     if tick >= 1.0 {
-        format!("{m:02}:{:02}", s.floor() as u64)
+        if m > 0 {
+            format!("{m}:{:02}", s.floor() as u64)
+        } else {
+            format!("{}", s.floor() as u64)
+        }
     } else if tick >= 0.1 {
-        format!("{m:02}:{s:04.1}")
+        if m > 0 {
+            format!("{m}:{s:04.1}")
+        } else {
+            format!("{s:.1}")
+        }
+    } else if m > 0 {
+        format!("{m}:{s:05.2}")
     } else {
-        format!("{m:02}:{s:05.2}")
+        format!("{s:.2}")
     }
 }
 
@@ -2646,7 +2669,7 @@ mod tests {
             })
             .expect("draw");
             let text = screen_text(&term);
-            assert!(text.contains(":00"), "ruler tick missing under {zoom:?}");
+            assert!(text.contains("0.5"), "ruler tick missing under {zoom:?}");
             let braille = text.chars().any(|c| ('\u{2800}'..='\u{28FF}').contains(&c));
             assert!(braille, "braille waveform missing under {zoom:?}");
         }
@@ -2749,9 +2772,12 @@ mod tests {
 
     #[test]
     fn ruler_label_precision_follows_tick() {
-        assert_eq!(ruler_label(0, 48_000.0, 1.0), "00:00");
-        assert_eq!(ruler_label(24_000, 48_000.0, 0.1), "00:00.5");
-        assert_eq!(ruler_label(480, 48_000.0, 0.01), "00:00.01");
+        // Under a minute: seconds only, as short as the tick allows.
+        assert_eq!(ruler_label(0, 48_000.0, 1.0), "0");
+        assert_eq!(ruler_label(24_000, 48_000.0, 0.1), "0.5");
+        assert_eq!(ruler_label(480, 48_000.0, 0.01), "0.01");
+        // Past a minute: minutes and seconds.
+        assert_eq!(ruler_label(48_000 * 65, 48_000.0, 1.0), "1:05");
     }
 
     #[test]
@@ -2844,6 +2870,44 @@ mod tests {
             s.chars().any(|c| ('\u{1FB00}'..='\u{1FB3B}').contains(&c)),
             "sextant style drew no legacy-computing blocks"
         );
+    }
+
+    #[test]
+    fn move_selection_never_lands_on_the_transport() {
+        let mut ui = PracticeUi::new();
+        let (asset, kind) = ready("a.wav");
+        ui.session
+            .push(1, "a".into(), kind, asset, 0, 48_000, TrackLifecycle::Ready);
+        let (asset, kind) = ready("b.wav");
+        ui.session
+            .push(2, "b".into(), kind, asset, 0, 48_000, TrackLifecycle::Ready);
+
+        // From no selection: backward picks the last, forward the first.
+        ui.selection = Selection::Transport;
+        ui.move_selection(false);
+        assert_eq!(ui.selection, Selection::Track(2));
+        // Clamps at the first row and never returns to the header.
+        ui.move_selection(false);
+        assert_eq!(ui.selection, Selection::Track(1));
+        ui.move_selection(false);
+        assert_eq!(ui.selection, Selection::Track(1));
+        // Clamps at the last row.
+        ui.move_selection(true);
+        assert_eq!(ui.selection, Selection::Track(2));
+        ui.move_selection(true);
+        assert_eq!(ui.selection, Selection::Track(2));
+    }
+
+    #[test]
+    fn stopping_a_take_restores_the_previous_row_zoom() {
+        let mut ui = PracticeUi::new();
+        let capture = CaptureState::new();
+        let practice = Practice::new();
+        ui.record_zoom = Some(RowZoom::Split(1, 2));
+        ui.row_zoom = RowZoom::Expanded(9);
+        ui.finalize_capture(&capture, &practice);
+        assert_eq!(ui.row_zoom, RowZoom::Split(1, 2));
+        assert_eq!(ui.record_zoom, None);
     }
 
     #[test]

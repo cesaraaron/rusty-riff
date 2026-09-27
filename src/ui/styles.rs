@@ -6,6 +6,8 @@ pub(super) const AMBER: Color = Color::Rgb(255, 200, 60);
 pub(super) const ACCENT: Color = Color::Rgb(0x5F, 0xB3, 0xB3);
 pub(super) const DIM: Color = Color::Rgb(80, 80, 80);
 pub(super) const CHROME: Color = Color::Rgb(180, 180, 190);
+// Subdued grey for the timeline ruler's tick labels (present, not distracting).
+pub(super) const GRID: Color = Color::Rgb(118, 118, 128);
 pub(super) const HOT: Color = Color::Rgb(220, 30, 30);
 pub(super) const SAFE: Color = Color::Rgb(40, 180, 40);
 pub(super) const WARN: Color = Color::Rgb(220, 180, 0);

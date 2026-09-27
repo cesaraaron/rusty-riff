@@ -226,6 +226,21 @@ need seeking to reach. Zoom resets to fit on a new/loaded session.
 
 ---
 
+## F9. Timeline polish
+
+- **Recording expands its row.** Arming a take (`R`) sets `record_zoom` and shows
+  the take full-pane (as `Tab` would); the previous zoom is restored when the
+  take stops or aborts.
+- **Cursor only on tracks.** `move_selection` clamps to track rows, so the
+  transport/header row is no longer a landing spot (`reselect_after_removal`
+  keeps a neighbour selected after a delete); the transport cursor was removed.
+- **Aligned, quieter header.** The transport readout is indented to the waveform
+  gutter, ruler tick labels use the subdued `GRID` grey and a compact form
+  (seconds only under a minute; the empty timeline draws no labels). Terminal
+  font size cannot be changed, so "smaller" is achieved by shortening the labels.
+
+---
+
 ## Affected files
 
 | Area | Files |
