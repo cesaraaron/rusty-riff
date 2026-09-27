@@ -4,6 +4,11 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+  # Backstop: push-triggered runs are currently not firing on this repo/account
+  # (manual `workflow_dispatch` works). A weekly run keeps the gates honest until
+  # the push trigger is restored in Settings -> Actions.
+  schedule:
+    - cron: "0 6 * * 1"
 
 jobs:
   test:
