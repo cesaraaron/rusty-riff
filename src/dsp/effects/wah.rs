@@ -39,6 +39,10 @@ const F_MIN: f32 = 300.0;
 const F_MAX: f32 = 1500.0;
 /// How many octaves the envelope can sweep the peak above the base at full SENS.
 const SWEEP_OCT: f32 = 3.5;
+/// Manual (treadle) mode sweeps the peak across this range as POSITION goes 0→1 —
+/// a wider throw than the auto base, like a real wah's heel-to-toe.
+const MAN_F_MIN: f32 = 250.0;
+const MAN_F_MAX: f32 = 2500.0;
 /// A little resonant boost at the peak so the wah quacks rather than just filters.
 const WAH_BOOST: f32 = 1.6;
 
@@ -56,19 +60,40 @@ impl Wah {
         }
     }
 
-    /// `freq` 0–1 (base position), `sens` 0–1 (auto sweep), `q` 0–1, `mix` 0–1.
+    /// Mono wah. `freq` 0–1 (auto base position), `sens` 0–1 (auto sweep), `q`,
+    /// `mix`, `mode` (< 0.5 = auto envelope, ≥ 0.5 = **manual treadle**) and
+    /// `position` 0–1 (the treadle position in manual mode — driven by an
+    /// expression pedal / MIDI CC, or the knob).
+    #[allow(clippy::too_many_arguments)]
     #[inline]
-    pub fn process(&mut self, x: f32, freq: f32, sens: f32, q: f32, mix: f32) -> f32 {
+    pub fn process(
+        &mut self,
+        x: f32,
+        freq: f32,
+        sens: f32,
+        q: f32,
+        mix: f32,
+        mode: f32,
+        position: f32,
+    ) -> f32 {
         // Envelope follower: rectify, then smooth with fast-attack / slow-release so
         // the peak tracks the pick transient and eases back down on the decay.
         let rect = x.abs();
         let coeff = if rect > self.env { self.att } else { self.rel };
         self.env += coeff * (rect - self.env);
 
-        // Base peak position (exponential over the knob), swept up by the envelope.
-        let base = F_MIN * (F_MAX / F_MIN).powf(freq.clamp(0.0, 1.0));
-        let sweep = (self.env * sens.clamp(0.0, 1.0) * SWEEP_OCT).exp2();
-        let fc = (base * sweep).clamp(120.0, self.sr * 0.45);
+        // Peak centre: a manual treadle across the full wah range, or the auto
+        // base position swept up by the envelope.
+        let manual = mode >= 0.5;
+        let fc = if manual {
+            let pos = position.clamp(0.0, 1.0);
+            MAN_F_MIN * (MAN_F_MAX / MAN_F_MIN).powf(pos)
+        } else {
+            let base = F_MIN * (F_MAX / F_MIN).powf(freq.clamp(0.0, 1.0));
+            let sweep = (self.env * sens.clamp(0.0, 1.0) * SWEEP_OCT).exp2();
+            base * sweep
+        }
+        .clamp(120.0, self.sr * 0.45);
 
         // Resonance: Q 1.5–6.5. Higher = a narrower, sharper quack.
         let q_val = 1.5 + q.clamp(0.0, 1.0) * 5.0;
@@ -115,7 +140,7 @@ mod tests {
         let mut out = Vec::with_capacity(n - warmup);
         for i in 0..n {
             let x = (2.0 * PI * f0 * i as f32 / SR).sin() * amp;
-            let y = w.process(x, freq, sens, q, mix);
+            let y = w.process(x, freq, sens, q, mix, 0.0, 0.5);
             assert!(y.is_finite(), "wah non-finite at {i}");
             if i >= warmup {
                 out.push(y);
@@ -130,7 +155,7 @@ mod tests {
         let mut w = Wah::new(SR);
         for n in 0..4000 {
             let x = (n as f32 * 0.021).sin() * 0.6;
-            let y = w.process(x, 0.5, 0.5, 0.5, 0.0);
+            let y = w.process(x, 0.5, 0.5, 0.5, 0.0, 0.0, 0.5);
             assert!((y - x).abs() < 1e-6, "dry mix altered the signal at {n}");
         }
     }
@@ -143,7 +168,7 @@ mod tests {
         let mut max_abs = 0.0f32;
         for n in 0..(SR as usize) {
             let x = (2.0 * PI * 500.0 * n as f32 / SR).sin() * 0.9;
-            let y = w.process(x, 0.8, 1.0, 1.0, 1.0);
+            let y = w.process(x, 0.8, 1.0, 1.0, 1.0, 0.0, 0.5);
             assert!(y.is_finite(), "non-finite at {n}");
             max_abs = max_abs.max(y.abs());
         }
@@ -199,6 +224,45 @@ mod tests {
         assert!(
             loud > quiet * 1.5,
             "SENS did not sweep the peak with the envelope (loud {loud:.4} vs quiet {quiet:.4})"
+        );
+    }
+
+    /// Manual (treadle) mode parks the peak at POSITION and ignores the envelope.
+    #[test]
+    fn manual_mode_parks_the_peak_at_the_position() {
+        let render_manual = |f0: f32, amp: f32, position: f32| {
+            let mut w = Wah::new(SR);
+            let n = SR as usize;
+            let warmup = n / 4;
+            let mut out = Vec::with_capacity(n - warmup);
+            for i in 0..n {
+                let x = (2.0 * PI * f0 * i as f32 / SR).sin() * amp;
+                let y = w.process(x, 0.5, 0.0, 0.5, 1.0, 1.0, position);
+                assert!(y.is_finite(), "wah non-finite at {i}");
+                if i >= warmup {
+                    out.push(y);
+                }
+            }
+            out
+        };
+        // High note: passed better with the treadle up than down.
+        let hi = |pos| rms(&render_manual(1800.0, 0.5, pos));
+        assert!(
+            hi(0.95) > hi(0.1) * 1.5,
+            "manual high position did not open the wah for a high note"
+        );
+        // Low note: the reverse — the peak is parked down at the low position.
+        let lo = |pos| rms(&render_manual(300.0, 0.5, pos));
+        assert!(
+            lo(0.1) > lo(0.95) * 1.5,
+            "manual low position did not pass a low note"
+        );
+        // Manual mode is level-independent (no envelope tracking): output/input
+        // ratio is the same loud vs quiet.
+        let ratio = |amp: f32| rms(&render_manual(1000.0, amp, 0.6)) / amp as f64;
+        assert!(
+            (ratio(0.9) - ratio(0.05)).abs() < ratio(0.9) * 0.15,
+            "manual mode still tracks the envelope"
         );
     }
 }

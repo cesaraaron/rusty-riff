@@ -93,6 +93,20 @@ pub struct WahSection {
     pub sens: f32,
     pub q: f32,
     pub mix: f32,
+    /// 0 = auto-wah (envelope), 1 = manual treadle. Defaults to auto.
+    #[serde(default = "wah_mode_default")]
+    pub mode: f32,
+    /// Treadle position 0–1 for manual mode. Defaults to centre.
+    #[serde(default = "wah_position_default")]
+    pub position: f32,
+}
+
+fn wah_mode_default() -> f32 {
+    0.0
+}
+
+fn wah_position_default() -> f32 {
+    0.5
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -458,6 +472,8 @@ impl Preset {
                 sens: params.wah_sens.load(Relaxed),
                 q: params.wah_q.load(Relaxed),
                 mix: params.wah_mix.load(Relaxed),
+                mode: params.wah_mode.load(Relaxed),
+                position: params.wah_position.load(Relaxed),
             }),
             fuzz: Some(FuzzSection {
                 enabled: Some(params.fz_enabled.load(Relaxed)),
@@ -654,6 +670,10 @@ impl Preset {
             params.wah_sens.store(wah.sens.clamp(0.0, 1.0), Relaxed);
             params.wah_q.store(wah.q.clamp(0.0, 1.0), Relaxed);
             params.wah_mix.store(wah.mix.clamp(0.0, 1.0), Relaxed);
+            params.wah_mode.store(wah.mode.clamp(0.0, 1.0), Relaxed);
+            params
+                .wah_position
+                .store(wah.position.clamp(0.0, 1.0), Relaxed);
         } else {
             params.wah_enabled.store(false, Relaxed);
         }
@@ -1225,7 +1245,15 @@ mod tests {
         }
         knobs!(ng_enabled, ng_threshold, ng_release);
         knobs!(pitch_enabled, pitch_pitch, pitch_mix, pitch_tone);
-        knobs!(wah_enabled, wah_freq, wah_sens, wah_q, wah_mix);
+        knobs!(
+            wah_enabled,
+            wah_freq,
+            wah_sens,
+            wah_q,
+            wah_mix,
+            wah_mode,
+            wah_position
+        );
         knobs!(cmp_enabled, cmp_sustain, cmp_attack, cmp_level);
         knobs!(fz_enabled, fz_fuzz, fz_tone, fz_level, fz_type, fz_guitar);
         knobs!(ts_enabled, ts_drive, ts_tone, ts_level);

@@ -56,7 +56,7 @@ pub(super) const NG_END: usize = NG_START + 2;
 pub(super) const PITCH_START: usize = NG_END;
 pub(super) const PITCH_END: usize = PITCH_START + 3;
 pub(super) const WAH_START: usize = PITCH_END;
-pub(super) const WAH_END: usize = WAH_START + 4;
+pub(super) const WAH_END: usize = WAH_START + 6;
 pub(super) const CMP_START: usize = WAH_END;
 pub(super) const CMP_END: usize = CMP_START + 3;
 pub(super) const FUZZ_START: usize = CMP_END;
@@ -179,7 +179,15 @@ pub(super) const KNOBS: &[Knob] = &[
         label: "MIX",
         param: |p| &p.wah_mix,
     },
-    // 18–20: Compressor
+    Knob {
+        label: "MODE",
+        param: |p| &p.wah_mode,
+    },
+    Knob {
+        label: "POSITION",
+        param: |p| &p.wah_position,
+    },
+    // Compressor
     Knob {
         label: "SUSTAIN",
         param: |p| &p.cmp_sustain,
@@ -751,7 +759,7 @@ mod tests {
         // Deliberate tripwire: bump these when you add or remove a pedal/knob so
         // the change is a conscious, reviewed edit rather than an accident.
         assert_eq!(PEDALS.len(), 19, "pedal count changed");
-        assert_eq!(KNOBS.len(), 82, "knob count changed");
+        assert_eq!(KNOBS.len(), 84, "knob count changed");
     }
 
     #[test]

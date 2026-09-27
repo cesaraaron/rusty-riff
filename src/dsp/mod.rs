@@ -541,6 +541,8 @@ const DEFAULT_WAH_FREQ: f32 = 0.40;
 const DEFAULT_WAH_SENS: f32 = 0.55;
 const DEFAULT_WAH_Q: f32 = 0.50;
 const DEFAULT_WAH_MIX: f32 = 0.90;
+const DEFAULT_WAH_MODE: f32 = 0.0;
+const DEFAULT_WAH_POSITION: f32 = 0.5;
 
 const DEFAULT_PEQ_ENABLED: bool = false;
 const DEFAULT_PEQ_LOW: f32 = 0.50;
@@ -699,6 +701,10 @@ pub struct Params {
     pub wah_sens: Arc<AtomicF32>,
     pub wah_q: Arc<AtomicF32>,
     pub wah_mix: Arc<AtomicF32>,
+    /// `< 0.5` = auto envelope; `>= 0.5` = manual treadle (expression/MIDI/knob).
+    pub wah_mode: Arc<AtomicF32>,
+    /// Treadle position 0–1 (manual mode).
+    pub wah_position: Arc<AtomicF32>,
 
     // Pre-amp EQ (before the amp)
     pub peq_enabled: Arc<AtomicBool>,
@@ -899,6 +905,8 @@ impl Params {
             wah_sens: p!(DEFAULT_WAH_SENS),
             wah_q: p!(DEFAULT_WAH_Q),
             wah_mix: p!(DEFAULT_WAH_MIX),
+            wah_mode: p!(DEFAULT_WAH_MODE),
+            wah_position: p!(DEFAULT_WAH_POSITION),
 
             peq_enabled: b!(DEFAULT_PEQ_ENABLED),
             peq_low: p!(DEFAULT_PEQ_LOW),
@@ -1041,6 +1049,8 @@ impl Params {
         self.wah_sens.store(DEFAULT_WAH_SENS, Relaxed);
         self.wah_q.store(DEFAULT_WAH_Q, Relaxed);
         self.wah_mix.store(DEFAULT_WAH_MIX, Relaxed);
+        self.wah_mode.store(DEFAULT_WAH_MODE, Relaxed);
+        self.wah_position.store(DEFAULT_WAH_POSITION, Relaxed);
 
         self.peq_enabled.store(DEFAULT_PEQ_ENABLED, Relaxed);
         self.peq_low.store(DEFAULT_PEQ_LOW, Relaxed);
@@ -1608,7 +1618,9 @@ impl DspChain {
                 wah_freq,
                 wah_sens,
                 wah_q,
-                wah_mix
+                wah_mix,
+                wah_mode,
+                wah_position
             ),
             ChainStage::Comp => mono_stage!(
                 self,
