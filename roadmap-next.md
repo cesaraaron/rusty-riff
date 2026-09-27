@@ -137,6 +137,11 @@ preset/DSP voicing drift now fails CI.
 
 **Acceptance.** Green on `main`; a deliberately broken commit fails the right gate.
 
+**Caveat (needs a maintainer action).** Push/PR triggers are **not creating runs**
+on this repo/account right now — a manual `gh workflow run test.yml` runs both
+jobs green, including the fidelity `--check`. Until the push trigger is restored
+(Settings → Actions), CI must be run manually or via the weekly schedule.
+
 ### 4.2 Benchmarks
 
 **Why.** The audio path and cab construction have real budgets (the docs already
