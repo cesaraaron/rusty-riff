@@ -241,6 +241,22 @@ need seeking to reach. Zoom resets to fit on a new/loaded session.
 
 ---
 
+## F10. Waveform gain modes & time readout
+
+- **Amplitude mapping.** `WaveGain` cycles `Shift+A`: `Normalized` auto-scales
+  each track so its loudest peak fills `PEAK_FILL` (0.9) of the row
+  (`envelope_gain`), and `Absolute` shows the true sample scale. The mode only
+  feeds the envelope scale, so zoom and row height are unaffected. Normalized is
+  the default; a quiet take reads as clearly as a loud one (absolute level is not
+  on screen in that mode).
+- **Ruler spacing.** The compact labels had lowered the no-collision threshold, so
+  ticks crowded. The threshold now has a floor of 8 cells, restoring the sparse
+  placement while keeping the small grey text.
+- **Exact cursor time.** Because the ruler is deliberately sparse, the transport
+  header shows the playhead to hundredths (`mmss_precise`, `mm:ss.dd`).
+
+---
+
 ## Affected files
 
 | Area | Files |

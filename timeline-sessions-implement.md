@@ -155,6 +155,10 @@ metronome are monitor-only.
 - The transport readout is indented to the waveform gutter; ruler tick labels use
   the subdued `GRID` grey and a compact form (seconds only under a minute), and
   the empty timeline draws no labels.
+- `Shift+A` toggles `WaveGain` (Normalized ↔ Absolute); normalized scales each
+  track by `PEAK_FILL / peak` so its loudest point fills the row. Ruler label
+  spacing has an 8-cell floor so compact labels do not crowd; the header shows the
+  playhead to hundredths (`mmss_precise`).
 
 ---
 

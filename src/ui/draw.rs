@@ -1347,7 +1347,7 @@ pub(super) fn render_help_modal(f: &mut Frame) {
             "  step (seek & clip move): 0.5 / 1 / 5 / 10 / 30 s",
         ),
         row("  Tab / Shift+Tab", "  row height / waveform glyph style"),
-        row("  Shift+↑/↓", "  zoom the time axis around the playhead"),
+        row("  Shift+A / Shift+↑↓", "  waveform gain / time zoom"),
         row("  G", "  selected track gain"),
         row(
             "  H",

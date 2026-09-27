@@ -1276,6 +1276,15 @@ pub fn run(
                         KeyCode::BackTab if focus == Some(PRACTICE_TILE) => {
                             practice_ui.cycle_glyphs();
                         }
+                        // `Shift+A` toggles the waveform's amplitude mapping
+                        // (normalized / absolute); plain `A` still opens the amp
+                        // browser elsewhere.
+                        KeyCode::Char('a') | KeyCode::Char('A')
+                            if focus == Some(PRACTICE_TILE)
+                                && key.modifiers.contains(KeyModifiers::SHIFT) =>
+                        {
+                            practice_ui.cycle_gain();
+                        }
                         KeyCode::Delete | KeyCode::Backspace if focus == Some(PRACTICE_TILE) => {
                             practice_ui.delete_selected(&mut engine, &practice, &capture);
                         }

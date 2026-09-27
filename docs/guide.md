@@ -140,8 +140,10 @@ as, `Enter` load, `D` delete. Abandoned dry takes also appear here as
   mutes, `G` sets track gain, `H` moves a clip (its arrows move by the step and
   `+`/`−` change it), `Tab` changes the selected row's height (full, then 50/50
   with a second row, then back) and `Shift`+`Tab` cycles the waveform glyph
-  style (braille / sextant / quadrant / half-block), `Shift`+`↑`/`↓` zoom the
-  time axis around the playhead for millisecond detail, `[`/`]`/`L` set the loop
+  style (braille / sextant / quadrant / half-block), `Shift`+`A` toggles the
+  waveform's vertical gain (normalized to each track's peak, or absolute),
+  `Shift`+`↑`/`↓` zoom the time axis around the playhead for millisecond detail,
+  `[`/`]`/`L` set the loop
   in/out and toggle looping, `Del` removes a track, and `E` exports the unmuted
   raw takes as a WAV. A time ruler above the rows shows where the playhead sits,
   the waveform is drawn as a fine envelope that grows live while a take records,

@@ -106,6 +106,43 @@ enum WaveGlyphs {
     Half,
 }
 
+/// How the waveform maps sample amplitude to row height.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum WaveGain {
+    /// Auto-scale each track so its loudest peak fills most of the row.
+    Normalized,
+    /// True scale: sample values are shown as-is (peaks at ±1 fill the row).
+    Absolute,
+}
+
+impl WaveGain {
+    fn next(self) -> Self {
+        match self {
+            WaveGain::Normalized => WaveGain::Absolute,
+            WaveGain::Absolute => WaveGain::Normalized,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            WaveGain::Normalized => "normalized",
+            WaveGain::Absolute => "absolute",
+        }
+    }
+}
+
+/// Fraction of the row the loudest peak fills under [`WaveGain::Normalized`].
+const PEAK_FILL: f32 = 0.9;
+
+/// Display gain that scales a track so its loudest peak fills [`PEAK_FILL`] of
+/// the row. Silence (or an empty envelope) stays flat.
+fn envelope_gain(peaks: &[(f32, f32)]) -> f32 {
+    let peak = peaks
+        .iter()
+        .fold(0.0f32, |m, &(lo, hi)| m.max(hi.abs()).max(lo.abs()));
+    if peak > 1e-6 { PEAK_FILL / peak } else { 0.0 }
+}
+
 impl WaveGlyphs {
     fn cols(self) -> usize {
         match self {
@@ -191,6 +228,8 @@ pub(super) struct PracticeUi {
     view_secs: Option<f64>,
     /// Waveform glyph family (cycled with `Shift+Tab`).
     wave_glyphs: WaveGlyphs,
+    /// Waveform amplitude mapping (cycled with `Shift+A`).
+    wave_gain: WaveGain,
     /// Row zoom to restore when the active take stops (recording auto-expands
     /// its row to the full pane).
     record_zoom: Option<RowZoom>,
@@ -227,6 +266,7 @@ impl PracticeUi {
             row_zoom: RowZoom::Normal,
             view_secs: None,
             wave_glyphs: WaveGlyphs::Braille,
+            wave_gain: WaveGain::Normalized,
             record_zoom: None,
             capture_cmd: None,
             capture_result: None,
@@ -707,6 +747,12 @@ impl PracticeUi {
     pub(super) fn cycle_glyphs(&mut self) {
         self.wave_glyphs = self.wave_glyphs.next();
         self.message = Some(format!("Waveform: {}", self.wave_glyphs.label()));
+    }
+
+    /// `Shift+A`: toggle the waveform amplitude mapping.
+    pub(super) fn cycle_gain(&mut self) {
+        self.wave_gain = self.wave_gain.next();
+        self.message = Some(format!("Waveform gain: {}", self.wave_gain.label()));
     }
 
     /// Set the loop in-point at the playhead, opening a one-second region if the
@@ -1483,7 +1529,8 @@ impl PracticeUi {
                 .find(|&t| {
                     secs > 0.0
                         && (t / secs) * wave_w as f64
-                            >= ruler_label(view_start, self.sample_rate, t).len() as f64 + 1.0
+                            >= (ruler_label(view_start, self.sample_rate, t).len() as f64 + 1.0)
+                                .max(8.0)
                 })
                 .unwrap_or(*RULER_TICKS.last().unwrap_or(&1.0))
         };
@@ -1570,7 +1617,7 @@ impl PracticeUi {
             Span::styled(
                 format!(
                     "{} / {}  ",
-                    mmss(position, self.sample_rate),
+                    mmss_precise(position, self.sample_rate),
                     mmss(total, self.sample_rate)
                 ),
                 Style::default().fg(CHROME),
@@ -1773,6 +1820,11 @@ impl PracticeUi {
         // Vertical centre, in sub-cell rows.
         let center = (height * rows) as f32 / 2.0;
         let sub_cols = cols * wave_w;
+        // Amplitude mapping: auto-fit each track, or show the true scale.
+        let gain = match self.wave_gain {
+            WaveGain::Normalized => envelope_gain(peaks),
+            WaveGain::Absolute => 1.0,
+        };
 
         // Min/max envelope for one sub-column, in sub-cell rows around the
         // centre. `None` when the sub-column falls outside the clip.
@@ -1793,8 +1845,8 @@ impl PracticeUi {
                 lo = lo.min(l);
                 hi = hi.max(h);
             }
-            let top = center - hi.clamp(-1.0, 1.0) * center;
-            let bottom = center - lo.clamp(-1.0, 1.0) * center;
+            let top = center - (hi * gain).clamp(-1.0, 1.0) * center;
+            let bottom = center - (lo * gain).clamp(-1.0, 1.0) * center;
             Some((top.max(0.0), bottom.min((height * rows) as f32)))
         };
 
@@ -2333,6 +2385,19 @@ fn format_step(secs: f32) -> String {
     }
 }
 
+/// `mm:ss.dd` (hundredths) for the exact cursor time at `sr`.
+fn mmss_precise(frames: usize, sr: f32) -> String {
+    let centis = if sr > 0.0 {
+        ((frames as f64 / f64::from(sr)) * 100.0).round() as u64
+    } else {
+        0
+    };
+    let m = centis / 6000;
+    let s = (centis / 100) % 60;
+    let cs = centis % 100;
+    format!("{m:02}:{s:02}.{cs:02}")
+}
+
 /// `mm:ss` for a frame count at `sr`.
 pub(super) fn mmss(frames: usize, sr: f32) -> String {
     let secs = if sr > 0.0 {
@@ -2669,7 +2734,7 @@ mod tests {
             })
             .expect("draw");
             let text = screen_text(&term);
-            assert!(text.contains("0.5"), "ruler tick missing under {zoom:?}");
+            assert!(text.contains("0.2"), "ruler tick missing under {zoom:?}");
             let braille = text.chars().any(|c| ('\u{2800}'..='\u{28FF}').contains(&c));
             assert!(braille, "braille waveform missing under {zoom:?}");
         }
@@ -2908,6 +2973,74 @@ mod tests {
         ui.finalize_capture(&capture, &practice);
         assert_eq!(ui.row_zoom, RowZoom::Split(1, 2));
         assert_eq!(ui.record_zoom, None);
+    }
+
+    #[test]
+    fn envelope_gain_fits_the_peak_with_headroom() {
+        assert_eq!(envelope_gain(&[]), 0.0);
+        assert_eq!(envelope_gain(&[(0.0, 0.0)]), 0.0);
+        assert!((envelope_gain(&[(-0.2, 0.2)]) - 4.5).abs() < 1e-5);
+        assert!((envelope_gain(&[(-1.0, 1.0)]) - 0.9).abs() < 1e-5);
+    }
+
+    #[test]
+    fn cycle_gain_toggles_normalized_and_absolute() {
+        let mut ui = PracticeUi::new();
+        assert_eq!(ui.wave_gain, WaveGain::Normalized);
+        ui.cycle_gain();
+        assert_eq!(ui.wave_gain, WaveGain::Absolute);
+        ui.cycle_gain();
+        assert_eq!(ui.wave_gain, WaveGain::Normalized);
+    }
+
+    #[test]
+    fn normalized_fills_more_than_absolute() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut ui = PracticeUi::new();
+        let practice = Practice::new();
+        ui.session.push(
+            1,
+            "t".into(),
+            TrackKind::Import,
+            Some(AssetRef {
+                path: PathBuf::from("t.wav"),
+                source_sample_rate: 48_000,
+                source_channels: 2,
+            }),
+            0,
+            48_000,
+            TrackLifecycle::Ready,
+        );
+        // A quiet track: ±0.2 raw amplitude.
+        ui.session.track_mut(1).expect("track").peaks = vec![(-0.2, 0.2); 64];
+        ui.move_selection(true);
+
+        let dots = |text: &str| -> u32 {
+            text.chars()
+                .filter(|c| ('\u{2800}'..='\u{28FF}').contains(c))
+                .map(|c| (c as u32 - 0x2800).count_ones())
+                .sum()
+        };
+        let mut term = Terminal::new(TestBackend::new(90, 12)).expect("test backend");
+        let render = |ui: &PracticeUi, term: &mut Terminal<TestBackend>| {
+            term.draw(|f| {
+                let area = f.area();
+                ui.render(f, area, &practice, true, false, false);
+            })
+            .expect("draw");
+            screen_text(term)
+        };
+
+        ui.wave_gain = WaveGain::Normalized;
+        let normalized = dots(&render(&ui, &mut term));
+        ui.wave_gain = WaveGain::Absolute;
+        let absolute = dots(&render(&ui, &mut term));
+        assert!(
+            normalized > absolute,
+            "normalized ({normalized}) should fill more than absolute ({absolute})"
+        );
     }
 
     #[test]
