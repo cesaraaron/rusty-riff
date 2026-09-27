@@ -34,6 +34,7 @@ expression: text
                                       ║Panels                                                                                     ║                                       
                                       ║  B  import a track at the playhead (MP3 / WAV / FLAC)                                     ║                                       
                                       ║Preset browser                                                                             ║                                       
+                                      ║  type  filter by name / description (Backspace; Esc clears)                               ║                                       
                                       ║  ↑/↓  Enter  navigate / apply (audio uninterrupted)                                       ║                                       
                                       ║  S / E / I  save / export / import                                                        ║                                       
                                       ║  F  favorite the selected preset                                                          ║                                       

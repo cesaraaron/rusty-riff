@@ -1323,6 +1323,10 @@ pub(super) fn render_help_modal(f: &mut Frame) {
         head("Panels"),
         row("  B", "  import a track at the playhead (MP3 / WAV / FLAC)"),
         head("Preset browser"),
+        row(
+            "  type",
+            "  filter by name / description (Backspace; Esc clears)",
+        ),
         row("  ↑/↓  Enter", "  navigate / apply (audio uninterrupted)"),
         row("  S / E / I", "  save / export / import"),
         row("  F", "  favorite the selected preset"),
@@ -2151,9 +2155,44 @@ mod tests {
                 &presets,
                 2,
                 &std::collections::HashSet::new(),
+                "",
             );
         });
         insta::assert_snapshot!("preset_modal", text);
+    }
+
+    /// The preset picker with an active type-to-filter query: "Clean Combo" is
+    /// hidden and the title carries the filter text.
+    #[cfg(feature = "clap")]
+    #[test]
+    fn snapshot_preset_modal_filtered() {
+        use crate::preset::{Preset, PresetSource};
+        let params = Params::new();
+        let mut system = Preset::from_params(
+            "Clean Combo".to_string(),
+            Some("sparkly cleans".to_string()),
+            &params,
+        );
+        system.source = PresetSource::System;
+        let mut user = Preset::from_params(
+            "My Lead".to_string(),
+            Some("saved rig".to_string()),
+            &params,
+        );
+        user.source = PresetSource::User;
+        let presets = vec![system, user];
+        let board = default_board(&params);
+        // Only "My Lead" matches; it becomes visible row 1.
+        let text = render_with(&params, &board, None, |f| {
+            crate::ui::presets::render_preset_modal(
+                f,
+                &presets,
+                1,
+                &std::collections::HashSet::new(),
+                "lead",
+            );
+        });
+        insta::assert_snapshot!("preset_modal_filtered", text);
     }
 
     /// The keybinding cheat-sheet over the default board.

@@ -45,7 +45,10 @@ use input::{
     select_amp, select_cab, step_knob_in_panel, tab_in_panel, toggle_pedal, toggle_stage,
 };
 use practice::{PracticeUi, SaveContext};
-use presets::{PathDialogKind, render_path_dialog, render_preset_modal, render_save_dialog};
+use presets::{
+    PathDialogKind, render_path_dialog, render_preset_modal, render_save_dialog, selected_preset,
+    visible_len,
+};
 use sessions::{Action as SessionAction, SessionBrowser};
 
 /// Board membership derived from the live enabled flags (one entry per pedal).
@@ -239,6 +242,8 @@ pub fn run(
     let mut cab_cursor = 0usize;
     let mut preset_open = false;
     let mut preset_cursor = 0usize;
+    // Type-to-filter query for the preset browser (empty = show everything).
+    let mut preset_filter = String::new();
     let mut presets = presets;
     let mut favorites = crate::preset::load_favorites();
     let mut save_open = false;
@@ -492,7 +497,7 @@ pub fn run(
                     );
                 }
                 if preset_open {
-                    render_preset_modal(f, &presets, preset_cursor, &favorites);
+                    render_preset_modal(f, &presets, preset_cursor, &favorites, &preset_filter);
                 }
                 if save_open {
                     render_save_dialog(
@@ -898,18 +903,22 @@ pub fn run(
                             if input.is_empty() {
                                 path_error = Some("Enter a file path".to_string());
                             } else if path_open == Some(PathDialogKind::Export) {
-                                let p = &presets[preset_cursor - 1];
-                                match p.export_to(&PathBuf::from(input)) {
-                                    Ok(dest) => {
-                                        path_open = None;
-                                        path_error = None;
-                                        save_msg = Some((
-                                            format!("Exported: {}", dest.display()),
-                                            std::time::Instant::now(),
-                                        ));
-                                    }
-                                    Err(e) => {
-                                        path_error = Some(format!("Export failed: {e:#}"));
+                                match selected_preset(&presets, &preset_filter, preset_cursor) {
+                                    Some(p) => match p.export_to(&PathBuf::from(input)) {
+                                        Ok(dest) => {
+                                            path_open = None;
+                                            path_error = None;
+                                            save_msg = Some((
+                                                format!("Exported: {}", dest.display()),
+                                                std::time::Instant::now(),
+                                            ));
+                                        }
+                                        Err(e) => {
+                                            path_error = Some(format!("Export failed: {e:#}"));
+                                        }
+                                    },
+                                    None => {
+                                        path_error = Some("No preset selected".to_string());
                                     }
                                 }
                             } else {
@@ -947,19 +956,23 @@ pub fn run(
                         _ => {}
                     }
                 } else if preset_open {
-                    let total = presets.len() + 1;
+                    // Commands are the upper-case letters (S/D/E/I/F/P); lower-case
+                    // and other printable keys append to the type-to-filter query.
                     match key.code {
                         KeyCode::Up => {
                             preset_cursor = preset_cursor.saturating_sub(1);
                         }
                         KeyCode::Down => {
+                            let total = visible_len(&presets, &preset_filter) + 1;
                             preset_cursor = (preset_cursor + 1).min(total - 1);
                         }
                         KeyCode::Enter => {
                             if preset_cursor == 0 {
                                 params.reset_to_defaults();
-                            } else {
-                                presets[preset_cursor - 1].apply(&params);
+                            } else if let Some(p) =
+                                selected_preset(&presets, &preset_filter, preset_cursor)
+                            {
+                                p.apply(&params);
                             }
                             // The preset rewrote the enabled flags (and maybe the
                             // chain order), so rebuild the board and repair
@@ -975,8 +988,9 @@ pub fn run(
                             focus =
                                 ensure_focus_visible(focus, &board, &panels, &params.chain_slots());
                             preset_open = false;
+                            preset_filter.clear();
                         }
-                        KeyCode::Char('s') | KeyCode::Char('S') => {
+                        KeyCode::Char('S') => {
                             preset_open = false;
                             save_open = true;
                             save_name.clear();
@@ -984,40 +998,74 @@ pub fn run(
                             save_field = 0;
                             save_error = None;
                         }
-                        KeyCode::Char('d') | KeyCode::Char('D') if preset_cursor > 0 => {
-                            let p = &presets[preset_cursor - 1];
-                            if p.source == crate::preset::PresetSource::User {
+                        KeyCode::Char('D') if preset_cursor > 0 => {
+                            if let Some(p) =
+                                selected_preset(&presets, &preset_filter, preset_cursor)
+                                && p.source == crate::preset::PresetSource::User
+                            {
                                 let _ = p.delete();
                                 presets = crate::preset::load_all();
-                                preset_cursor = preset_cursor.saturating_sub(1);
+                                preset_cursor =
+                                    preset_cursor.min(visible_len(&presets, &preset_filter));
                             }
                         }
-                        KeyCode::Char('e') | KeyCode::Char('E') if preset_cursor > 0 => {
-                            let p = &presets[preset_cursor - 1];
-                            let stem: String = p
-                                .name
-                                .to_lowercase()
-                                .chars()
-                                .map(|c| if c.is_alphanumeric() { c } else { '_' })
-                                .collect();
-                            path_input = format!("./{stem}.toml");
-                            path_error = None;
-                            path_open = Some(PathDialogKind::Export);
+                        KeyCode::Char('E') if preset_cursor > 0 => {
+                            if let Some(p) =
+                                selected_preset(&presets, &preset_filter, preset_cursor)
+                            {
+                                let stem: String = p
+                                    .name
+                                    .to_lowercase()
+                                    .chars()
+                                    .map(|c| if c.is_alphanumeric() { c } else { '_' })
+                                    .collect();
+                                path_input = format!("./{stem}.toml");
+                                path_error = None;
+                                path_open = Some(PathDialogKind::Export);
+                            }
                         }
-                        KeyCode::Char('i') | KeyCode::Char('I') => {
+                        KeyCode::Char('I') => {
                             path_input.clear();
                             path_error = None;
                             path_open = Some(PathDialogKind::Import);
                         }
-                        KeyCode::Char('f') | KeyCode::Char('F') if preset_cursor > 0 => {
-                            let name = presets[preset_cursor - 1].name.clone();
-                            if !favorites.remove(&name) {
-                                favorites.insert(name);
+                        KeyCode::Char('F') if preset_cursor > 0 => {
+                            if let Some(p) =
+                                selected_preset(&presets, &preset_filter, preset_cursor)
+                            {
+                                let name = p.name.clone();
+                                if !favorites.remove(&name) {
+                                    favorites.insert(name);
+                                }
+                                crate::preset::save_favorites(&favorites);
                             }
-                            crate::preset::save_favorites(&favorites);
                         }
-                        KeyCode::Esc | KeyCode::Char('p') | KeyCode::Char('P') => {
+                        KeyCode::Char('P') => {
                             preset_open = false;
+                            preset_filter.clear();
+                        }
+                        KeyCode::Esc => {
+                            if preset_filter.is_empty() {
+                                preset_open = false;
+                            } else {
+                                preset_filter.clear();
+                                preset_cursor = 0;
+                            }
+                        }
+                        KeyCode::Backspace => {
+                            if preset_filter.pop().is_some() {
+                                preset_cursor =
+                                    preset_cursor.min(visible_len(&presets, &preset_filter));
+                            }
+                        }
+                        KeyCode::Char(c)
+                            if !c.is_ascii_uppercase()
+                                && !key.modifiers.contains(KeyModifiers::CONTROL)
+                                && !key.modifiers.contains(KeyModifiers::ALT) =>
+                        {
+                            preset_filter.push(c);
+                            preset_cursor =
+                                preset_cursor.min(visible_len(&presets, &preset_filter));
                         }
                         _ => {}
                     }
@@ -1231,6 +1279,7 @@ pub fn run(
                         KeyCode::Char('p') | KeyCode::Char('P') => {
                             preset_open = true;
                             preset_cursor = 0;
+                            preset_filter.clear();
                         }
                         KeyCode::Char('t') | KeyCode::Char('T') => {
                             tuner_open = true;
