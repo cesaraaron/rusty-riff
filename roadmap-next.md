@@ -90,6 +90,9 @@ practice tracks, plugin inserts, external IRs).
 **Acceptance.** Record → loop → overdub → undo round-trips; loop timing stays
 sample-aligned; the recording tap excludes loops; tests for the loop cursor math.
 
+**Status — in progress.** A monitor-only looper (record → loop → overdub → undo)
+is being built on `feat/looper`; it is not merged yet.
+
 ---
 
 ## Track 3 — UX and product
@@ -193,11 +196,12 @@ site was not re-added.
 
 ## Recommended order
 
-_4.1 CI, 4.2 benchmarks, 4.3 guide, and 3.1 favorites+search are done (see
-above)._ Remaining, in order:
+_4.1 CI, 4.2 benchmarks, 4.3 guide, 3.1 (favorites / search / tags / A-B), and
+1.1 MIDI expression + manual wah are done (see above)._ Remaining, in order:
 
-1. **1.1 MIDI + expression** — highest playability payoff; unlocks the wah.
-2. **3.1 remainder** — preset **tags** and **A/B compare**.
-3. **2.1 Looper** — the biggest new capability.
+1. **2.1 Looper** — the biggest new capability; in progress on `feat/looper`.
+2. **1.2 Tap-tempo and MIDI clock** — builds on the MIDI backend.
+3. **3.2 Onboarding profiles** and **3.3 Theming** — smaller polish.
 
-Items 1.2, 3.2, 3.3, 4.2, 4.3 are smaller and can slot in around these.
+A learn/bind screen and CC→arbitrary-knob mapping for 1.1 are the remaining
+MIDI work after tap-tempo.
