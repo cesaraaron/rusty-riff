@@ -48,11 +48,11 @@ only atomic stores cross the boundary (same discipline as A/B and the timeline).
 **manual treadle mode** (`wah mode = 1`) with a `POSITION` knob (250 Hz–2.5 kHz),
 and `src/midi.rs` (new `midir` dependency) connects to the first MIDI input and
 drives `wah_position` from the **Expression CC (11)**, switching the wah to
-manual when the pedal moves. The CC is set or MIDI disabled in
-`~/.config/rusty-riff/midi.conf` (`enabled`/`cc`). No hardware was available to
-verify the live path here — the parsing/mapping are unit-tested, and the app
-runs fine with no controller. A learn/bind **screen** and CC→arbitrary-knob
-mapping remain.
+manual when the pedal moves. Bindings live in `~/.config/rusty-riff/midi.conf`
+(`enabled`, the legacy `cc = 11` shorthand, and `<cc> = <target>` for
+`wah_position`, `delay_mix`, `reverb_mix`, `boost_gain`, …). No hardware was
+available to verify the live path here — the parsing/mapping are unit-tested, and
+the app runs fine with no controller. A learn/bind **screen** remains.
 
 ### 1.2 Tap-tempo and MIDI clock sync
 

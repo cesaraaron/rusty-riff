@@ -1,21 +1,24 @@
-//! MIDI input — drive the wah treadle (and, later, other targets) from a
-//! controller.
+//! MIDI input — drive pedals/knobs from a controller.
 //!
 //! A `midir` input connection reads MIDI on its own thread. The callback runs
 //! **off the audio thread** and only performs atomic stores into [`Params`], so
 //! there is no allocation, lock, or wait anywhere near the callback — the same
 //! discipline as the UI/control thread.
 //!
-//! The bound controller is the standard **Expression** CC (11) by default; it can
-//! be changed or disabled in `~/.config/rusty-riff/midi.conf`:
+//! Control Changes are bound to targets in `~/.config/rusty-riff/midi.conf`. The
+//! legacy single binding (`cc = 11`) drives the wah treadle; add more as
+//! `<cc> = <target>`:
 //!
 //! ```text
 //! enabled = true
-//! cc = 11
+//! cc = 11                 # wah treadle (legacy shorthand)
+//! 20 = delay_mix
+//! 21 = reverb_mix
 //! ```
 //!
-//! A matching CC writes `wah_position` and switches the wah to manual mode, so an
-//! expression pedal overrides a preset's auto-wah as soon as it moves.
+//! A bound CC that drives `wah_position` also switches the wah to manual mode, so
+//! an expression pedal overrides a preset's auto-wah as soon as it moves. A
+//! learn/bind screen is not built yet — bindings are edited in the config file.
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering::Relaxed;
@@ -35,6 +38,74 @@ pub struct MidiHandle {
     pub port: String,
 }
 
+/// A knob/parameter a CC can drive.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MidiTarget {
+    WahPosition,
+    WahMode,
+    DelayTime,
+    DelayFeedback,
+    DelayMix,
+    ReverbMix,
+    BoostGain,
+    CompSustain,
+    TsDrive,
+    DsDrive,
+    ChorusMix,
+    FlangerMix,
+    PhaserMix,
+    MasterWidth,
+}
+
+impl MidiTarget {
+    /// Parse a config target name.
+    fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "wah_position" => Self::WahPosition,
+            "wah_mode" => Self::WahMode,
+            "delay_time" => Self::DelayTime,
+            "delay_feedback" => Self::DelayFeedback,
+            "delay_mix" => Self::DelayMix,
+            "reverb_mix" => Self::ReverbMix,
+            "boost_gain" => Self::BoostGain,
+            "comp_sustain" => Self::CompSustain,
+            "ts_drive" => Self::TsDrive,
+            "ds_drive" => Self::DsDrive,
+            "chorus_mix" => Self::ChorusMix,
+            "flanger_mix" => Self::FlangerMix,
+            "phaser_mix" => Self::PhaserMix,
+            "master_width" => Self::MasterWidth,
+            _ => return None,
+        })
+    }
+
+    /// Store the mapped value (0–1) into the target parameter.
+    fn write(self, p: &Params, value: f32) {
+        let value = value.clamp(0.0, 1.0);
+        let target = match self {
+            Self::WahPosition => &p.wah_position,
+            Self::WahMode => &p.wah_mode,
+            Self::DelayTime => &p.delay_time,
+            Self::DelayFeedback => &p.delay_feedback,
+            Self::DelayMix => &p.delay_mix,
+            Self::ReverbMix => &p.rev_mix,
+            Self::BoostGain => &p.boost_gain,
+            Self::CompSustain => &p.cmp_sustain,
+            Self::TsDrive => &p.ts_drive,
+            Self::DsDrive => &p.ds_drive,
+            Self::ChorusMix => &p.ch_mix,
+            Self::FlangerMix => &p.fl_mix,
+            Self::PhaserMix => &p.ph_mix,
+            Self::MasterWidth => &p.master_width,
+        };
+        target.store(value, Relaxed);
+        // An expression pedal overrides a preset's auto-wah.
+        if self == Self::WahPosition {
+            p.wah_mode.store(1.0, Relaxed);
+        }
+    }
+}
+
 /// Extract `(controller, value)` from a 3-byte Control Change message.
 pub fn parse_cc(msg: &[u8]) -> Option<(u8, u8)> {
     if msg.len() == 3 && msg[0] & 0xF0 == 0xB0 {
@@ -49,33 +120,44 @@ pub fn cc_to_unit(value: u8) -> f32 {
     (value & 0x7F) as f32 / 127.0
 }
 
-/// Parse `midi.conf` → `(enabled, cc)`. Unknown lines are ignored; a missing or
-/// malformed file yields the defaults (enabled, CC 11).
-fn parse_midi_conf(text: &str) -> (bool, u8) {
+/// Parse `midi.conf` → `(enabled, bindings)`. Unknown lines/targets are ignored;
+/// a missing or empty file yields the default (enabled, CC 11 → wah treadle).
+fn parse_midi_conf(text: &str) -> (bool, Vec<(u8, MidiTarget)>) {
     let mut enabled = true;
-    let mut cc = DEFAULT_CC;
+    let mut bindings: Vec<(u8, MidiTarget)> = Vec::new();
     for line in text.lines() {
         let line = line.trim();
         let Some((key, value)) = line.split_once('=') else {
             continue;
         };
-        let value = value.trim();
-        match key.trim() {
+        let (key, value) = (key.trim(), value.trim());
+        match key {
             "enabled" => enabled = !matches!(value, "false" | "0" | "no" | "off"),
+            // Legacy shorthand: `cc = <number>` binds the wah treadle.
             "cc" => {
-                if let Ok(v) = value.parse::<u8>()
-                    && v <= 127
+                if let Ok(cc) = value.parse::<u8>()
+                    && cc <= 127
                 {
-                    cc = v;
+                    bindings.push((cc, MidiTarget::WahPosition));
                 }
             }
-            _ => {}
+            _ => {
+                if let Ok(cc) = key.parse::<u8>()
+                    && cc <= 127
+                    && let Some(target) = MidiTarget::parse(value)
+                {
+                    bindings.push((cc, target));
+                }
+            }
         }
     }
-    (enabled, cc)
+    if bindings.is_empty() {
+        bindings.push((DEFAULT_CC, MidiTarget::WahPosition));
+    }
+    (enabled, bindings)
 }
 
-fn midi_config() -> (bool, u8) {
+fn midi_config() -> (bool, Vec<(u8, MidiTarget)>) {
     let text = dirs::home_dir()
         .map(|h| h.join(".config").join("rusty-riff").join("midi.conf"))
         .and_then(|p| std::fs::read_to_string(p).ok())
@@ -83,12 +165,12 @@ fn midi_config() -> (bool, u8) {
     parse_midi_conf(&text)
 }
 
-/// Connect to the first available MIDI input and drive the wah from the bound
-/// Expression CC. Returns `None` (silently) if MIDI is disabled, no input exists,
-/// or the connection fails — the app must run fine without a controller.
+/// Connect to the first available MIDI input and drive the bound targets. Returns
+/// `None` (silently) if MIDI is disabled, no input exists, or the connection
+/// fails — the app must run fine without a controller.
 pub fn start(params: Arc<Params>) -> Option<MidiHandle> {
-    let (enabled, cc) = midi_config();
-    if !enabled {
+    let (enabled, bindings) = midi_config();
+    if !enabled || bindings.is_empty() {
         return None;
     }
 
@@ -100,24 +182,29 @@ pub fn start(params: Arc<Params>) -> Option<MidiHandle> {
         .unwrap_or_else(|_| "unknown".to_string());
 
     let p = params.clone();
+    let summary: Vec<String> = bindings.iter().map(|(cc, _)| format!("CC{cc}")).collect();
     let conn = input
         .connect(
             &port,
-            "rusty-riff-wah",
+            "rusty-riff-midi",
             move |_ts, msg, _| {
-                if let Some((controller, value)) = parse_cc(msg)
-                    && controller == cc
-                {
-                    p.wah_position.store(cc_to_unit(value), Relaxed);
-                    // An expression pedal overrides a preset's auto-wah.
-                    p.wah_mode.store(1.0, Relaxed);
+                if let Some((controller, value)) = parse_cc(msg) {
+                    let unit = cc_to_unit(value);
+                    for &(cc, target) in &bindings {
+                        if cc == controller {
+                            target.write(&p, unit);
+                        }
+                    }
                 }
             },
             (),
         )
         .ok()?;
 
-    crate::audio::log_line(&format!("MIDI input '{name}' bound to wah CC {cc}"));
+    crate::audio::log_line(&format!(
+        "MIDI input '{name}' bound to {}",
+        summary.join(", ")
+    ));
     Some(MidiHandle {
         _conn: conn,
         port: name,
@@ -145,13 +232,34 @@ mod tests {
     }
 
     #[test]
-    fn midi_conf_parses_enabled_and_cc() {
-        assert_eq!(parse_midi_conf(""), (true, 11));
-        assert_eq!(parse_midi_conf("cc = 4\n"), (true, 4));
-        assert_eq!(parse_midi_conf("enabled = false\n"), (false, 11));
-        assert_eq!(parse_midi_conf("enabled=0\ncc = 7"), (false, 7));
-        // Out-of-range / junk values fall back.
-        assert_eq!(parse_midi_conf("cc = 200"), (true, 11));
-        assert_eq!(parse_midi_conf("nonsense\n"), (true, 11));
+    fn midi_conf_defaults_to_wah_on_cc11() {
+        assert_eq!(
+            parse_midi_conf(""),
+            (true, vec![(11, MidiTarget::WahPosition)])
+        );
+        assert!(
+            !parse_midi_conf("enabled = false\n").0,
+            "enabled flag ignored"
+        );
+    }
+
+    #[test]
+    fn midi_conf_parses_legacy_and_named_bindings() {
+        let (en, b) = parse_midi_conf("cc = 4\n");
+        assert!(en);
+        assert_eq!(b, vec![(4, MidiTarget::WahPosition)]);
+
+        let (_, b) = parse_midi_conf("20 = delay_mix\n21 = reverb_mix\n");
+        assert_eq!(
+            b,
+            vec![(20, MidiTarget::DelayMix), (21, MidiTarget::ReverbMix)]
+        );
+
+        // Mixed legacy + named; unknown target/cc ignored.
+        let (_, b) = parse_midi_conf("cc = 11\n7 = boost_gain\n8 = nope\n200 = delay_mix\n");
+        assert_eq!(
+            b,
+            vec![(11, MidiTarget::WahPosition), (7, MidiTarget::BoostGain)]
+        );
     }
 }

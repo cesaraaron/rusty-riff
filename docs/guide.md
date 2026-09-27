@@ -82,12 +82,16 @@ external IR browser and `X` bypasses the IR.
 MIDI is on by default: rusty-riff connects to the first MIDI input and binds the
 standard **Expression** CC (11). Moving the pedal drives the wah's treadle and
 switches it to manual mode, overriding a preset's auto-wah. You can also set the
-wah's `MODE` knob to manual and play `POSITION` by hand. Change the CC or turn the
-input off in `~/.config/rusty-riff/midi.conf`:
+wah's `MODE` knob to manual and play `POSITION` by hand. Change the CC, bind more knobs, or turn the
+input off in `~/.config/rusty-riff/midi.conf` (`<cc> = <target>` maps another
+CC; targets include `wah_position`, `wah_mode`, `delay_time`, `delay_mix`,
+`reverb_mix`, `boost_gain`, `master_width`, …):
 
 ```text
 enabled = true
-cc = 11
+cc = 11                 # wah treadle
+20 = delay_mix
+21 = reverb_mix
 ```
 
 ## Presets
