@@ -23,6 +23,7 @@ pub mod preset;
 pub mod project;
 pub mod recording;
 pub mod session;
+pub mod tap_tempo;
 pub mod ui;
 
 /// One-time migration of the legacy `~/.config/rusty-amp` directory to

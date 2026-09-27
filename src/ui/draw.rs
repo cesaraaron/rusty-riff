@@ -1300,6 +1300,7 @@ pub(super) fn render_help_modal(f: &mut Frame) {
         row("  I / X", "  IR browser / IR bypass"),
         row("  O", "  change audio devices"),
         row("  W", "  studio-master width: neutral / wide"),
+        row("  ;", "  tap tempo: set the delay time by tapping"),
     ];
     #[cfg(feature = "au")]
     lines.push(row("  Z / U", "  amp-plugin bypass / browser"));

@@ -18,16 +18,17 @@ expression: text
 ┌ GUITAR RIG ─────────────────────────║  I / X  IR browser / IR bypass                                                            ║──────────────────────────────────────┐
 │┌ NOISE GATE ◉ ──────────────────────║  O  change audio devices                                                                  ║ADD ─────────────────────────────────┐│
 ││                2.0  3.0            ║  W  studio-master width: neutral / wide                                                   ║                ＋                    ││
-│└────────────────────────────────────║  Z / U  amp-plugin bypass / browser                                                       ║─────────────────────────────────────┘│
-││├───────────────────────────────────║Tools                                                                                      ║────────────────────────────────────┤││
-││SELECT A PEDAL — ←→                 ║  P  preset browser (rig snapshot)                                                         ║                                     ││
+│└────────────────────────────────────║  ;  tap tempo: set the delay time by tapping                                              ║─────────────────────────────────────┘│
+││├───────────────────────────────────║  Z / U  amp-plugin bypass / browser                                                       ║────────────────────────────────────┤││
+││SELECT A PEDAL — ←→                 ║Tools                                                                                      ║                                     ││
+││                                    ║  P  preset browser (rig snapshot)                                                         ║                                     ││
 ││                                    ║  S  save current rig as preset                                                            ║                                     ││
 ││                                    ║  J  session browser: new / save / save as / load                                          ║                                     ││
 ││                                    ║  T  chromatic tuner                                                                       ║                                     ││
 ││                                    ║  M  practice metronome (+/− tempo, Space on/off)                                          ║                                     ││
-││                                    ║  N  calibrate input level                                                                 ║                                     ││
-│└────────────────────────────────────║  V  plugin browser                                                                        ║─────────────────────────────────────┘│
-└─────────────────────────────────────║  R  arm / stop a dry raw take (auto-plays; lands on the timeline)                         ║──────────────────────────────────────┘
+│└────────────────────────────────────║  N  calibrate input level                                                                 ║─────────────────────────────────────┘│
+└─────────────────────────────────────║  V  plugin browser                                                                        ║──────────────────────────────────────┘
+                                      ║  R  arm / stop a dry raw take (auto-plays; lands on the timeline)                         ║                                       
                                       ║Looper (monitor only)                                                                      ║                                       
                                       ║  Y  record / pause / resume the loop                                                      ║                                       
                                       ║  F  clear the loop                                                                        ║                                       
@@ -53,7 +54,6 @@ expression: text
                                       ║  E  export unmuted raw takes (WAV)                                                        ║                                       
                                       ║  [ / ]  L  loop in-point / out-point, toggle loop                                         ║                                       
                                       ║  Del  remove selected track                                                               ║                                       
-                                      ║                                                                                           ║                                       
                                       ║                                                                                           ║                                       
                                       ║                                       Esc / K close                                       ║                                       
                                       ╚═══════════════════════════════════════════════════════════════════════════════════════════╝

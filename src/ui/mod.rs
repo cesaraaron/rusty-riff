@@ -250,6 +250,8 @@ pub fn run(
     // browser flips between them without leaving the modal.
     let mut applied_preset: Option<String> = None;
     let mut prev_preset: Option<String> = None;
+    // Tap-tempo (`;`): sets the delay TIME from the tapped interval.
+    let mut tap_tempo = crate::tap_tempo::TapTempo::new();
     let mut presets = presets;
     let mut favorites = crate::preset::load_favorites();
     let mut save_open = false;
@@ -1369,6 +1371,21 @@ pub fn run(
                             looper.toggle_overdub();
                         }
                         KeyCode::Char('.') => looper.request_undo(),
+                        // Tap-tempo: `;` taps; two or more steady taps set the
+                        // delay TIME (0–500 ms) to the tapped interval.
+                        KeyCode::Char(';') => {
+                            if let Some(bpm) = tap_tempo.tap(std::time::Instant::now()) {
+                                let secs = 60.0 / bpm;
+                                params.delay_time.store(
+                                    (secs / 0.5).clamp(0.0, 1.0),
+                                    std::sync::atomic::Ordering::Relaxed,
+                                );
+                                save_msg = Some((
+                                    format!("TAP {bpm:.1} BPM  (delay {:.0} ms)", secs * 1000.0),
+                                    std::time::Instant::now(),
+                                ));
+                            }
+                        }
                         #[cfg(feature = "clap")]
                         KeyCode::Char('v') | KeyCode::Char('V') => browser.open(),
                         #[cfg(all(feature = "au", target_os = "macos"))]

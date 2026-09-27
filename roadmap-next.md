@@ -65,6 +65,12 @@ clock → `delay_time`. Keep the knob authoritative when tapped.
 **Acceptance.** Tap a few beats and the delay locks; MIDI clock changes track;
 tests for the tap-tempo windowing.
 
+**Status — tap-tempo done; MIDI clock remains.** `;` taps; two or more steady
+taps set the delay `TIME` to the tapped interval (clamped to 0–500 ms) and show
+the BPM in the footer. `src/tap_tempo.rs` is a tested pure state machine
+(too-fast taps ignored, slow taps restart the count). MIDI Clock → `delay_time`
+is not built.
+
 ---
 
 ## Track 2 — Practice and composition
