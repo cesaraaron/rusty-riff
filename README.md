@@ -3,6 +3,9 @@
 A guitar amp and pedalboard rig that runs in your terminal. Keyboard-driven, with
 live metering and artist-inspired presets.
 
+See the [user guide](docs/guide.md) for a walkthrough of calibration, the signal
+chain, presets, practice, and plugins.
+
 ## Requirements
 
 - Rust 1.96+
