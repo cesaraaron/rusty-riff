@@ -138,6 +138,13 @@ setup that reuses it.
 
 **Acceptance.** Relaunch reuses the profile; changing interface prompts once.
 
+**Status — effectively done (pre-existing).** Device selection is remembered by
+*name* in `~/.config/rusty-riff/audio.conf` (survives re-enumeration), and
+`input-calibration.toml` stores **one calibration row per
+`device + channels + channel`** (trim, pickup class, reference version) that is
+matched on startup — i.e. a per-interface profile already. A dedicated
+one-screen "profiles" setup is not needed; scope stays as-is.
+
 ### 3.3 Theming and layout polish
 
 **Why.** The TUI is fixed-colour and can crowd small terminals.
@@ -146,6 +153,13 @@ setup that reuses it.
 layout. Keep the ratatui snapshot tests meaningful.
 
 **Acceptance.** Screenshots/snapshots per theme; no clipping at a small size.
+
+**Status — not started (deferred).** Making the palette runtime-selectable means
+threading a theme through ~537 colour-constant uses in `src/ui/**` (the `PEDALS`
+table itself embeds `PEDAL_*` colours). That is a large, mostly mechanical
+refactor with real regression risk for a cosmetic win, so it is deferred to its
+own dedicated change. Narrow-width layout polish remains available in the
+meantime.
 
 ---
 
