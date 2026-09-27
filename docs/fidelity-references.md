@@ -53,6 +53,12 @@ and mono-on-channel), `1.0` = EP-3-style tape echo (single-time, mono-on-channel
 wow/flutter). The `time` knob maps `0..1` to `0..500 ms` and, in Echorec mode, sets
 the drum period (the furthest head).
 
+## Pedal circuit references
+
+| Device | Source | Used for |
+| ------ | ------ | -------- |
+| Ibanez TS-808 Tube Screamer | R.G. Keen, *The Technology of the Tube Screamer* (1998), <http://www.geofex.com/Article_Folders/TStech/tsxtech.htm> | Input coupling (1 µF into ~10 kΩ, a few Hz — **no 340 Hz input HP**); clipping-stage gain `1 + Zf/Zi` with `Zi = 4.7 kΩ + 0.047 µF` → **720 Hz** rolloff to unity; symmetric two-diode clip; `Zf = 51 kΩ + 500 kΩ Drive`. Drove the `ts808-circuit` correction. |
+
 ---
 
 ## 1. Code-derived inventory

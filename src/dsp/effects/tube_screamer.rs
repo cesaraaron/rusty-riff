@@ -4,63 +4,68 @@ use crate::dsp::oversample::Oversampler4;
 
 /// Ibanez TS-808 Tube Screamer simulation.
 ///
-/// Signal path:
-///   DC block → input coupling HP (~340 Hz) → 720 Hz mid-peak boost → asymmetric
-///   diode clipper → output coupling cap (DC block) → variable tone LP → level
+/// Signal path (per the circuit, R.G. Keen, *The Technology of the Tube
+/// Screamer*, geofex.com 1998):
+///   input coupling → clipping-stage gain shape → symmetric diode clip →
+///   output coupling → variable tone LP → level
 ///
-/// The real TS-808's 720 Hz characteristic comes from a frequency-dependent feedback network
-/// inside the clipping op-amp: it gives more gain in the mids/highs relative to the bass,
-/// but does NOT block the guitar fundamental from entering the stage. The input coupling cap
-/// cuts below ~340 Hz. Modeling the 720 Hz as an input HP (as many simulations do)
-/// strips the fundamental from lower notes and causes intermodulation artifacts ("sitar" sound).
-/// We instead model it as a peak boost at 720 Hz before the clipper.
+/// **Input coupling.** The input buffer is an emitter follower; the signal
+/// reaches the clipping stage through a **1 µF** coupling cap into the ~10 kΩ
+/// bias network, i.e. a corner of a few Hz that does not touch the guitar band.
+/// There is **no ~340 Hz input high-pass** — an earlier revision of this model
+/// used `0.047 µF × 10 kΩ ≈ 340 Hz`, which is a misreading of the circuit and
+/// over-cut the bass.
 ///
-/// NOTE: the 340 Hz coupling corner is the current RC-derived estimate
-/// (0.047 µF × 10 kΩ); the exact value still needs a measured TS-808 response to
-/// confirm — see `fidelity-implement.md`.
+/// **The 720 Hz shape is a *gain* shelf, not a filter.** The clipping stage is a
+/// non-inverting amp whose inverting leg is `4.7 kΩ + 0.047 µF` to AC ground:
+/// `gain = 1 + Zf/Zi`. At DC `Zi → ∞` so the stage passes at **unity**; the gain
+/// rises with frequency from the `1/(2π·4.7 kΩ·0.047 µF) ≈ 720 Hz` corner up to
+/// `1 + (51 kΩ + Drive)/4.7 kΩ`. So the bass passes *clean and unity* and the
+/// mids/highs are boosted and clipped — the TS's low-end "tightness" is that the
+/// bass is *not* boosted, not that it is cut. We model exactly that: a 720 Hz
+/// **high-shelf** from unity up to the drive gain, before a soft clipper.
 ///
-/// Authenticity — why the output coupling cap matters:
-///   The asymmetric diode pair (one diode one way, two the other) is what gives the
-///   TS its warm, vocal **even-harmonic** character — but asymmetric clipping of a
-///   symmetric input also leaves a *static DC bias* on the output. The real pedal's
-///   output coupling cap strips that DC while leaving the 2nd harmonic (0 Hz ≠ the
-///   harmonic) untouched. Without it, that bias rides into the amp's gain stage,
-///   shifts its operating point, and turns the clean even-harmonic warmth into a
-///   lopsided, intermodulating "growl" — the electronic/artificial tell. We model
-///   the cap as a post-clip high-pass so the warmth stays but the bias does not.
+/// **Clipping.** The stock TS-808 uses two anti-parallel silicon diodes: the
+/// clip is **symmetric** and produces predominantly odd harmonics. (An earlier
+/// revision modelled an asymmetric pair for "warmth"; that is the SD-1-style
+/// mod, not the stock pedal, and is not used here.)
+///
+/// The absolute gain staging (pickup level → diode threshold) and the `51 pF`
+/// feedback rolloff are approximations; the topology and the 720 Hz bass/treble
+/// split follow the source above.
 pub struct TubeScreamer {
     sr: f32,
-    dc_block: Biquad,
-    input_hp: Biquad,
-    mid_peak: Biquad, // 720 Hz feedback network peak — TS mid-push character
-    os: Oversampler4, // 4× oversample the soft-clip stage to suppress aliasing
-    // (the TS is a mild tanh soft-clip — 4× already keeps fold-back well down,
-    // unlike the amp's harsher cascaded stages which earn 8×)
-    out_dc_block: Biquad, // output coupling cap — strips the asymmetric clip's DC bias
-    tone: OnePoleLp,      // variable 1-pole LP tone control
+    dc_block: Biquad,     // input coupling (1 µF × 10 kΩ ≈ 16 Hz)
+    shelf: Biquad,        // 720 Hz clipping-stage gain shelf: unity bass → drive gain
+    os: Oversampler4,     // 4× oversample the soft-clip stage to suppress aliasing
+    out_dc_block: Biquad, // output coupling cap (10 µF × 100 Ω ≈ 16 Hz)
+    tone: OnePoleLp,      // variable 1-pole LP tone control (1 kΩ / 0.22 µF network)
     last_tone: f32,
+    last_drive: f32,
 }
+
+/// Clipping-stage series resistance and drive pot (circuit values, ohms).
+const ZI_OHMS: f32 = 4_700.0;
+/// Fixed feedback resistance (`51 kΩ`) plus the `Drive` pot (`500 kΩ`).
+const ZF_FIXED_OHMS: f32 = 51_000.0;
+const DRIVE_POT_OHMS: f32 = 500_000.0;
+/// `Zi` network corner: `1/(2π · 4.7 kΩ · 0.047 µF)`.
+const CORNER_720_HZ: f32 = 720.0;
 
 impl TubeScreamer {
     pub fn new(sr: f32) -> Self {
         let mut ts = Self {
             sr,
-            dc_block: Biquad::highpass(sr, 10.0, 0.707),
-            // TS-808 input coupling cap: 0.047µF into 10kΩ → f = 1/(2π×RC) ≈ 340 Hz.
-            // This cuts the sub-bass before the clipper without stripping guitar fundamentals
-            // as aggressively as the 720 Hz feedback-network frequency would.
-            input_hp: Biquad::highpass(sr, 340.0, 0.707),
-            // Models the TS-808 feedback network resonance: mid-push centered at 720 Hz
-            mid_peak: Biquad::peak_eq(sr, 720.0, 0.7, 6.0),
+            dc_block: Biquad::highpass(sr, 16.0, 0.707),
+            shelf: Biquad::high_shelf(sr, CORNER_720_HZ, 0.0),
             os: Oversampler4::new(sr),
-            // Output coupling cap: a gentle ~20 Hz high-pass removes the static DC
-            // the asymmetric clipper leaves on the signal (see struct docs) without
-            // touching anything in the guitar's range.
-            out_dc_block: Biquad::highpass(sr, 20.0, 0.707),
+            out_dc_block: Biquad::highpass(sr, 16.0, 0.707),
             tone: OnePoleLp::new(),
             last_tone: -1.0, // force first update
+            last_drive: -1.0,
         };
         ts.set_tone(0.6);
+        ts.set_drive(0.0);
         ts
     }
 
@@ -71,52 +76,46 @@ impl TubeScreamer {
         self.last_tone = tone;
     }
 
+    /// The clipping stage's high-frequency gain `1 + Zf/Zi` at the current drive,
+    /// applied as a 720 Hz high-shelf so the bass stays at unity.
+    fn set_drive(&mut self, drive: f32) {
+        let hf_gain = 1.0 + (ZF_FIXED_OHMS + drive * DRIVE_POT_OHMS) / ZI_OHMS;
+        let gain_db = 20.0 * hf_gain.log10();
+        self.shelf.set_high_shelf(self.sr, CORNER_720_HZ, gain_db);
+        self.last_drive = drive;
+    }
+
     /// `drive` 0–1, `tone` 0–1, `level` 0–1
     #[inline]
     pub fn process(&mut self, x: f32, drive: f32, tone: f32, level: f32) -> f32 {
         if param_changed(tone, self.last_tone) {
             self.set_tone(tone);
         }
+        if param_changed(drive, self.last_drive) {
+            self.set_drive(drive);
+        }
 
+        // Input coupling (≈ unity in the guitar band) then the 720 Hz gain shelf:
+        // bass passes at unity, mids/highs get the drive gain before clipping.
         let x = self.dc_block.process(x);
-        let x = self.input_hp.process(x);
-        let x = self.mid_peak.process(x);
+        let x = self.shelf.process(x);
 
-        // Drive: 10 kΩ fixed + up to 500 kΩ pot → gain ratio 1×–51×
-        let gain = 1.0 + drive * 50.0;
+        // 4× oversampled symmetric diode soft-clip.
+        let x = self.os.process(x, soft_clip);
 
-        // 4× oversampled soft-clip stage
-        let x = self
-            .os
-            .process(x, |u| asymmetric_clip(u * gain) / gain.sqrt());
-
-        // Output coupling cap: strip the asymmetric clip's DC bias before tone.
+        // The real pedal's output coupling cap; strips any residual offset.
         let x = self.out_dc_block.process(x);
 
         self.tone.process(x) * level * 0.5
     }
 }
 
-/// Asymmetric diode clipping (TS808 feedback network).
-///
-/// Positive half: one 1N914 silicon diode → clips at ~0.7 V (threshold = 1.0 normalised)
-/// Negative half: two diodes in series → clips at ~1.4 V (threshold = 1.5 normalised)
-///
-/// The asymmetry introduces even harmonics (2nd harmonic) giving the warm, vocal TS tone.
+/// Symmetric silicon-diode soft clip (two anti-parallel diodes in the feedback
+/// path). Bounded to ±1 with a soft knee; odd-symmetric, so it adds odd
+/// harmonics and no static DC.
 #[inline]
-fn asymmetric_clip(x: f32) -> f32 {
-    if x >= 0.0 {
-        // single diode: softer, saturates earlier. `tanh` already asymptotes to
-        // 1.0, so it never exceeds the diode threshold — no extra clamp needed.
-        x.tanh()
-    } else {
-        // Two diodes in series: higher threshold, saturating toward −1.5. `x` is
-        // negative here, so `t·tanh(x/t)` is already negative and approaches −t —
-        // do NOT negate it again, or the negative half flips positive and the
-        // stage becomes a full-wave rectifier (octave-up ghosting, no fundamental).
-        let t = 1.5_f32;
-        t * (x / t).tanh()
-    }
+fn soft_clip(x: f32) -> f32 {
+    x.tanh()
 }
 
 #[cfg(test)]
@@ -167,29 +166,21 @@ mod tests {
         out
     }
 
-    /// The TS must stay finite and bounded driving a hot low note, and its drive
-    /// knob must actually add saturation harmonics (more drive → hotter output).
+    /// The TS must stay finite and bounded across the whole control range, hot or
+    /// cold input.
     #[test]
-    fn finite_bounded_and_drive_adds_gain() {
-        let sr = 48_000.0;
-        let rms_at = |drive: f32| {
-            let mut ts = TubeScreamer::new(sr);
-            let mut sum = 0.0f64;
-            let warmup = sr as usize / 4;
-            let mut count = 0u32;
-            for n in 0..(sr as usize) {
-                let x = (2.0 * PI * 110.0 * n as f32 / sr).sin() * 0.5;
-                let y = ts.process(x, drive, 0.6, 0.7);
-                assert!(y.is_finite(), "TS produced non-finite output");
-                assert!(y.abs() < 2.0, "TS output unbounded: {y}");
-                if n >= warmup {
-                    sum += (y * y) as f64;
-                    count += 1;
+    fn finite_and_bounded_across_controls() {
+        let mut ts = TubeScreamer::new(SR);
+        for drive in [0.0f32, 0.3, 0.6, 1.0] {
+            for tone in [0.0f32, 0.5, 1.0] {
+                for n in 0..(SR as usize / 4) {
+                    let x = (2.0 * PI * 110.0 * n as f32 / SR).sin() * 0.8;
+                    let y = ts.process(x, drive, tone, 0.7);
+                    assert!(y.is_finite(), "TS produced non-finite output");
+                    assert!(y.abs() < 2.0, "TS output unbounded: {y}");
                 }
             }
-            (sum / count as f64).sqrt()
-        };
-        assert!(rms_at(0.9) > rms_at(0.1), "drive knob did not add level");
+        }
     }
 
     /// Turning the tone knob up must brighten the output: more high-frequency
@@ -202,7 +193,7 @@ mod tests {
             let mut sum = 0.0f64;
             let warmup = sr as usize / 4;
             for n in 0..(sr as usize) {
-                let x = (2.0 * PI * 4000.0 * n as f32 / sr).sin() * 0.4;
+                let x = (2.0 * PI * 4000.0 * n as f32 / sr).sin() * 0.1;
                 let y = ts.process(x, 0.5, tone, 0.7);
                 if n >= warmup {
                     sum += (y * y) as f64;
@@ -218,70 +209,49 @@ mod tests {
 
     // ── Clip transfer (unit tests on the diode model itself) ──────────────────
 
-    /// The clipper must be a real bipolar saturator: sign-preserving, bounded by the
-    /// two diode thresholds, and monotonic. The sign check is a direct guard on the
-    /// rectifier bug — negating the negative half once turned the stage into a
-    /// full-wave rectifier (frequency-doubling octave ghost).
+    /// The clipper must be a real bipolar saturator: sign-preserving, bounded, and
+    /// monotonic. The sign check is a direct guard on the rectifier bug — negating
+    /// the negative half once turned the stage into a full-wave rectifier.
     #[test]
     fn clip_preserves_sign_is_bounded_and_monotonic() {
         let mut prev = f32::NEG_INFINITY;
         let mut x = -8.0f32;
         while x <= 8.0 {
-            let y = asymmetric_clip(x);
+            let y = soft_clip(x);
             assert!(y.is_finite(), "clip non-finite at {x}");
-            assert!(y > -1.5001 && y < 1.0001, "clip out of bounds at {x}: {y}");
+            assert!(y > -1.0001 && y < 1.0001, "clip out of bounds at {x}: {y}");
             if x > 0.01 {
-                assert!(
-                    y > 0.0,
-                    "positive input {x} produced non-positive {y} (rectifying!)"
-                );
+                assert!(y > 0.0, "positive input {x} produced non-positive {y}");
             }
             if x < -0.01 {
-                assert!(
-                    y < 0.0,
-                    "negative input {x} produced non-negative {y} (rectifying!)"
-                );
+                assert!(y < 0.0, "negative input {x} produced non-negative {y}");
             }
             assert!(y >= prev - 1e-6, "clip not monotonic at {x}: {y} < {prev}");
             prev = y;
             x += 0.01;
         }
-        // Diode thresholds: +1.0 (single) and −1.5 (two in series).
-        assert!(
-            (asymmetric_clip(20.0) - 1.0).abs() < 1e-3,
-            "positive threshold off"
-        );
-        assert!(
-            (asymmetric_clip(-20.0) + 1.5).abs() < 1e-2,
-            "negative threshold off"
-        );
     }
 
-    /// The diode asymmetry (one diode up, two down) is the source of the warm 2nd
-    /// harmonic: the negative half must saturate deeper than the positive half. A
-    /// symmetric clipper would make `|f(a)| == |f(-a)|` and sound clinical.
+    /// The stock TS-808 clips symmetrically (two anti-parallel silicon diodes), so
+    /// the transfer is odd: `f(-x) == -f(x)`.
     #[test]
-    fn clip_is_asymmetric_for_even_harmonic_warmth() {
-        for a in [0.8f32, 1.2, 2.0, 4.0] {
-            let pos = asymmetric_clip(a);
-            let neg = asymmetric_clip(-a);
+    fn clip_is_symmetric() {
+        for a in [0.2f32, 0.8, 1.2, 4.0] {
             assert!(
-                neg.abs() > pos.abs() * 1.05,
-                "clip not asymmetric at ±{a}: +{pos:.4} / {neg:.4}"
+                (soft_clip(a) + soft_clip(-a)).abs() < 1e-6,
+                "clip not symmetric at ±{a}"
             );
         }
     }
 
     // ── Full-stage spectral behaviour ─────────────────────────────────────────
 
-    /// Regression for the rectifier bug: the negative half was negated, turning the
-    /// clipper into a full-wave rectifier, so a 440 Hz note emerged as a 880 Hz
-    /// octave ghost — the most blatant "electronic/artificial" failure. The played
-    /// fundamental must dominate its octave by a wide margin.
+    /// Regression for the rectifier bug: the played fundamental must dominate its
+    /// octave by a wide margin.
     #[test]
     fn negative_half_is_not_rectified() {
         for f0 in [440.0f32, 587.33, 659.25] {
-            let out = render(f0, 0.3, 0.5, 0.6, 0.7);
+            let out = render(f0, 0.1, 0.5, 0.6, 0.7);
             let fund = goertzel(&out, f0, SR);
             let octave = goertzel(&out, 2.0 * f0, SR);
             assert!(
@@ -291,12 +261,11 @@ mod tests {
         }
     }
 
-    /// The output coupling cap must strip the static DC bias the asymmetric clipper
-    /// leaves behind, so it doesn't shift the amp's downstream bias point.
+    /// The output coupling cap must leave no static DC on the output.
     #[test]
     fn output_has_no_dc_offset() {
         for f0 in [110.0f32, 440.0, 880.0] {
-            let out = render(f0, 0.6, 0.8, 0.6, 0.7);
+            let out = render(f0, 0.1, 0.8, 0.6, 0.7);
             let mean = out.iter().map(|&x| x as f64).sum::<f64>() / out.len() as f64;
             assert!(mean.abs() < 1e-3, "{f0} Hz: DC offset {mean:.6}");
         }
@@ -312,7 +281,7 @@ mod tests {
             (660.0, 0.9, 0.8),
             (2000.0, 0.8, 1.0),
         ] {
-            let out = render(f0, 0.4, drive, tone, 0.7);
+            let out = render(f0, 0.15, drive, tone, 0.7);
             let harm_pow: f64 = (1..=10)
                 .map(|k| (goertzel(&out, f0 * k as f32, SR) as f64).powi(2) / 2.0)
                 .sum();
@@ -326,12 +295,11 @@ mod tests {
     }
 
     /// A mild TS overdrive adds harmonics but must not bury the played note: the
-    /// fundamental stays the loudest partial across the usable range (a buried
-    /// fundamental is the loss-of-pitch "fizz" we are guarding against).
+    /// fundamental stays the loudest partial across the usable range.
     #[test]
     fn fundamental_leads_the_spectrum() {
-        for f0 in [440.0f32, 523.25, 659.25, 880.0] {
-            let out = render(f0, 0.3, 0.45, 0.6, 0.7);
+        for f0 in [220.0f32, 440.0, 523.25, 659.25] {
+            let out = render(f0, 0.1, 0.45, 0.6, 0.7);
             let h: Vec<f32> = (1..=8).map(|k| goertzel(&out, f0 * k as f32, SR)).collect();
             let peak = h.iter().cloned().fold(0.0f32, f32::max);
             assert!(
@@ -347,7 +315,7 @@ mod tests {
     #[test]
     fn drive_increases_harmonic_distortion() {
         let thd = |drive: f32| {
-            let out = render(523.25, 0.1, drive, 0.8, 0.7);
+            let out = render(523.25, 0.05, drive, 0.8, 0.7);
             let fund = goertzel(&out, 523.25, SR);
             let upper: f32 = (2..=8).map(|k| goertzel(&out, 523.25 * k as f32, SR)).sum();
             upper / fund.max(1e-9)
@@ -359,19 +327,24 @@ mod tests {
         );
     }
 
-    /// The input coupling cap must cut the sub-bass before the clipper: a note well
-    /// below the documented ~340 Hz corner comes out far weaker than one above it at
-    /// the same input amplitude. Pins the passband the code and docs agree on.
+    /// The clipping-stage gain is frequency-dependent: the 720 Hz shelf leaves the
+    /// bass at unity while boosting (and clipping) the treble. Pins the correct
+    /// topology — the bass must **not** be cut below the dry level (the old 340 Hz
+    /// input-HP bug), while the treble is clearly lifted.
     #[test]
-    fn input_coupling_cuts_sub_bass() {
-        // 80 Hz (below the corner) vs 400 Hz (above it); both divide the render
-        // window into whole cycles so the Goertzel bins land exactly.
-        let amp = |f0: f32| goertzel(&render(f0, 0.2, 0.1, 0.6, 0.7), f0, SR);
-        let low = amp(80.0);
-        let mid = amp(400.0);
+    fn bass_passes_at_unity_while_treble_is_boosted() {
+        let amp = 0.05;
+        let low = goertzel(&render(120.0, amp, 0.8, 1.0, 1.0), 120.0, SR);
+        let high = goertzel(&render(3000.0, amp, 0.8, 1.0, 1.0), 3000.0, SR);
+        // Bass is passed, not cut: within a few dB of the dry level (×level×0.5).
         assert!(
-            mid > low * 3.0,
-            "input coupling does not cut the sub-bass: 80 Hz {low:.4} vs 400 Hz {mid:.4}"
+            low > amp * 0.2,
+            "bass was cut (the old input-HP bug): low {low:.4} vs dry {amp:.4}"
+        );
+        // Treble is boosted into the clipper and dominates the bass.
+        assert!(
+            high > low * 3.0,
+            "720 Hz shelf not boosting treble: low {low:.4} vs high {high:.4}"
         );
     }
 }

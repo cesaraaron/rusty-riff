@@ -71,19 +71,33 @@ impl Biquad {
     }
 
     pub fn high_shelf(sr: f32, freq: f32, gain_db: f32) -> Self {
+        let mut b = Self {
+            b0: 1.0,
+            b1: 0.0,
+            b2: 0.0,
+            a1: 0.0,
+            a2: 0.0,
+            z1: 0.0,
+            z2: 0.0,
+        };
+        b.set_high_shelf(sr, freq, gain_db);
+        b
+    }
+
+    /// Recompute [`high_shelf`](Self::high_shelf) coefficients **in place**,
+    /// preserving `z1`/`z2`, so a live control change does not click.
+    pub fn set_high_shelf(&mut self, sr: f32, freq: f32, gain_db: f32) {
         let a = 10.0_f32.powf(gain_db / 40.0);
         let w0 = 2.0 * PI * freq / sr;
         let (s, c) = (w0.sin(), w0.cos());
         let alpha = s / 2.0 * 2.0_f32.sqrt();
         let sq = 2.0 * a.sqrt() * alpha;
-        Self::from_coeffs(
-            a * ((a + 1.0) + (a - 1.0) * c + sq),
-            -2.0 * a * ((a - 1.0) + (a + 1.0) * c),
-            a * ((a + 1.0) + (a - 1.0) * c - sq),
-            (a + 1.0) - (a - 1.0) * c + sq,
-            2.0 * ((a - 1.0) - (a + 1.0) * c),
-            (a + 1.0) - (a - 1.0) * c - sq,
-        )
+        let a0 = (a + 1.0) - (a - 1.0) * c + sq;
+        self.b0 = (a * ((a + 1.0) + (a - 1.0) * c + sq)) / a0;
+        self.b1 = (-2.0 * a * ((a - 1.0) + (a + 1.0) * c)) / a0;
+        self.b2 = (a * ((a + 1.0) + (a - 1.0) * c - sq)) / a0;
+        self.a1 = (2.0 * ((a - 1.0) - (a + 1.0) * c)) / a0;
+        self.a2 = ((a + 1.0) - (a - 1.0) * c - sq) / a0;
     }
 
     /// Constant 0 dB peak-gain band-pass (cookbook BPF). Unity at the centre
