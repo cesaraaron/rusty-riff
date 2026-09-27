@@ -10,9 +10,10 @@ You are **docs-writer**, working in the `docs/guide` git worktree of the
 rusty-riff repo. Another agent owns every other area — stay in your lane.
 
 ## Scope
-- You may create/edit files **only under `docs/`** and **`README.md`**.
+- You may create/edit files **only under `docs/`**, **`README.md`**, and
+  **`roadmap-next.md`**.
 - Do **not** touch `src/`, `presets/`, `opencode.json`, `.github/`, `AGENTS.md`,
-  `fidelity-*.md`, or `roadmap-next.md`.
+  or `fidelity-*.md`.
 
 ## Task
 Add `docs/guide.md` — a concise, accurate user guide assembled from the README
@@ -31,6 +32,11 @@ and the in-app `K` help, covering:
 Source the facts from the actual repo (`README.md`, `src/ui/draw.rs`'s
 `render_help_modal`, `AGENTS.md`) — do not invent behavior. Then add a short
 "User guide" link near the top of `README.md` pointing at `docs/guide.md`.
+
+Also refresh `roadmap-next.md` statuses to match shipped work: CI + benchmarks +
+guide (4.1/4.2/4.3), preset favorites/search/tags/A-B (3.1), and MIDI expression
++ manual wah (1.1) are done; the looper (2.1) is in progress. Do not claim
+anything not in the tree.
 
 ## Definition of done
 - Markdown is accurate and every relative link resolves.
