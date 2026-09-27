@@ -1344,7 +1344,7 @@ pub(super) fn render_help_modal(f: &mut Frame) {
         row("  ↑/↓  ←/→", "  select row / seek by the step"),
         row(
             "  +/−",
-            "  step (seek & clip move): 0.5 / 1 / 5 / 10 / 30 s",
+            "  step (seek & move): 0.01/0.05/0.1/0.5/1/5/10/30 s",
         ),
         row("  Tab / Shift+Tab", "  row height / waveform glyph style"),
         row("  Shift+A / Shift+↑↓", "  waveform gain / time zoom"),

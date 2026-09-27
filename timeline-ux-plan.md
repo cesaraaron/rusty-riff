@@ -257,6 +257,20 @@ need seeking to reach. Zoom resets to fit on a new/loaded session.
 
 ---
 
+## F11. Fine steps & empty-timeline ruler
+
+- **Steps.** `SEEK_STEPS` gains `0.01` and `0.05` (and keeps `0.1`), giving
+  `0.01 / 0.05 / 0.1 / 0.5 / 1 / 5 / 10 / 30 s`. `cycle_seek_step` clamps at both
+  ends instead of wrapping, so `-` from `0.5` walks down and stops at `0.01`, and
+  `+` from `30` stops. `set_seek_seconds` matches the nearest step within a small
+  tolerance so the decimal manifest round-trip of sub-second steps still snaps.
+- **Empty ruler.** With no content the span floors to one minute
+  (`EMPTY_SPAN_SECS`), so the ruler draws a real `0 … 1:00` grid and the transport
+  reads `/ 01:00`; seeking and placing the first import work across that range.
+  Once a clip has length the span tracks the content again.
+
+---
+
 ## Affected files
 
 | Area | Files |

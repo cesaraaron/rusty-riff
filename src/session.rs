@@ -104,9 +104,9 @@ impl Track {
     }
 }
 
-/// Selectable seek increments, in seconds. `0.5` is the fine step used for
-/// precise placement; the rest are coarse jumps.
-pub const SEEK_STEPS: [f32; 5] = [0.5, 1.0, 5.0, 10.0, 30.0];
+/// Selectable seek increments, in seconds, ascending. The sub-second steps are
+/// for precise placement; the rest are coarse jumps.
+pub const SEEK_STEPS: [f32; 8] = [0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0, 30.0];
 /// The increment a new session starts on.
 pub const DEFAULT_SEEK_STEP: f32 = 1.0;
 
@@ -303,19 +303,26 @@ impl Session {
     }
 
     pub fn set_seek_seconds(&mut self, secs: f32) {
-        if SEEK_STEPS.contains(&secs) {
-            self.seek_seconds = secs;
+        // Nearest step within a small tolerance: manifests round-trip the
+        // sub-second steps through decimal text, which is not exact in `f32`.
+        if let Some(&s) = SEEK_STEPS
+            .iter()
+            .find(|&&s| (s - secs).abs() <= 1e-4 * s.max(1.0))
+        {
+            self.seek_seconds = s;
         }
     }
 
-    /// Advance/reverse through [`SEEK_STEPS`] by `dir` (+1 / -1), wrapping.
+    /// Advance/reverse through [`SEEK_STEPS`] by `dir` (+1 / -1). Clamps at the
+    /// ends rather than wrapping.
     pub fn cycle_seek_step(&mut self, dir: i32) -> f32 {
         let idx = SEEK_STEPS
             .iter()
             .position(|&s| s == self.seek_seconds)
-            .unwrap_or(1) as i32;
-        let len = SEEK_STEPS.len() as i32;
-        let next = (idx + dir).rem_euclid(len) as usize;
+            .or_else(|| SEEK_STEPS.iter().position(|&s| s == DEFAULT_SEEK_STEP))
+            .unwrap_or(0) as i32;
+        let last = SEEK_STEPS.len() as i32 - 1;
+        let next = (idx + dir).clamp(0, last) as usize;
         self.seek_seconds = SEEK_STEPS[next];
         self.seek_seconds
     }
@@ -436,19 +443,37 @@ mod tests {
     }
 
     #[test]
-    fn seek_steps_cycle_and_wrap() {
+    fn seek_steps_cycle_clamps_and_includes_fine_steps() {
         let mut s = Session::new(48_000);
         assert_eq!(s.seek_seconds(), 1.0, "new sessions start on the fine step");
+        // Coarsen, and clamp at the top (no wrap).
         assert_eq!(s.cycle_seek_step(1), 5.0);
         assert_eq!(s.cycle_seek_step(1), 10.0);
         assert_eq!(s.cycle_seek_step(1), 30.0);
-        // Wraps to the finest step, then back around.
-        assert_eq!(s.cycle_seek_step(1), 0.5);
-        assert_eq!(s.cycle_seek_step(1), 1.0);
+        assert_eq!(s.cycle_seek_step(1), 30.0);
+        // Refine all the way down, and clamp at the bottom.
+        assert_eq!(s.cycle_seek_step(-1), 10.0);
+        assert_eq!(s.cycle_seek_step(-1), 5.0);
+        assert_eq!(s.cycle_seek_step(-1), 1.0);
         assert_eq!(s.cycle_seek_step(-1), 0.5);
-        assert_eq!(s.cycle_seek_step(-1), 30.0);
+        assert_eq!(s.cycle_seek_step(-1), 0.1);
+        assert_eq!(s.cycle_seek_step(-1), 0.05);
+        assert_eq!(s.cycle_seek_step(-1), 0.01);
+        assert_eq!(s.cycle_seek_step(-1), 0.01);
         s.set_seek_seconds(7.0);
-        assert_eq!(s.seek_seconds(), 30.0, "unsupported steps are ignored");
+        assert_eq!(s.seek_seconds(), 0.01, "unsupported steps are ignored");
+    }
+
+    #[test]
+    fn set_seek_seconds_snaps_near_matches() {
+        let mut s = Session::new(48_000);
+        // Decimal round-trip of a sub-second step still lands on the step.
+        s.set_seek_seconds(0.1);
+        assert_eq!(s.seek_seconds(), 0.1);
+        s.set_seek_seconds(0.010_000_1);
+        assert_eq!(s.seek_seconds(), 0.01);
+        s.set_seek_seconds(0.123);
+        assert_eq!(s.seek_seconds(), 0.01, "far values are ignored");
     }
 
     #[test]

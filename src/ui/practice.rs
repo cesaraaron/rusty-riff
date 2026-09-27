@@ -58,6 +58,10 @@ const RULER_TICKS: [f64; 17] = [
 /// above these; zooming out past the largest returns to fit.
 const ZOOM_WINDOWS: [f64; 8] = [60.0, 30.0, 10.0, 5.0, 2.0, 1.0, 0.5, 0.2];
 
+/// Ruler span (seconds) shown when the timeline has no content yet, so the
+/// empty pane still reads as a usable one-minute placement range.
+const EMPTY_SPAN_SECS: f64 = 60.0;
+
 /// One discovered audio file in the browser.
 struct TrackFile {
     path: PathBuf,
@@ -696,6 +700,11 @@ impl PracticeUi {
         let extent = self
             .session
             .ticks_to_frames(self.session.extent_ticks(), self.sample_rate);
+        let extent = if extent == 0 {
+            (EMPTY_SPAN_SECS * f64::from(self.sample_rate)) as usize
+        } else {
+            extent
+        };
         extent.max(practice.position()).max(1)
     }
 
@@ -1517,25 +1526,20 @@ impl PracticeUi {
         }
         let (view_start, view_len) = self.view(practice);
         let secs = view_len as f64 / f64::from(self.sample_rate.max(1.0));
-        // An empty timeline has no meaningful times to label.
-        let empty = self.session.is_empty();
         // Coarsest tick whose labels do not collide at this window width.
-        let tick = if empty {
-            f64::INFINITY
-        } else {
-            RULER_TICKS
-                .iter()
-                .copied()
-                .find(|&t| {
-                    secs > 0.0
-                        && (t / secs) * wave_w as f64
-                            >= (ruler_label(view_start, self.sample_rate, t).len() as f64 + 1.0)
-                                .max(8.0)
-                })
-                .unwrap_or(*RULER_TICKS.last().unwrap_or(&1.0))
-        };
+        let tick = RULER_TICKS
+            .iter()
+            .copied()
+            .find(|&t| {
+                secs > 0.0
+                    && (t / secs) * wave_w as f64
+                        >= (ruler_label(view_start, self.sample_rate, t).len() as f64 + 1.0)
+                            .max(8.0)
+            })
+            .unwrap_or(*RULER_TICKS.last().unwrap_or(&1.0));
 
         let mut cells: Vec<(char, bool)> = vec![(' ', false); wave_w];
+        let mut last_end = 0usize;
         let mut t = 0.0f64;
         loop {
             let col = if secs > 0.0 {
@@ -1543,13 +1547,20 @@ impl PracticeUi {
             } else {
                 0
             };
-            if col < wave_w && !empty {
+            if col < wave_w {
                 let clock = view_start + (t * f64::from(self.sample_rate)) as usize;
                 let label = ruler_label(clock, self.sample_rate, tick);
-                for (k, ch) in label.chars().enumerate() {
-                    if col + k < wave_w {
-                        cells[col + k] = (ch, false);
+                let w = label.chars().count();
+                // Right-align a label that would spill past the edge, but never
+                // overlap the previous one.
+                let start = col.min(wave_w.saturating_sub(w));
+                if start >= last_end {
+                    for (k, ch) in label.chars().enumerate() {
+                        if start + k < wave_w {
+                            cells[start + k] = (ch, false);
+                        }
                     }
+                    last_end = (start + w).min(wave_w);
                 }
             }
             let next = t + tick;

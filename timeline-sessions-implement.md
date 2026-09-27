@@ -159,6 +159,10 @@ metronome are monitor-only.
   track by `PEAK_FILL / peak` so its loudest point fills the row. Ruler label
   spacing has an 8-cell floor so compact labels do not crowd; the header shows the
   playhead to hundredths (`mmss_precise`).
+- `SEEK_STEPS` is `[0.01, 0.05, 0.1, 0.5, 1, 5, 10, 30]` and `cycle_seek_step`
+  clamps instead of wrapping; `set_seek_seconds` snaps to the nearest step. An
+  empty timeline floors its span to one minute so the ruler shows a `0 … 1:00`
+  grid (transport reads `/ 01:00`).
 
 ---
 

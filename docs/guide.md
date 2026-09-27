@@ -136,7 +136,8 @@ as, `Enter` load, `D` delete. Abandoned dry takes also appear here as
   recorded takes are summed into the output **after** the recording tap, so they
   are never captured into a rendered WAV.
 - **Timeline** — focus it with `3`. `Space` plays/pauses any row, `↑`/`↓`
-  select a track, `←`/`→` seek, `+`/`−` pick the step (0.5/1/5/10/30 s), `M`
+  select a track, `←`/`→` seek, `+`/`−` pick the step
+  (0.01/0.05/0.1/0.5/1/5/10/30 s, clamped at both ends), `M`
   mutes, `G` sets track gain, `H` moves a clip (its arrows move by the step and
   `+`/`−` change it), `Tab` changes the selected row's height (full, then 50/50
   with a second row, then back) and `Shift`+`Tab` cycles the waveform glyph
