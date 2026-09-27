@@ -112,7 +112,12 @@ pub(super) fn draw(
         render_rig(f, rows[i], params, board, focus);
         i += 1;
     }
-    render_help(f, rows[i], status);
+    render_help(
+        f,
+        rows[i],
+        status,
+        (params.midi_clock_bpm.load(Relaxed) > 1.0).then(|| params.midi_clock_bpm.load(Relaxed)),
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1193,8 +1198,8 @@ fn build_fader(value: f32, rows: usize) -> Vec<String> {
 
 /// Single-row footer. The full key list lives in the `K` cheat-sheet modal, so
 /// this only advertises it (plus quit); transient status messages take over the
-/// row while they are shown.
-fn render_help(f: &mut Frame, area: Rect, status: Option<&str>) {
+/// row while they are shown. A running MIDI clock is shown right-aligned.
+fn render_help(f: &mut Frame, area: Rect, status: Option<&str>, midi_bpm: Option<f32>) {
     if let Some(msg) = status {
         let help = Paragraph::new(Line::from(vec![Span::styled(
             format!(" {msg} "),
@@ -1215,6 +1220,17 @@ fn render_help(f: &mut Frame, area: Rect, status: Option<&str>) {
     .alignment(Alignment::Center)
     .style(Style::default().bg(Color::Black));
     f.render_widget(help, area);
+
+    if let Some(bpm) = midi_bpm {
+        let clock = Paragraph::new(Line::from(vec![
+            Span::styled("MIDI CLK ", Style::default().fg(DIM)),
+            Span::styled(format!("{bpm:.0}"), Style::default().fg(AMBER)),
+            Span::styled(" ", Style::default().fg(DIM)),
+        ]))
+        .alignment(Alignment::Right)
+        .style(Style::default().bg(Color::Black));
+        f.render_widget(clock, area);
+    }
 }
 
 /// Full keybinding cheat-sheet, opened with `K`. Sections mirror the footer

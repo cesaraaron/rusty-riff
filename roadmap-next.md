@@ -65,11 +65,14 @@ clock → `delay_time`. Keep the knob authoritative when tapped.
 **Acceptance.** Tap a few beats and the delay locks; MIDI clock changes track;
 tests for the tap-tempo windowing.
 
-**Status — tap-tempo done; MIDI clock remains.** `;` taps; two or more steady
-taps set the delay `TIME` to the tapped interval (clamped to 0–500 ms) and show
-the BPM in the footer. `src/tap_tempo.rs` is a tested pure state machine
-(too-fast taps ignored, slow taps restart the count). MIDI Clock → `delay_time`
-is not built.
+**Status — done.** `;` taps: two or more steady taps set the delay `TIME` to the
+tapped interval (clamped to 0–500 ms) and show the BPM in the footer;
+`src/tap_tempo.rs` is a tested pure state machine (too-fast taps ignored, slow
+taps restart the count). With `clock = true` in `midi.conf`, an incoming 24-ppqn
+**MIDI clock** sets the delay `TIME` to the beat and the footer shows
+`MIDI CLK <bpm>`; `src/midi.rs::MidiClock` is a tested interval→BPM estimator
+(smoothed, rejects burst/gap intervals) that also follows `Start`/`Continue`/
+`Stop`. When the clock stops, the `TIME` knob and the `;` tap take back over.
 
 ---
 
@@ -205,10 +208,10 @@ preset/DSP voicing drift now fails CI.
 
 **Acceptance.** Green on `main`; a deliberately broken commit fails the right gate.
 
-**Caveat (needs a maintainer action).** Push/PR triggers are **not creating runs**
-on this repo/account right now — a manual `gh workflow run test.yml` runs both
-jobs green, including the fidelity `--check`. Until the push trigger is restored
-(Settings → Actions), CI must be run manually or via the weekly schedule.
+**Caveat — resolved (2026-09-27).** Push/PR triggers were briefly not creating
+runs; Actions were re-enabled and push-triggered CI now runs both jobs green
+(Linux gates + the macOS `--all-features`/fidelity `--check`) on every `main`
+push.
 
 ### 4.2 Benchmarks
 
@@ -243,16 +246,14 @@ site was not re-added.
 ## Recommended order
 
 _Done: 4.1 CI, 4.2 benchmarks, 4.3 guide, 3.1 presets, 3.2 onboarding profiles,
-1.1 MIDI expression + CC→knob config, 1.2 tap-tempo, 2.1 looper, 2.2 timeline UX,
-2.3 loop-region export. See above._
+1.1 MIDI expression + CC→knob config, 1.2 tap-tempo + MIDI clock, 2.1 looper,
+2.2 timeline UX, 2.3 loop-region export. See above._
 
 Remaining, in order:
 
-1. **1.2 MIDI clock** — the other half of the MIDI transport story (tap-tempo is
-   in).
-2. **3.3 Theming / narrow-width layout** — a large, mostly mechanical palette
+1. **3.3 Theming / narrow-width layout** — a large, mostly mechanical palette
    refactor; deferred to its own change.
-3. **1.1 MIDI learn/bind screen** — config already maps CCs; the screen is UI
+2. **1.1 MIDI learn/bind screen** — config already maps CCs; the screen is UI
    polish.
 
 The **fidelity path is closed**: the amp effects loop (Phase 2 item 5) was

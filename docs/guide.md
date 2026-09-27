@@ -89,10 +89,16 @@ CC; targets include `wah_position`, `wah_mode`, `delay_time`, `delay_mix`,
 
 ```text
 enabled = true
+clock = true            # follow MIDI clock → delay TIME
 cc = 11                 # wah treadle
 20 = delay_mix
 21 = reverb_mix
 ```
+
+With `clock = true`, an incoming 24-ppqn **MIDI clock** sets the delay `TIME` to
+the beat and the footer shows `MIDI CLK <bpm>`; `Start`/`Continue`/`Stop` are
+followed. When the clock stops, the `TIME` knob and the `;` tap-tempo take back
+over (the last clocked value stays until you change it).
 
 ## Presets
 

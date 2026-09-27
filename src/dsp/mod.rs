@@ -657,6 +657,10 @@ pub struct Params {
     // `1.3` the historic widening). The output limiter is independent.
     pub master_width: Arc<AtomicF32>,
 
+    /// MIDI-clock tempo surfaced by the UI (`0.0` = no clock running). Written by
+    /// the MIDI thread when clock sync is enabled; read-only everywhere else.
+    pub midi_clock_bpm: Arc<AtomicF32>,
+
     // External-IR cab override. `cab_external_active` selects the loaded IR over the
     // built-in cab (flipped live by the UI, instant, no reload). `cab_external_loaded`
     // is set by the control thread so the UI knows an IR is installed and the toggle
@@ -878,6 +882,7 @@ impl Params {
             mic_blend: p!(DEFAULT_MIC_BLEND),
             mic_room: p!(DEFAULT_MIC_ROOM),
             master_width: p!(DEFAULT_MASTER_WIDTH),
+            midi_clock_bpm: p!(0.0),
             cab_external_active: b!(DEFAULT_CAB_EXTERNAL_ACTIVE),
             cab_external_loaded: b!(false),
 
