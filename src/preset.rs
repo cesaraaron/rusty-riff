@@ -970,6 +970,51 @@ pub fn find_preset_files() -> Vec<(PathBuf, PresetSource)> {
     result
 }
 
+/// Favorite preset names, persisted one per line in the config dir. Keyed by
+/// name so embedded (path-less) presets work too.
+fn favorites_file() -> Option<PathBuf> {
+    dirs::home_dir().map(|h| h.join(".config").join("rusty-riff").join("favorites.txt"))
+}
+
+/// Load the set of favorite preset names (empty if none/unreadable).
+pub fn load_favorites() -> std::collections::HashSet<String> {
+    favorites_file()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|s| parse_favorites(&s))
+        .unwrap_or_default()
+}
+
+/// Persist the favorite preset names (best-effort; ignores IO errors).
+pub fn save_favorites(favs: &std::collections::HashSet<String>) {
+    let Some(path) = favorites_file() else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(path, format_favorites(favs));
+}
+
+/// Parse a favorites file: one name per line, blank lines ignored.
+fn parse_favorites(text: &str) -> std::collections::HashSet<String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Format favorites as sorted, newline-separated names (empty string if none).
+fn format_favorites(favs: &std::collections::HashSet<String>) -> String {
+    let mut names: Vec<&str> = favs.iter().map(String::as_str).collect();
+    names.sort_unstable();
+    let mut out = names.join("\n");
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    out
+}
+
 fn load_embedded() -> Vec<Preset> {
     let mut names: Vec<String> = BundledPresets::iter().map(|n| n.into_owned()).collect();
     names.sort();
@@ -1027,6 +1072,21 @@ mod tests {
             }
         }
         assert!(count > 0, "no bundled presets found to validate");
+    }
+
+    /// Favorites serialize as sorted newline-separated names and round-trip,
+    /// ignoring blank lines and surrounding whitespace.
+    #[test]
+    fn favorites_round_trip() {
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        set.insert("Zeta".to_string());
+        set.insert("Alpha".to_string());
+        let text = format_favorites(&set);
+        assert_eq!(text, "Alpha\nZeta\n");
+        assert_eq!(parse_favorites(&text), set);
+        assert_eq!(parse_favorites("Alpha\n\n  Zeta  \n"), set);
+        assert_eq!(format_favorites(&HashSet::new()), "");
     }
 
     /// Intro year of a few named devices, for the anachronism check.

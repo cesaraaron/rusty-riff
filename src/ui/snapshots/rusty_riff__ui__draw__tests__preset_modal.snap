@@ -11,9 +11,9 @@ expression: text
 ┃        · ● ◇              · ● ·               · ● ·              · ● ·               · ● ·              · ● ·       ┃┃      · ● ·           · ● ·            · ● ·     ┃
 ┃         · ·                · ◇                 ◇ ·                · ·                 · ·                · ·        ┃┃       · ·             ◇ ·              ◇ ·      ┃
 ┃      GAIN 7.5           BASS 10.╔ P R E S E T S ═════════════════════════════════════════════════════════════════════════════════════╗    BLEND 0.0        ROOM 0.0    ┃
-┃                                 ║  Default values                                                                                    ║                                 ┃
-┃                                 ║  Clean Combo  sparkly cleans                                                                       ║                                 ┃
-┃▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚║▶ My Lead  saved rig  [user]                                                                        ║▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚┃
+┃                                 ║    Default values                                                                                  ║                                 ┃
+┃                                 ║    Clean Combo  sparkly cleans                                                                     ║                                 ┃
+┃▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚║  ▶ My Lead  saved rig  [user]                                                                      ║▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━║                                                                                                    ║━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 ┌ GUITAR RIG ─────────────────────║                                                                                                    ║─────────────────────────────────┐
 │┌ NOISE GATE ◉ ──────────────────║                                                                                                    ║────────────────────────────────┐│
@@ -45,6 +45,6 @@ expression: text
                                   ║                                                                                                    ║                                  
                                   ║                                                                                                    ║                                  
                                   ║                                                                                                    ║                                  
-                                  ║           ↑/↓ navigate  Enter apply  S save  E export  I import  D delete  Esc / P close           ║                                  
+                                  ║     ↑/↓ navigate  Enter apply  S save  E export  I import  F favorite  D delete  Esc / P close     ║                                  
                                   ║                                            ● user preset                                           ║                                  
                                   ╚════════════════════════════════════════════════════════════════════════════════════════════════════╝

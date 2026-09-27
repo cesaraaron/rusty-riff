@@ -7,11 +7,18 @@ use ratatui::{
 };
 
 use super::styles::{ACCENT, AMBER, CHROME, DIM};
+use std::collections::HashSet;
+
 use crate::preset::{Preset, PresetSource};
 
 const GREEN: ratatui::style::Color = ratatui::style::Color::Rgb(80, 200, 120);
 
-pub(super) fn render_preset_modal(f: &mut Frame, presets: &[Preset], cursor: usize) {
+pub(super) fn render_preset_modal(
+    f: &mut Frame,
+    presets: &[Preset],
+    cursor: usize,
+    favorites: &HashSet<String>,
+) {
     let on_user_preset = cursor > 0
         && presets
             .get(cursor - 1)
@@ -40,7 +47,7 @@ pub(super) fn render_preset_modal(f: &mut Frame, presets: &[Preset], cursor: usi
 
     let mut lines: Vec<Line> = Vec::with_capacity(presets.len() + 1);
 
-    let entry = |name: &str, desc: &str, tag: Option<&str>, selected: bool| -> Line {
+    let entry = |name: &str, desc: &str, tag: Option<&str>, selected: bool, fav: bool| -> Line {
         let (prefix, name_style, desc_style) = if selected {
             (
                 "▶ ",
@@ -60,6 +67,16 @@ pub(super) fn render_preset_modal(f: &mut Frame, presets: &[Preset], cursor: usi
         };
 
         let mut spans = vec![
+            Span::styled(
+                if fav { "★ " } else { "  " },
+                Style::default()
+                    .fg(if fav { AMBER } else { DIM })
+                    .add_modifier(if fav {
+                        Modifier::BOLD
+                    } else {
+                        Modifier::empty()
+                    }),
+            ),
             Span::styled(
                 prefix.to_string(),
                 Style::default().fg(if selected { ACCENT } else { DIM }),
@@ -82,7 +99,7 @@ pub(super) fn render_preset_modal(f: &mut Frame, presets: &[Preset], cursor: usi
         Line::from(spans)
     };
 
-    lines.push(entry("Default values", "", None, cursor == 0));
+    lines.push(entry("Default values", "", None, cursor == 0, false));
     for (i, p) in presets.iter().enumerate() {
         let desc = p.description.as_deref().unwrap_or("");
         let tag = if p.source == PresetSource::User {
@@ -90,7 +107,13 @@ pub(super) fn render_preset_modal(f: &mut Frame, presets: &[Preset], cursor: usi
         } else {
             None
         };
-        lines.push(entry(&p.name, desc, tag, cursor == i + 1));
+        lines.push(entry(
+            &p.name,
+            desc,
+            tag,
+            cursor == i + 1,
+            favorites.contains(&p.name),
+        ));
     }
 
     let visible = rows[0].height as usize;
@@ -119,6 +142,8 @@ pub(super) fn render_preset_modal(f: &mut Frame, presets: &[Preset], cursor: usi
         Span::styled(" export  ", Style::default().fg(DIM)),
         Span::styled("I", Style::default().fg(AMBER)),
         Span::styled(" import  ", Style::default().fg(DIM)),
+        Span::styled("F", Style::default().fg(AMBER)),
+        Span::styled(" favorite  ", Style::default().fg(DIM)),
     ];
     if on_user_preset {
         footer_spans.push(Span::styled(

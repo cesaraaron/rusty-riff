@@ -240,6 +240,7 @@ pub fn run(
     let mut preset_open = false;
     let mut preset_cursor = 0usize;
     let mut presets = presets;
+    let mut favorites = crate::preset::load_favorites();
     let mut save_open = false;
     let mut save_name = String::new();
     let mut save_desc = String::new();
@@ -491,7 +492,7 @@ pub fn run(
                     );
                 }
                 if preset_open {
-                    render_preset_modal(f, &presets, preset_cursor);
+                    render_preset_modal(f, &presets, preset_cursor, &favorites);
                 }
                 if save_open {
                     render_save_dialog(
@@ -1007,6 +1008,13 @@ pub fn run(
                             path_input.clear();
                             path_error = None;
                             path_open = Some(PathDialogKind::Import);
+                        }
+                        KeyCode::Char('f') | KeyCode::Char('F') if preset_cursor > 0 => {
+                            let name = presets[preset_cursor - 1].name.clone();
+                            if !favorites.remove(&name) {
+                                favorites.insert(name);
+                            }
+                            crate::preset::save_favorites(&favorites);
                         }
                         KeyCode::Esc | KeyCode::Char('p') | KeyCode::Char('P') => {
                             preset_open = false;

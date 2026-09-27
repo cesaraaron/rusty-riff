@@ -93,6 +93,11 @@ Finding and comparing tones should not be scrolling.
 (backward-compatible TOML, defaulted); an A/B compare that flips between two
 selected presets without leaving the modal.
 
+**Status — partial.** **Favorites** are done: `F` in the preset browser stars the
+selected preset (a `★` column), persisted by name in
+`~/.config/rusty-riff/favorites.txt` (`preset::load_favorites`/`save_favorites`).
+**Search/filter, tags, and A/B compare remain.**
+
 **Acceptance.** Snapshot tests for the modal; loading/search round-trips;
 favorites persist.
 

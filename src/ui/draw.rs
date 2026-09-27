@@ -1325,6 +1325,7 @@ pub(super) fn render_help_modal(f: &mut Frame) {
         head("Preset browser"),
         row("  ↑/↓  Enter", "  navigate / apply (audio uninterrupted)"),
         row("  S / E / I", "  save / export / import"),
+        row("  F", "  favorite the selected preset"),
         row("  D", "  delete (user presets only)"),
         head("Timeline (focused)"),
         row("  Space", "  play / pause (any row)"),
@@ -2145,7 +2146,12 @@ mod tests {
         let board = default_board(&params);
         // Entries: [Default values, Clean Combo, My Lead] → cursor 2 = the user one.
         let text = render_with(&params, &board, None, |f| {
-            crate::ui::presets::render_preset_modal(f, &presets, 2);
+            crate::ui::presets::render_preset_modal(
+                f,
+                &presets,
+                2,
+                &std::collections::HashSet::new(),
+            );
         });
         insta::assert_snapshot!("preset_modal", text);
     }
