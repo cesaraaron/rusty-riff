@@ -1,5 +1,6 @@
 name        = "AC/DC — Highway to Hell"
 description = "Inspired by the cleaner end of the Young tone (Highway to Hell, 1979): a Plexi at edge-of-breakup with Greenbacks — no pedals, no reverb. Not a verified session rig."
+tags        = ["ac/dc", "rhythm", "hard rock"]
 year        = 1979
 
 # ── Noise Gate ────────────────────────────────────────────────────────────────

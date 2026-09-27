@@ -1,5 +1,6 @@
 name        = "Guns N' Roses — November Rain (Solo)"
 description = "Inspired by Slash's lead on 'November Rain' (Use Your Illusion, 1991): a Les Paul into a hot JCM800-style Marshall. The wide, sustained delay/reverb is the record's mix as much as the rig. Inspired by, not a verified session rig."
+tags        = ["guns n' roses", "lead", "hard rock"]
 year        = 1991
 
 # ── Noise Gate ────────────────────────────────────────────────────────────────

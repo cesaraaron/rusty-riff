@@ -1,5 +1,6 @@
 name        = "Pink Floyd — Comfortably Numb (Outro Solo)"
 description = "Inspired by the outro 'Comfortably Numb' solo (The Wall, 1979): a thick Big Muff-style fuzz into a Hiwatt DR103 and Fane-loaded WEM 4×12, an Electric Mistress-style flanger, long tape repeats and a big hall. Not a verified session rig."
+tags        = ["pink floyd", "lead", "classic rock"]
 year        = 1979
 
 # ── Noise Gate ────────────────────────────────────────────────────────────────

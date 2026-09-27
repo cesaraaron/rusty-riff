@@ -22,6 +22,10 @@ pub enum PresetSource {
 pub struct Preset {
     pub name: String,
     pub description: Option<String>,
+    /// Free-form tags (artist, genre, role) for filtering in the browser. Older
+    /// presets default to none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     /// Recording year the tone is inspired by, for the anachronism check. `None`
     /// for user presets and any file without a date.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -427,6 +431,7 @@ impl Preset {
         Self {
             name,
             description,
+            tags: Vec::new(),
             year: None,
             source: PresetSource::User,
             path: None,

@@ -1,5 +1,6 @@
 name        = "Pink Floyd — Time (Intro / Verse / Chorus)"
 description = "Inspired by clean Dark Side rhythm (1973): a clean Hiwatt DR103 and Fane WEM 4×12, a whisper of Uni-Vibe and a low tape echo. Not a verified session rig."
+tags        = ["pink floyd", "rhythm", "classic rock"]
 year        = 1973
 
 # ── Noise Gate ────────────────────────────────────────────────────────────────

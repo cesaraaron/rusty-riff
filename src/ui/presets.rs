@@ -109,10 +109,17 @@ pub(super) fn render_preset_modal(
     for (pos, &i) in visible.iter().enumerate() {
         let p = &presets[i];
         let desc = p.description.as_deref().unwrap_or("");
-        let tag = if p.source == PresetSource::User {
-            Some("user")
-        } else {
+        // Combine the source marker with the preset's own tags into one label.
+        let mut labels: Vec<&str> = Vec::new();
+        if p.source == PresetSource::User {
+            labels.push("user");
+        }
+        labels.extend(p.tags.iter().map(String::as_str));
+        let tag_string = labels.join(" · ");
+        let tag = if tag_string.is_empty() {
             None
+        } else {
+            Some(tag_string.as_str())
         };
         lines.push(entry(
             &p.name,
@@ -187,6 +194,7 @@ fn preset_matches(p: &Preset, filter: &str) -> bool {
         || p.description
             .as_deref()
             .is_some_and(|d| d.to_lowercase().contains(&needle))
+        || p.tags.iter().any(|t| t.to_lowercase().contains(&needle))
 }
 
 /// Indices into `presets` visible under `filter`, in list order.
@@ -466,5 +474,29 @@ fn centered_rect(percent_x: u16, area: ratatui::layout::Rect) -> ratatui::layout
         y: area.y + y,
         width,
         height,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dsp::Params;
+
+    /// The browser filter must match a preset's name, description, or tags,
+    /// case-insensitively.
+    #[test]
+    fn filter_matches_name_description_and_tags() {
+        let params = Params::new();
+        let mut p =
+            Preset::from_params("My Lead".to_string(), Some("singing".to_string()), &params);
+        p.tags = vec!["blues".to_string(), "gibson".to_string()];
+        assert!(preset_matches(&p, "lead"), "name not matched");
+        assert!(preset_matches(&p, "singing"), "description not matched");
+        assert!(preset_matches(&p, "BLUES"), "tag not matched (case)");
+        assert!(preset_matches(&p, "gib"), "tag substring not matched");
+        assert!(!preset_matches(&p, "strat"));
+        assert_eq!(filter_indices(std::slice::from_ref(&p), "blues"), vec![0]);
+        assert!(filter_indices(std::slice::from_ref(&p), "zzz").is_empty());
+        assert_eq!(filter_indices(std::slice::from_ref(&p), ""), vec![0]);
     }
 }

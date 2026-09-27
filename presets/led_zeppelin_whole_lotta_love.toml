@@ -1,5 +1,6 @@
 name        = "Led Zeppelin — Whole Lotta Love"
 description = "Inspired by the 'Whole Lotta Love' riff tone (1969): a Tone Bender-style fuzz into a cranked Plexi and Greenbacks — thick, greasy and mid-rich. The record is reported to use a Vox Super Beatle; not a verified session rig."
+tags        = ["led zeppelin", "riff", "classic rock"]
 year        = 1969
 
 # ── Noise Gate ────────────────────────────────────────────────────────────────

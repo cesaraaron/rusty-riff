@@ -1,5 +1,6 @@
 name        = "Pink Floyd — Have a Cigar (Solo)"
 description = "Inspired by the lead on 'Have a Cigar' (Wish You Were Here, 1975): a Hiwatt DR103 through a Fane-loaded WEM 4×12, mid-forward with a touch of echo. Inspired by, not a verified session rig."
+tags        = ["pink floyd", "lead", "classic rock"]
 year        = 1975
 
 # ── Noise Gate ────────────────────────────────────────────────────────────────

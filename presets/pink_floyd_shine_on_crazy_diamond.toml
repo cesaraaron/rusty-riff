@@ -1,5 +1,6 @@
 name        = "Pink Floyd — Shine On You Crazy Diamond"
 description = "Inspired by the 'Shine On You Crazy Diamond' lead (Wish You Were Here, 1975): a Fuzz Face into a Hiwatt and Fane 4×12, pushed by a Power-Boost-style clean boost, with a long tape echo standing in for the Binson Echorec. Not a verified session rig."
+tags        = ["pink floyd", "lead", "classic rock"]
 year        = 1975
 
 # ── Noise Gate ────────────────────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 name        = "Pink Floyd — Money"
 description = "Inspired by the 'Money' voice (The Dark Side of the Moon, 1973): a Fuzz Face into a Hiwatt with the wah sweeping ahead of it (the auto-wah stands in for a rocked treadle) and a tape echo. Not a verified session rig."
+tags        = ["pink floyd", "lead", "classic rock"]
 year        = 1973
 
 # ── Noise Gate ────────────────────────────────────────────────────────────────

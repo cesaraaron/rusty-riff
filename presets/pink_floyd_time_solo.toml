@@ -1,5 +1,6 @@
 name        = "Pink Floyd — Time (Solo)"
 description = "Inspired by the 'Time' solo (The Dark Side of the Moon, 1973): a Fuzz Face into a Hiwatt DR103 and Fane-loaded WEM 4×12, with a Uni-Vibe-style swirl and a tape echo. Biting and vocal, not a fuzz wall. Not a verified session rig."
+tags        = ["pink floyd", "lead", "classic rock"]
 year        = 1973
 
 # ── Noise Gate ────────────────────────────────────────────────────────────────

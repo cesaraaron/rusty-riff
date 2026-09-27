@@ -1,5 +1,6 @@
 name        = "Led Zeppelin — Stairway to Heaven (Solo)"
 description = "Inspired by the 'Stairway to Heaven' solo (1971), commonly reported as a Telecaster into a small Supro combo: our Supro-style small combo through a 1×10, with a short slap and a touch of room. Not a verified session rig."
+tags        = ["led zeppelin", "lead", "classic rock"]
 year        = 1971
 
 # ── Noise Gate ────────────────────────────────────────────────────────────────

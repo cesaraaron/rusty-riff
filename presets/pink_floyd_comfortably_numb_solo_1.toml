@@ -1,5 +1,6 @@
 name        = "Pink Floyd — Comfortably Numb (Solo 1)"
 description = "Inspired by the first 'Comfortably Numb' solo (The Wall, 1979): a Big Muff-style fuzz into a Hiwatt DR103 and Fane-loaded WEM 4×12, a hint of flanger and a long tape echo. Bright and vocal. Not a verified session rig."
+tags        = ["pink floyd", "lead", "classic rock"]
 year        = 1979
 
 # ── Noise Gate ────────────────────────────────────────────────────────────────

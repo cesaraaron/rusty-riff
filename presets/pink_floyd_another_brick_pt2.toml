@@ -1,5 +1,6 @@
 name        = "Pink Floyd — Another Brick in the Wall, Pt. 2"
 description = "Inspired by the 'Another Brick in the Wall, Pt. 2' solo (The Wall, 1979): a Big Muff-style fuzz into a Hiwatt with a slow phaser-style sweep and a trailing tape echo. Not a verified session rig."
+tags        = ["pink floyd", "lead", "classic rock"]
 year        = 1979
 
 [noise_gate]

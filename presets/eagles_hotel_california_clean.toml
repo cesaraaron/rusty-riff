@@ -1,5 +1,6 @@
 name        = "Eagles — Hotel California (Clean)"
 description = "Inspired by the clean side of 'Hotel California' (1976), commonly reported as a 12-string acoustic rather than a Twin: this preset is a blackface-style Twin clean with spring reverb and a little chorus/room. Not a verified match."
+tags        = ["eagles", "clean", "classic rock"]
 year        = 1976
 
 # ── Noise Gate ────────────────────────────────────────────────────────────────

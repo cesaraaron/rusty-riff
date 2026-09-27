@@ -1,5 +1,6 @@
 name        = "Pink Floyd — Mother (Solo)"
 description = "Inspired by the electric solo on 'Mother' (The Wall, 1979): a Hiwatt DR103 through a Fane-loaded WEM 4×12, mid-forward and vocal, with a light echo. Inspired by, not a verified session rig."
+tags        = ["pink floyd", "lead", "classic rock"]
 year        = 1979
 
 # ── Noise Gate ────────────────────────────────────────────────────────────────

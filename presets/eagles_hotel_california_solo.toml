@@ -1,5 +1,6 @@
 name        = "Eagles — Hotel California (Solo)"
 description = "Inspired by the harmonized 'Hotel California' outro (1976), recorded as two separate lead parts (Felder: 1959 Les Paul into a cranked tweed Deluxe; Walsh: Telecaster into a small solid-state combo). This single preset approximates the tweed Deluxe voice. Not a verified session rig."
+tags        = ["eagles", "lead", "classic rock"]
 year        = 1976
 
 # ── Noise Gate ────────────────────────────────────────────────────────────────

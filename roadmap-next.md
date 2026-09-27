@@ -93,12 +93,12 @@ Finding and comparing tones should not be scrolling.
 (backward-compatible TOML, defaulted); an A/B compare that flips between two
 selected presets without leaving the modal.
 
-**Status — favorites + search done.** `F` in the preset browser stars the selected
-preset (a `★` column), persisted by name in
-`~/.config/rusty-riff/favorites.txt`. **Type-to-filter** is in: while the modal is
-open, printable (lower-case) keys filter by name/description, `Backspace` deletes,
-`Esc` clears then closes, and commands are the upper-case letters. **Tags and
-A/B compare remain.**
+**Status — favorites + search + tags done.** `F` stars the selected preset (a `★`
+column), persisted by name in `~/.config/rusty-riff/favorites.txt`.
+**Type-to-filter** matches name/description/**tags** (printable keys filter,
+`Backspace` deletes, `Esc` clears then closes; commands are the upper-case
+letters). The `tags = [...]` preset field is defaulted and shown in the list; the
+17 bundled presets are tagged (artist/role). **A/B compare remains.**
 
 **Acceptance.** Snapshot tests for the modal; loading/search round-trips;
 favorites persist.
