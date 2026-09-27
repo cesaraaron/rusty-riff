@@ -1,8 +1,8 @@
 # Timeline UX & navigation — plan
 
-Status: **proposed / in progress**. Companion as-built notes land in
-[`timeline-sessions-implement.md`](timeline-sessions-implement.md) (increment
-log) once implemented.
+Status: **done**. Implemented as increments D3–D4 in
+[`timeline-sessions-implement.md`](timeline-sessions-implement.md); this file is
+kept as the design/acceptance record.
 
 This is a focused follow-up to
 [`timeline-sessions-plan.md`](timeline-sessions-plan.md). It collects the

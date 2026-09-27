@@ -1287,7 +1287,10 @@ impl PracticeUi {
     }
 
     /// Build a frozen export job for the unmuted raw takes. Returns a
-    /// human-readable error when there is nothing to render.
+    /// human-readable error when there is nothing to render. `range_frames`, when
+    /// set, is a loop-region `[start, end)` in engine frames, converted to project
+    /// ticks here.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn build_export_job(
         &self,
         dest: PathBuf,
@@ -1296,6 +1299,7 @@ impl PracticeUi {
         ir_active: bool,
         insert: Option<crate::export::BuildExternal>,
         amp: Option<crate::export::BuildExternal>,
+        range_frames: Option<(usize, usize)>,
     ) -> Result<crate::export::ExportJob, String> {
         let clips: Vec<crate::export::ExportClip> = self
             .session
@@ -1313,17 +1317,50 @@ impl PracticeUi {
         if clips.is_empty() {
             return Err("No unmuted raw takes to export".to_owned());
         }
+        let range_ticks = range_frames.map(|(start, end)| {
+            (
+                self.session.frames_to_ticks(start, self.sample_rate),
+                self.session.frames_to_ticks(end, self.sample_rate),
+            )
+        });
         Ok(crate::export::ExportJob {
             dest,
             sample_rate: self.session.project_sample_rate(),
             project_sample_rate: self.session.project_sample_rate(),
             clips,
             rig: crate::export::snapshot_rig(params),
+            range_ticks,
             ir_path,
             ir_active,
             insert,
             amp,
         })
+    }
+
+    /// The live loop region as an `(start, end)` frame pair, or `None` when it is
+    /// empty (out-point not past the in-point).
+    pub(super) fn loop_region_frames(&self, practice: &Practice) -> Option<(usize, usize)> {
+        let a = practice.loop_start.load(Relaxed) as usize;
+        let b = practice.loop_end.load(Relaxed) as usize;
+        (b > a).then_some((a, b))
+    }
+
+    /// One-line description of the `E` dialog's range control. `loop_region` is
+    /// the selected mode; the times come from the live loop markers.
+    pub(super) fn export_range_label(&self, practice: &Practice, loop_region: bool) -> String {
+        if !loop_region {
+            return "Range: full session   [Tab] loop region".to_owned();
+        }
+        match self.loop_region_frames(practice) {
+            Some((a, b)) => format!(
+                "Range: loop region {} – {}   [Tab] full session",
+                mmss_precise(a, self.sample_rate),
+                mmss_precise(b, self.sample_rate),
+            ),
+            None => {
+                "Range: loop region (none set — use [ and ] first)   [Tab] full session".to_owned()
+            }
+        }
     }
 
     // ── Browser / gain modal input ──────────────────────────────────────────────
@@ -2620,6 +2657,7 @@ mod tests {
                 false,
                 None,
                 None,
+                None,
             )
             .expect("job");
         assert_eq!(job.clips.len(), 1, "only the unmuted take should export");
@@ -2639,10 +2677,60 @@ mod tests {
                 false,
                 None,
                 None,
+                None,
             )
             .err()
             .expect("empty session must not produce a job");
         assert!(err.contains("No unmuted"), "{err}");
+    }
+
+    #[test]
+    fn export_job_carries_the_loop_region() {
+        let mut ui = PracticeUi::new();
+        let params = Params::new();
+        let (asset, kind) = ready("a.wav");
+        ui.session.push(
+            1,
+            "take a".into(),
+            kind,
+            asset,
+            0,
+            48_000,
+            TrackLifecycle::Ready,
+        );
+
+        let job = ui
+            .build_export_job(
+                PathBuf::from("/tmp/out.wav"),
+                &params,
+                None,
+                false,
+                None,
+                None,
+                Some((4_800, 9_600)),
+            )
+            .expect("job");
+        assert_eq!(
+            job.range_ticks,
+            Some((
+                ui.session.frames_to_ticks(4_800, 48_000.0),
+                ui.session.frames_to_ticks(9_600, 48_000.0),
+            ))
+        );
+
+        // No range → render the whole session.
+        let job = ui
+            .build_export_job(
+                PathBuf::from("/tmp/out.wav"),
+                &params,
+                None,
+                false,
+                None,
+                None,
+                None,
+            )
+            .expect("job");
+        assert_eq!(job.range_ticks, None);
     }
 
     #[test]

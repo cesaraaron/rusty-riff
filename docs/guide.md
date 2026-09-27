@@ -146,7 +146,9 @@ as, `Enter` load, `D` delete. Abandoned dry takes also appear here as
   `Shift`+`↑`/`↓` zoom the time axis around the playhead for millisecond detail,
   `[`/`]`/`L` set the loop
   in/out and toggle looping, `Del` removes a track, and `E` exports the unmuted
-  raw takes as a WAV. A time ruler above the rows shows where the playhead sits,
+  raw takes as a WAV (`Tab` in the export dialog switches between the **full
+  session** — the default — and exactly the **loop region**). A time ruler above
+  the rows shows where the playhead sits,
   the waveform is drawn as a fine envelope that grows live while a take records,
   and rows default to three lines so the waveform is readable.
 - **Tuner** — `T` opens a chromatic tuner with a cents meter and spectrum. The

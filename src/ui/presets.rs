@@ -376,12 +376,14 @@ pub(super) enum PathDialogKind {
 }
 
 /// Single-field typed-path dialog for preset import (source file) and export
-/// (destination file). `~` resolves against the home directory.
+/// (destination file). `~` resolves against the home directory. `range` is an
+/// optional extra line shown for the timeline take export (its range control).
 pub(super) fn render_path_dialog(
     f: &mut Frame,
     kind: PathDialogKind,
     input: &str,
     error: Option<&str>,
+    range: Option<&str>,
 ) {
     let (title, label) = match kind {
         PathDialogKind::Import => (" I M P O R T   P R E S E T ", "File to import (.toml):"),
@@ -450,18 +452,32 @@ pub(super) fn render_path_dialog(
             )),
             rows[2],
         );
+    } else if let Some(range) = range {
+        f.render_widget(
+            Paragraph::new(Span::styled(range, Style::default().fg(CHROME))),
+            rows[2],
+        );
     }
 
-    f.render_widget(
-        Paragraph::new(Line::from(vec![
+    let footer = if range.is_some() {
+        Line::from(vec![
+            Span::styled("Enter", Style::default().fg(AMBER)),
+            Span::styled(" confirm  ", Style::default().fg(DIM)),
+            Span::styled("Tab", Style::default().fg(AMBER)),
+            Span::styled(" range  ", Style::default().fg(DIM)),
+            Span::styled("Esc", Style::default().fg(AMBER)),
+            Span::styled(" cancel", Style::default().fg(DIM)),
+        ])
+    } else {
+        Line::from(vec![
             Span::styled("Enter", Style::default().fg(AMBER)),
             Span::styled(" confirm  ", Style::default().fg(DIM)),
             Span::styled("Esc", Style::default().fg(AMBER)),
             Span::styled(" cancel", Style::default().fg(DIM)),
-        ]))
-        .alignment(Alignment::Center),
-        rows[3],
-    );
+        ])
+    };
+
+    f.render_widget(Paragraph::new(footer).alignment(Alignment::Center), rows[3]);
 }
 
 fn centered_rect(percent_x: u16, area: ratatui::layout::Rect) -> ratatui::layout::Rect {

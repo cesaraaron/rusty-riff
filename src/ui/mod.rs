@@ -170,6 +170,24 @@ fn expand_tilde(input: &str) -> PathBuf {
     PathBuf::from(input)
 }
 
+/// Which span the timeline `E` export renders.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ExportRange {
+    /// Tick 0 → last unmuted take + capped effect tail (the original behavior).
+    Full,
+    /// Exactly the loop region `[loop_start, loop_end)`.
+    Loop,
+}
+
+impl ExportRange {
+    fn toggled(self) -> Self {
+        match self {
+            Self::Full => Self::Loop,
+            Self::Loop => Self::Full,
+        }
+    }
+}
+
 /// Validate an export request and start the render worker. Returns a
 /// user-facing error when a faithful render cannot be guaranteed.
 fn start_export(
@@ -179,6 +197,7 @@ fn start_export(
     ir_browser: &ir_browser::IrBrowser,
     insert: Option<exporter::BuildExternal>,
     amp: Option<exporter::BuildExternal>,
+    range_frames: Option<(usize, usize)>,
 ) -> std::result::Result<ExportHandle, String> {
     let input = input.trim();
     if input.is_empty() {
@@ -201,7 +220,15 @@ fn start_export(
     let ir_active = params
         .cab_external_active
         .load(std::sync::atomic::Ordering::Relaxed);
-    let job = practice_ui.build_export_job(dest, params, ir_path, ir_active, insert, amp)?;
+    let job = practice_ui.build_export_job(
+        dest,
+        params,
+        ir_path,
+        ir_active,
+        insert,
+        amp,
+        range_frames,
+    )?;
     Ok(exporter::spawn(job))
 }
 
@@ -283,6 +310,7 @@ pub fn run(
     let mut export_input = String::new();
     let mut export_error: Option<String> = None;
     let mut export_handle: Option<ExportHandle> = None;
+    let mut export_range = ExportRange::Full;
 
     // ── Session loop: (re)select devices, start the engine, run the UI ─────────
     // The `O` key drops the engine and loops back here so the picker runs again —
@@ -537,14 +565,17 @@ pub fn run(
                     );
                 }
                 if let Some(kind) = path_open {
-                    render_path_dialog(f, kind, &path_input, path_error.as_deref());
+                    render_path_dialog(f, kind, &path_input, path_error.as_deref(), None);
                 }
                 if export_open {
+                    let range_label = practice_ui
+                        .export_range_label(&practice, export_range == ExportRange::Loop);
                     render_path_dialog(
                         f,
                         PathDialogKind::SessionExport,
                         &export_input,
                         export_error.as_deref(),
+                        Some(&range_label),
                     );
                 }
                 #[cfg(feature = "clap")]
@@ -649,6 +680,10 @@ pub fn run(
                             export_open = false;
                             export_error = None;
                         }
+                        KeyCode::Tab | KeyCode::BackTab => {
+                            export_range = export_range.toggled();
+                            export_error = None;
+                        }
                         KeyCode::Backspace => {
                             export_input.pop();
                             export_error = None;
@@ -686,6 +721,19 @@ pub fn run(
                             if export_error.is_some() {
                                 continue;
                             }
+                            let range_frames = if export_range == ExportRange::Loop {
+                                match practice_ui.loop_region_frames(&practice) {
+                                    Some(r) => Some(r),
+                                    None => {
+                                        export_error = Some(
+                                            "No loop region set — use [ and ] first".to_owned(),
+                                        );
+                                        continue;
+                                    }
+                                }
+                            } else {
+                                None
+                            };
                             match start_export(
                                 &practice_ui,
                                 &export_input,
@@ -693,6 +741,7 @@ pub fn run(
                                 &ir_browser,
                                 insert,
                                 amp,
+                                range_frames,
                             ) {
                                 Ok(handle) => {
                                     export_handle = Some(handle);
@@ -1315,6 +1364,7 @@ pub fn run(
                                     |p| p.to_string_lossy().into_owned(),
                                 );
                             export_error = None;
+                            export_range = ExportRange::Full;
                             export_open = true;
                         }
                         KeyCode::Char('1') => {

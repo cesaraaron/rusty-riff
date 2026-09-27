@@ -1353,7 +1353,7 @@ pub(super) fn render_help_modal(f: &mut Frame) {
             "  H",
             "  move selected clip (arrows by step; +/− changes it)",
         ),
-        row("  E", "  export unmuted raw takes (WAV)"),
+        row("  E", "  export unmuted raw takes (Tab: full / loop)"),
         row("  [ / ]  L", "  loop in-point / out-point, toggle loop"),
         row("  Del", "  remove selected track"),
     ]);

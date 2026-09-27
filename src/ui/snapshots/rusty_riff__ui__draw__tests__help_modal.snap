@@ -53,7 +53,7 @@ expression: text
                                       ║  Shift+A / Shift+↑↓  waveform gain / time zoom                                            ║                                       
                                       ║  G  selected track gain                                                                   ║                                       
                                       ║  H  move selected clip (arrows by step; +/− changes it)                                   ║                                       
-                                      ║  E  export unmuted raw takes (WAV)                                                        ║                                       
+                                      ║  E  export unmuted raw takes (Tab: full / loop)                                           ║                                       
                                       ║  [ / ]  L  loop in-point / out-point, toggle loop                                         ║                                       
                                       ║                                       Esc / K close                                       ║                                       
                                       ╚═══════════════════════════════════════════════════════════════════════════════════════════╝

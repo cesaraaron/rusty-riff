@@ -103,6 +103,28 @@ record/pause/resume, `F` clear, `,` overdub, `.` undo; state shows in the footer
 Unit tests cover cursor wrap, overdub, undo and no-grow; a whole-bank
 integration test (`tests/bundled_presets.rs`) guards preset renders.
 
+### 2.2 Timeline UX & navigation
+
+**Why.** The practice timeline needed a readable, navigable waveform while
+writing and recording.
+
+**Scope / acceptance.** See [`timeline-ux-plan.md`](timeline-ux-plan.md) (F1–F11):
+empty-timeline navigation, a time ruler on a fixed gutter, fractional seek steps,
+a live recording waveform, taller rows with `Tab` row-zoom, adaptive + braille
+waveforms, playhead-centred time zoom, and waveform gain modes. **Status — done**;
+as-built as increments D3–D4 in
+[`timeline-sessions-implement.md`](timeline-sessions-implement.md).
+
+### 2.3 Loop-region export
+
+**Why.** The offline export was whole-session only; capturing just a good loop
+meant exporting everything and trimming by hand.
+
+**Scope.** The `E` dialog gains a `Tab` range control: **full session** (default,
+unchanged) or exactly the **loop region** `[loop_start, loop_end)` (no appended
+tail; the chain is warmed from frame 0 for continuous state). **Status — done**;
+as-built D5, resolving the old timeline limitation #10.
+
 ---
 
 ## Track 3 — UX and product
@@ -220,12 +242,19 @@ site was not re-added.
 
 ## Recommended order
 
-_4.1 CI, 4.2 benchmarks, 4.3 guide, 3.1 (favorites / search / tags / A-B),
-1.1 MIDI expression + manual wah, and 2.1 looper are done (see above)._
+_Done: 4.1 CI, 4.2 benchmarks, 4.3 guide, 3.1 presets, 3.2 onboarding profiles,
+1.1 MIDI expression + CC→knob config, 1.2 tap-tempo, 2.1 looper, 2.2 timeline UX,
+2.3 loop-region export. See above._
+
 Remaining, in order:
 
-1. **1.2 Tap-tempo and MIDI clock** — builds on the MIDI backend.
-2. **3.2 Onboarding profiles** and **3.3 Theming** — smaller polish.
+1. **1.2 MIDI clock** — the other half of the MIDI transport story (tap-tempo is
+   in).
+2. **3.3 Theming / narrow-width layout** — a large, mostly mechanical palette
+   refactor; deferred to its own change.
+3. **1.1 MIDI learn/bind screen** — config already maps CCs; the screen is UI
+   polish.
 
-A learn/bind screen and CC→arbitrary-knob mapping for 1.1 are the remaining
-MIDI work after tap-tempo.
+The **fidelity path stays primary**: its only unblocked feature is a genuine amp
+effects loop (Phase 2 item 5); measured-IR matching and TS-808 input-HP
+verification remain blocked on re-amp/mic captures.

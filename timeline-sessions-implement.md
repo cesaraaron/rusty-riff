@@ -164,6 +164,27 @@ metronome are monitor-only.
   empty timeline floors its span to one minute so the ruler shows a `0 … 1:00`
   grid (transport reads `/ 01:00`).
 
+### D5 — loop-region export
+- The `E` dialog gains a **range** control (`Tab`): **Full session** (default,
+  unchanged: tick 0 → last unmuted take + capped effect tail) or **Loop region**
+  (`[loop_start, loop_end)`, exact, no appended tail). Implemented as the plan's
+  "explicit selection export, labelled separately" (`timeline-sessions-plan.md`
+  §6); the chain is still warmed from frame 0 so delay/reverb state is continuous.
+- `ExportJob::range_ticks: Option<(u64, u64)>` (project ticks) drives the render:
+  `render_with_chain` writes only `[win_start, win_end)` and skips the
+  tail/silence-hold in bounded mode. The UI refuses an empty region inline
+  (`No loop region set — use [ and ] first`).
+- Tests: `range_export_writes_only_the_window`,
+  `range_export_rejects_an_empty_region`, `export_job_carries_the_loop_region`;
+  the `K` help and `docs/guide.md` updated.
+- **Live pass (2026-09-27, Scarlett Solo 4th Gen @ 44.1 kHz):** loaded a session
+  with a recorded raw take, set a loop with `[`, and exported via the dialog
+  (`E` → `Tab` → loop → `Enter`). The region `[10, 11) s` produced a **1.000 s**
+  stereo-float WAV with the correct in-context audio (peak 0.375); a region over
+  a silent span produced 1.000 s of near-silence as expected. The dialog's range
+  line rendered `Range: full session` then `Range: loop region 0:10.00 – 0:11.00`
+  with the live loop times.
+
 ---
 
 ## 3. Invariants — do not break
@@ -227,8 +248,8 @@ metronome are monitor-only.
    New creates a new temp id, so recovery folders can accumulate.
 9. **`take bus` plugin latency** is not compensated between the live and take
    buses; only the built-in-vs-AU compensation inside one chain exists.
-10. **No loop/region export selection.** Monitoring loop does not (yet) bound an
-    export.
+10. ~~**No loop/region export selection.**~~ **Resolved (D5):** the `E` dialog's
+    `Tab` range control exports exactly the loop region (or the full session).
 
 ---
 

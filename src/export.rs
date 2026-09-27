@@ -5,6 +5,12 @@
 //! project sample rate. Imports, the metronome, live input and the click are
 //! excluded by construction.
 //!
+//! By default the whole session is rendered: tick 0 through the last take plus a
+//! capped effect tail. Setting [`ExportJob::range_ticks`] instead renders exactly
+//! that `[start, end)` span (a **loop-region export**) with no appended tail. The
+//! chain is still warmed from frame 0 so delay/reverb state is continuous, but
+//! only the window is written.
+//!
 //! The render runs on a worker thread with its own [`DspChain`], built from a
 //! **snapshot** of the rig settings (`Preset`), so knob moves during a render do
 //! not affect it. External third-party processors cannot be cloned faithfully yet
@@ -74,6 +80,10 @@ pub struct ExportJob {
     pub clips: Vec<ExportClip>,
     /// Rig snapshot applied to a private [`Params`] instance.
     pub rig: Preset,
+    /// Optional `[start, end)` window in project ticks. `None` renders the whole
+    /// session (tick 0 → last take + effect tail); `Some` renders exactly that
+    /// span (a loop-region export), with no appended tail.
+    pub range_ticks: Option<(u64, u64)>,
     /// External IR source, re-loaded at the export rate when set.
     pub ir_path: Option<PathBuf>,
     pub ir_active: bool,
@@ -219,7 +229,27 @@ fn render_with_chain(
         .max()
         .unwrap_or(0);
     let tail_cap = (sr * TAIL_CAP_SECS) as usize;
-    let total_estimate = program.saturating_add(tail_cap).max(1);
+
+    // Render window. `None` = whole session through the effect tail. `Some` = a
+    // loop-region export: exactly that span, no appended tail. The chain is still
+    // processed from frame 0 (so state is warmed) but only `[win_start, win_end)`
+    // is written.
+    let (win_start, win_end, bounded) = match job.range_ticks {
+        Some((start_ticks, end_ticks)) => {
+            if end_ticks <= start_ticks {
+                bail!("the export range is empty");
+            }
+            let start = (start_ticks as f64 * f64::from(sr) / rate).round() as usize;
+            let end = (end_ticks as f64 * f64::from(sr) / rate).round() as usize;
+            if end <= start {
+                bail!("the export range is too short to render");
+            }
+            (start, end, true)
+        }
+        None => (0, program.saturating_add(tail_cap), false),
+    };
+    let window_len = win_end.saturating_sub(win_start).max(1);
+    let total_estimate = window_len;
 
     // Write to a temp file beside the destination so a failure never leaves a
     // partial file where the user expects the finished WAV.
@@ -246,37 +276,41 @@ fn render_with_chain(
     let hold_frames = (sr * TAIL_HOLD_SECS) as usize;
     let mut silent_for = 0usize;
 
-    while written < program.saturating_add(tail_cap) {
+    while written < win_end {
         if cancel.load(Relaxed) {
             drop(writer);
             let _ = std::fs::remove_file(&tmp);
             bail!("export cancelled");
         }
-        let remaining = program.saturating_add(tail_cap).saturating_sub(written);
+        let remaining = win_end.saturating_sub(written);
         let n = BLOCK.min(remaining);
         mono[..n].fill(0.0);
         for clip in &decoded {
-            // Overlap-add this clip's contribution to the block.
+            // Overlap-add this clip's contribution to the block, clamped to the
+            // render window so a region export never writes outside it.
             let clip_end = clip.start + clip.mono.len();
-            let block_start = written;
-            let block_end = written + n;
-            let lo = block_start.max(clip.start);
-            let hi = block_end.min(clip_end);
+            let lo = (written).max(clip.start).max(win_start);
+            let hi = (written + n).min(clip_end).min(win_end);
             if lo < hi {
                 for out in lo..hi {
-                    mono[out - block_start] += clip.mono[out - clip.start] * clip.gain;
+                    mono[out - written] += clip.mono[out - clip.start] * clip.gain;
                 }
             }
         }
 
         chain.process_block(&mono[..n], &mut left[..n], &mut right[..n]);
 
-        for i in 0..n {
-            writer.write_sample(left[i])?;
-            writer.write_sample(right[i])?;
+        // Write only the frames inside the window.
+        let lo = written.max(win_start);
+        let hi = (written + n).min(win_end);
+        for i in lo..hi {
+            writer.write_sample(left[i - written])?;
+            writer.write_sample(right[i - written])?;
         }
 
-        if written >= program {
+        // The whole-session render stops once the effect tail goes silent; a
+        // bounded region always runs to its out-point.
+        if !bounded && written >= program {
             let peak = left[..n]
                 .iter()
                 .chain(right[..n].iter())
@@ -292,7 +326,8 @@ fn render_with_chain(
         }
 
         written += n;
-        let permille = (written.saturating_mul(1000) / total_estimate).min(1000) as u32;
+        let done = written.saturating_sub(win_start);
+        let permille = (done.saturating_mul(1000) / total_estimate).min(1000) as u32;
         progress.store(permille, Relaxed);
     }
 
@@ -355,6 +390,7 @@ mod tests {
                 gain: 1.0,
             }],
             rig: snapshot_rig(&params),
+            range_ticks: None,
             ir_path: None,
             ir_active: false,
             insert: None,
@@ -406,6 +442,7 @@ mod tests {
                 },
             ],
             rig: snapshot_rig(&params),
+            range_ticks: None,
             ir_path: None,
             ir_active: false,
             insert: None,
@@ -434,6 +471,7 @@ mod tests {
             project_sample_rate: 48_000,
             clips: Vec::new(),
             rig: snapshot_rig(&params),
+            range_ticks: None,
             ir_path: None,
             ir_active: false,
             insert: None,
@@ -443,5 +481,77 @@ mod tests {
         let progress = AtomicU32::new(0);
         let err = run(job, &progress, &cancel).unwrap_err();
         assert!(err.to_string().contains("no unmuted"), "{err}");
+    }
+
+    #[test]
+    fn range_export_writes_only_the_window() {
+        let dir =
+            std::env::temp_dir().join(format!("rusty-riff-export-range-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let take = dir.join("take.wav");
+        let samples: Vec<f32> = (0..480).map(|i| (i as f32 * 0.05).sin() * 0.5).collect();
+        write_mono_wav(&take, 48_000, &samples);
+
+        let params = Params::new();
+        let job = ExportJob {
+            dest: dir.join("out.wav"),
+            sample_rate: 48_000,
+            project_sample_rate: 48_000,
+            clips: vec![ExportClip {
+                path: take,
+                start_ticks: 0,
+                gain: 1.0,
+            }],
+            rig: snapshot_rig(&params),
+            // Frames [120, 240) at 48 kHz.
+            range_ticks: Some((120, 240)),
+            ir_path: None,
+            ir_active: false,
+            insert: None,
+            amp: None,
+        };
+        let cancel = AtomicBool::new(false);
+        let progress = AtomicU32::new(0);
+        let out = run(job, &progress, &cancel).expect("export");
+        let reader = hound::WavReader::open(&out).expect("open out");
+        let frames = reader.len() as usize / 2;
+        assert_eq!(frames, 120, "region export wrote {frames} frames, want 120");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn range_export_rejects_an_empty_region() {
+        let dir = std::env::temp_dir().join(format!(
+            "rusty-riff-export-range-empty-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let take = dir.join("take.wav");
+        write_mono_wav(&take, 48_000, &[0.1f32; 480]);
+
+        let params = Params::new();
+        let job = ExportJob {
+            dest: dir.join("out.wav"),
+            sample_rate: 48_000,
+            project_sample_rate: 48_000,
+            clips: vec![ExportClip {
+                path: take,
+                start_ticks: 0,
+                gain: 1.0,
+            }],
+            rig: snapshot_rig(&params),
+            range_ticks: Some((240, 240)),
+            ir_path: None,
+            ir_active: false,
+            insert: None,
+            amp: None,
+        };
+        let cancel = AtomicBool::new(false);
+        let progress = AtomicU32::new(0);
+        let err = run(job, &progress, &cancel).unwrap_err();
+        assert!(err.to_string().contains("empty"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
