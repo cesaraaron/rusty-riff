@@ -122,10 +122,18 @@ layout. Keep the ratatui snapshot tests meaningful.
 ### 4.1 CI
 
 **Why.** The gates (`fmt`, `clippy -D warnings`, `test --all-features`, harness
-`--check`) are all manual. A clean clone should be provably green.
+`--check`) should run on a clean clone, not by hand.
 
-**Scope.** A GitHub Actions workflow running the four gates on push/PR with a
-Rust toolchain cache. Keep it warn-free and fast enough to be useful.
+**Scope.** A GitHub Actions workflow running the gates on push/PR with a Rust
+toolchain cache, warn-free and fast enough to be useful.
+
+**Status — done (and extended).** `.github/workflows/test.yml` already ran
+`fmt --check`, `clippy --all-features -D warnings`, `cargo test`, and a
+pending-snapshot guard on Linux. **Added a macOS job** that runs
+`cargo test --all-features` (covering the AudioUnit host, which only compiles on
+macOS) and the **fidelity harness** `--check` against
+`docs/fidelity/baseline-synth-48k.toml` (generated on aarch64-apple-darwin), so
+preset/DSP voicing drift now fails CI.
 
 **Acceptance.** Green on `main`; a deliberately broken commit fails the right gate.
 
