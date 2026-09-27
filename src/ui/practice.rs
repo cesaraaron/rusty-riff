@@ -1677,16 +1677,45 @@ impl PracticeUi {
     fn render_tracks(&self, f: &mut Frame, area: Rect, practice: &Practice, focused: bool) {
         let tracks = self.session.tracks();
         if tracks.is_empty() {
-            f.render_widget(
-                Paragraph::new(Line::from(vec![
+            // Even with nothing to draw, keep the playhead line spanning the
+            // pane so it connects to the ruler marker.
+            let (view_start, view_len) = self.view(practice);
+            let position = practice.position();
+            let wave_w = (area.width as usize).saturating_sub(GUTTER);
+            if wave_w > 0 && position >= view_start && position < view_start + view_len {
+                let pos_col = (position - view_start) * wave_w.saturating_sub(1) / view_len.max(1);
+                let cur_col = GUTTER + pos_col.min(wave_w - 1);
+                let line_style = Style::default().fg(HOT).add_modifier(Modifier::BOLD);
+                let lines: Vec<Line> = (0..area.height)
+                    .map(|_| {
+                        Line::from(vec![
+                            Span::raw(" ".repeat(cur_col)),
+                            Span::styled("│", line_style),
+                            Span::raw(
+                                " ".repeat((area.width as usize).saturating_sub(cur_col + 1)),
+                            ),
+                        ])
+                    })
+                    .collect();
+                f.render_widget(Paragraph::new(lines), area);
+            }
+            // Center the empty-state hint in the pane.
+            if area.height > 0 {
+                let hint = Line::from(vec![
                     Span::styled("no tracks — press ", Style::default().fg(DIM)),
                     Span::styled("B", Style::default().fg(AMBER)),
                     Span::styled(" to import, ", Style::default().fg(DIM)),
                     Span::styled("R", Style::default().fg(AMBER)),
                     Span::styled(" to record a raw take", Style::default().fg(DIM)),
-                ])),
-                area,
-            );
+                ]);
+                let mid = Rect {
+                    x: area.x,
+                    y: area.y + area.height / 2,
+                    width: area.width,
+                    height: 1,
+                };
+                f.render_widget(Paragraph::new(hint).alignment(Alignment::Center), mid);
+            }
             return;
         }
         let selected_idx = match self.selection {
