@@ -47,6 +47,11 @@ const ROW_HEIGHT: usize = 3;
 /// waveform columns line up. See `row_header`.
 const GUTTER: usize = 27;
 
+/// Braille sub-cells per character: 2 dot-columns × 4 dot-rows, so one text
+/// line renders four amplitude rows and one cell covers two time steps.
+const SUBCOLS: usize = 2;
+const SUBROWS: usize = 4;
+
 /// Tick spacings (seconds) the ruler may choose from, coarsest that avoids
 /// label collisions.
 const RULER_TICKS: [f64; 11] = [
@@ -1596,8 +1601,34 @@ impl PracticeUi {
             practice.loop_end.load(Relaxed) as usize,
         );
         let pos_col = position * wave_w.saturating_sub(1) / total;
-        let center = height as f32; // vertical centre, in half-row units
         let mid = height / 2;
+        // Vertical centre, in braille dot rows.
+        let center = (height * SUBROWS) as f32 / 2.0;
+        let sub_cols = SUBCOLS * wave_w;
+
+        // Min/max envelope for one braille dot-column, in dot rows around the
+        // centre. `None` when the sub-column falls outside the clip.
+        let sub_env = |sc: usize| -> Option<(f32, f32)> {
+            let f0 = sc * total / sub_cols.max(1);
+            let f1 = (((sc + 1) * total) / sub_cols.max(1)).max(f0 + 1);
+            let a = f0.max(start);
+            let b = f1.min(start.saturating_add(frames));
+            if a >= b {
+                return None;
+            }
+            let b0 = (a - start) * peaks.len() / frames.max(1);
+            let b1 = (((b - start) * peaks.len()) / frames.max(1))
+                .max(b0 + 1)
+                .min(peaks.len());
+            let (mut lo, mut hi) = (0.0f32, 0.0f32);
+            for &(l, h) in &peaks[b0..b1] {
+                lo = lo.min(l);
+                hi = hi.max(h);
+            }
+            let top = center - hi.clamp(-1.0, 1.0) * center;
+            let bottom = center - lo.clamp(-1.0, 1.0) * center;
+            Some((top.max(0.0), bottom.min((height * SUBROWS) as f32)))
+        };
 
         let mut out: Vec<Line<'a>> = Vec::with_capacity(height);
         for line in 0..height {
@@ -1609,46 +1640,40 @@ impl PracticeUi {
             let mut buf = String::new();
             let mut run_style: Option<Style> = None;
             for col in 0..wave_w {
-                // The column's time span, in output frames.
                 let f0 = col * total / wave_w.max(1);
-                let f1 = (((col + 1) * total) / wave_w.max(1)).max(f0 + 1);
                 let in_loop = loop_on && lb > la && f0 >= la && f0 < lb;
-                // Clip the span to the clip's own frames.
-                let a = f0.max(start);
-                let b = f1.min(start.saturating_add(frames));
+                let env = [sub_env(2 * col), sub_env(2 * col + 1)];
+                let inside = env.iter().any(Option::is_some);
                 let (ch, style) = if col == pos_col {
                     ('│', Style::default().fg(HOT).add_modifier(Modifier::BOLD))
-                } else if a >= b {
+                } else if !inside {
                     if in_loop {
                         ('·', Style::default().fg(HOT))
                     } else {
                         (' ', Style::default().fg(CHROME))
                     }
                 } else {
-                    // Aggregate every peak bucket the column covers, so a
-                    // transient anywhere in the span is not skipped.
-                    let b0 = (a - start) * peaks.len() / frames.max(1);
-                    let b1 = (((b - start) * peaks.len()) / frames.max(1))
-                        .max(b0 + 1)
-                        .min(peaks.len());
-                    let (mut lo, mut hi) = (0.0f32, 0.0f32);
-                    for &(l, h) in &peaks[b0..b1] {
-                        lo = lo.min(l);
-                        hi = hi.max(h);
+                    let mut bits = 0u8;
+                    for (d, band) in env.iter().enumerate() {
+                        let Some((top, bottom)) = *band else {
+                            continue;
+                        };
+                        for r in 0..SUBROWS {
+                            let k = (line * SUBROWS + r) as f32;
+                            if k >= top && k < bottom {
+                                bits |= braille_bit(d, r);
+                            }
+                        }
                     }
-                    // Draw the true min/max envelope around zero.
-                    let top = (center - hi.clamp(-1.0, 1.0) * center).max(0.0);
-                    let bottom = (center - lo.clamp(-1.0, 1.0) * center).min((height * 2) as f32);
-                    let filled = |k: usize| (k as f32) >= top && (k as f32) < bottom;
-                    let upper = filled(2 * line);
-                    let lower = filled(2 * line + 1);
-                    let style = Style::default().fg(if in_loop { HOT } else { CHROME });
-                    match (upper, lower) {
-                        (true, true) => ('█', style),
-                        (true, false) => ('▀', style),
-                        (false, true) => ('▄', style),
-                        (false, false) if line == mid => ('·', Style::default().fg(DIM)),
-                        (false, false) => (' ', style),
+                    if bits != 0 {
+                        (
+                            braille_glyph(bits),
+                            Style::default().fg(if in_loop { HOT } else { CHROME }),
+                        )
+                    } else if line == mid {
+                        ('·', Style::default().fg(DIM))
+                    } else {
+                        (' ', Style::default().fg(CHROME))
                     }
                 };
                 if run_style != Some(style) {
@@ -2014,6 +2039,27 @@ fn file_entry(file: &TrackFile, selected: bool) -> Line<'static> {
     ])
 }
 
+/// Braille dot bit for dot-column `d` (0/1, left→right) and dot-row `r`
+/// (0..4, top→bottom).
+fn braille_bit(d: usize, r: usize) -> u8 {
+    match (d, r) {
+        (0, 0) => 0x01,
+        (0, 1) => 0x02,
+        (0, 2) => 0x04,
+        (0, 3) => 0x40,
+        (1, 0) => 0x08,
+        (1, 1) => 0x10,
+        (1, 2) => 0x20,
+        (1, 3) => 0x80,
+        _ => 0,
+    }
+}
+
+/// The Unicode braille glyph for an 8-bit dot pattern (U+2800 base).
+fn braille_glyph(bits: u8) -> char {
+    char::from_u32(0x2800 + bits as u32).unwrap_or(' ')
+}
+
 /// Format a step in seconds without a trailing `.0` (e.g. `5`, `0.5`).
 fn format_step(secs: f32) -> String {
     if secs.fract().abs() < 1e-6 {
@@ -2360,10 +2406,8 @@ mod tests {
             .expect("draw");
             let text = screen_text(&term);
             assert!(text.contains(":00"), "ruler tick missing under {zoom:?}");
-            assert!(
-                text.contains('█') || text.contains('▀') || text.contains('▄'),
-                "waveform envelope missing under {zoom:?}"
-            );
+            let braille = text.chars().any(|c| ('\u{2800}'..='\u{28FF}').contains(&c));
+            assert!(braille, "braille waveform missing under {zoom:?}");
         }
     }
 
@@ -2401,14 +2445,19 @@ mod tests {
         })
         .expect("draw");
         let text = screen_text(&term);
-        let full = text.matches('█').count();
+        // The transient paints braille glyphs in one (at most two) cells per
+        // line; the silent span stays blank/dim.
+        let braille = text
+            .chars()
+            .filter(|c| ('\u{2800}'..='\u{28FF}').contains(c))
+            .count();
         assert!(
-            full >= ROW_HEIGHT,
-            "transient should fill at least one row, got {full}"
+            braille >= ROW_HEIGHT,
+            "transient should paint at least one row, got {braille}"
         );
         assert!(
-            full <= ROW_HEIGHT * 2,
-            "a single transient must not fill the pane, got {full}"
+            braille <= ROW_HEIGHT * 2,
+            "a single transient must not fill the pane, got {braille}"
         );
         assert!(text.contains('·'), "silent span should show the baseline");
     }
