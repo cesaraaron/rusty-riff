@@ -244,6 +244,10 @@ pub fn run(
     let mut preset_cursor = 0usize;
     // Type-to-filter query for the preset browser (empty = show everything).
     let mut preset_filter = String::new();
+    // A/B compare: the two most recently applied presets (by name), so `X` in the
+    // browser flips between them without leaving the modal.
+    let mut applied_preset: Option<String> = None;
+    let mut prev_preset: Option<String> = None;
     let mut presets = presets;
     let mut favorites = crate::preset::load_favorites();
     let mut save_open = false;
@@ -967,13 +971,17 @@ pub fn run(
                             preset_cursor = (preset_cursor + 1).min(total - 1);
                         }
                         KeyCode::Enter => {
+                            let mut applied: Option<String> = None;
                             if preset_cursor == 0 {
                                 params.reset_to_defaults();
                             } else if let Some(p) =
                                 selected_preset(&presets, &preset_filter, preset_cursor)
                             {
                                 p.apply(&params);
+                                applied = Some(p.name.clone());
                             }
+                            prev_preset = applied_preset.take();
+                            applied_preset = applied;
                             // The preset rewrote the enabled flags (and maybe the
                             // chain order), so rebuild the board and repair
                             // focus if it landed on a removed pedal or a
@@ -989,6 +997,35 @@ pub fn run(
                                 ensure_focus_visible(focus, &board, &panels, &params.chain_slots());
                             preset_open = false;
                             preset_filter.clear();
+                        }
+                        KeyCode::Char('X') => {
+                            // A/B: flip to the other of the two most recently applied
+                            // presets (or apply the highlighted one if none yet),
+                            // keeping the browser open.
+                            let target = if let Some(prev) = prev_preset.clone() {
+                                presets.iter().find(|p| p.name == prev)
+                            } else {
+                                selected_preset(&presets, &preset_filter, preset_cursor)
+                            };
+                            if let Some(p) = target {
+                                p.apply(&params);
+                                let new_applied = p.name.clone();
+                                prev_preset = applied_preset.take();
+                                applied_preset = Some(new_applied);
+                                board = sync_board(&params);
+                                if let Some(i) = focus
+                                    && let Some(pi) = pedal_of(i)
+                                    && !board[pi]
+                                {
+                                    focus = Some(AMP_START);
+                                }
+                                focus = ensure_focus_visible(
+                                    focus,
+                                    &board,
+                                    &panels,
+                                    &params.chain_slots(),
+                                );
+                            }
                         }
                         KeyCode::Char('S') => {
                             preset_open = false;

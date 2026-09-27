@@ -158,6 +158,8 @@ pub(super) fn render_preset_modal(
         Span::styled(" import  ", Style::default().fg(DIM)),
         Span::styled("F", Style::default().fg(AMBER)),
         Span::styled(" favorite  ", Style::default().fg(DIM)),
+        Span::styled("X", Style::default().fg(AMBER)),
+        Span::styled(" A/B  ", Style::default().fg(DIM)),
     ];
     if on_user_preset {
         footer_spans.push(Span::styled(

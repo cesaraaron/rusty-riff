@@ -1330,6 +1330,7 @@ pub(super) fn render_help_modal(f: &mut Frame) {
         row("  ↑/↓  Enter", "  navigate / apply (audio uninterrupted)"),
         row("  S / E / I", "  save / export / import"),
         row("  F", "  favorite the selected preset"),
+        row("  X", "  A/B: swap the last two applied presets"),
         row("  D", "  delete (user presets only)"),
         head("Timeline (focused)"),
         row("  Space", "  play / pause (any row)"),

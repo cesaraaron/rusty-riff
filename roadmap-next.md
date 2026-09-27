@@ -108,7 +108,9 @@ column), persisted by name in `~/.config/rusty-riff/favorites.txt`.
 **Type-to-filter** matches name/description/**tags** (printable keys filter,
 `Backspace` deletes, `Esc` clears then closes; commands are the upper-case
 letters). The `tags = [...]` preset field is defaulted and shown in the list; the
-17 bundled presets are tagged (artist/role). **A/B compare remains.**
+17 bundled presets are tagged (artist/role). **A/B compare** is in: `X` in the
+browser flips between the two most recently applied presets, keeping the modal
+open. **Track 3.1 is complete.**
 
 **Acceptance.** Snapshot tests for the modal; loading/search round-trips;
 favorites persist.
