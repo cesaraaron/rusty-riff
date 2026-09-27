@@ -77,6 +77,19 @@ external IR browser and `X` bypasses the IR.
 
 `W` toggles the master-bus stereo width (neutral / wide).
 
+## Expression pedal (MIDI)
+
+MIDI is on by default: rusty-riff connects to the first MIDI input and binds the
+standard **Expression** CC (11). Moving the pedal drives the wah's treadle and
+switches it to manual mode, overriding a preset's auto-wah. You can also set the
+wah's `MODE` knob to manual and play `POSITION` by hand. Change the CC or turn the
+input off in `~/.config/rusty-riff/midi.conf`:
+
+```text
+enabled = true
+cc = 11
+```
+
 ## Presets
 
 A preset is a snapshot of the whole rig. Press `P` to open the browser:
@@ -84,14 +97,16 @@ A preset is a snapshot of the whole rig. Press `P` to open the browser:
 | Key | Action |
 | --- | --- |
 | `↑` / `↓`, `Enter` | Navigate / apply (audio stays uninterrupted) |
+| type | Filter by name, description, or tag (`Backspace`; `Esc` clears) |
 | `S` | Save the current rig as a preset |
 | `E` / `I` | Export / import a preset file |
 | `F` | Favorite the selected preset |
+| `X` | A/B: swap the last two applied presets |
 | `D` | Delete (user presets only) |
 
 Applying a preset switches the rig without stopping audio. Favorites are marked
-with a star. Bundled presets ship with the app; your saved ones are tagged
-`user`.
+with a star and tags (artist / genre / role) show in brackets; bundled presets
+ship with the app and your saved ones add a `user` tag.
 
 Where things live:
 
