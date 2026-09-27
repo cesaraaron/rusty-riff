@@ -119,10 +119,18 @@ pub struct FuzzSection {
     /// 0 = Big Muff, 1 = Fuzz Face. Defaults to 0 so existing presets keep the Muff.
     #[serde(default = "fuzz_type_default")]
     pub r#type: f32,
+    /// Guitar volume as the fuzz sees it (1 = full). Defaults to 1 so existing
+    /// presets are unchanged.
+    #[serde(default = "fuzz_guitar_default")]
+    pub guitar: f32,
 }
 
 fn fuzz_type_default() -> f32 {
     0.0
+}
+
+fn fuzz_guitar_default() -> f32 {
+    1.0
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -452,6 +460,7 @@ impl Preset {
                 tone: params.fz_tone.load(Relaxed),
                 level: params.fz_level.load(Relaxed),
                 r#type: params.fz_type.load(Relaxed),
+                guitar: params.fz_guitar.load(Relaxed),
             }),
             tube_screamer: TsSection {
                 enabled: Some(params.ts_enabled.load(Relaxed)),
@@ -650,6 +659,7 @@ impl Preset {
             params.fz_tone.store(fz.tone.clamp(0.0, 1.0), Relaxed);
             params.fz_level.store(fz.level.clamp(0.0, 1.0), Relaxed);
             params.fz_type.store(fz.r#type.clamp(0.0, 1.0), Relaxed);
+            params.fz_guitar.store(fz.guitar.clamp(0.0, 1.0), Relaxed);
         } else {
             params.fz_enabled.store(false, Relaxed);
         }
@@ -1152,7 +1162,7 @@ mod tests {
         knobs!(pitch_enabled, pitch_pitch, pitch_mix, pitch_tone);
         knobs!(wah_enabled, wah_freq, wah_sens, wah_q, wah_mix);
         knobs!(cmp_enabled, cmp_sustain, cmp_attack, cmp_level);
-        knobs!(fz_enabled, fz_fuzz, fz_tone, fz_level, fz_type);
+        knobs!(fz_enabled, fz_fuzz, fz_tone, fz_level, fz_type, fz_guitar);
         knobs!(ts_enabled, ts_drive, ts_tone, ts_level);
         knobs!(ds_enabled, ds_drive, ds_tone, ds_level);
         knobs!(ml_enabled, ml_dist, ml_low, ml_high, ml_level);

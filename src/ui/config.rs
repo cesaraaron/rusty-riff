@@ -60,7 +60,7 @@ pub(super) const WAH_END: usize = WAH_START + 4;
 pub(super) const CMP_START: usize = WAH_END;
 pub(super) const CMP_END: usize = CMP_START + 3;
 pub(super) const FUZZ_START: usize = CMP_END;
-pub(super) const FUZZ_END: usize = FUZZ_START + 4;
+pub(super) const FUZZ_END: usize = FUZZ_START + 5;
 pub(super) const TS_START: usize = FUZZ_END;
 pub(super) const TS_END: usize = TS_START + 3;
 pub(super) const DS_START: usize = TS_END;
@@ -209,7 +209,11 @@ pub(super) const KNOBS: &[Knob] = &[
         label: "LEVEL",
         param: |p| &p.fz_level,
     },
-    // 25–27: TS-808
+    Knob {
+        label: "GUITAR",
+        param: |p| &p.fz_guitar,
+    },
+    // TS-808
     Knob {
         label: "DRIVE",
         param: |p| &p.ts_drive,
@@ -747,7 +751,7 @@ mod tests {
         // Deliberate tripwire: bump these when you add or remove a pedal/knob so
         // the change is a conscious, reviewed edit rather than an accident.
         assert_eq!(PEDALS.len(), 19, "pedal count changed");
-        assert_eq!(KNOBS.len(), 81, "knob count changed");
+        assert_eq!(KNOBS.len(), 82, "knob count changed");
     }
 
     #[test]

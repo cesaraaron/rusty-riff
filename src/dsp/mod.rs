@@ -568,6 +568,7 @@ const DEFAULT_FZ_TONE: f32 = 0.50;
 const DEFAULT_FZ_LEVEL: f32 = 0.60;
 // 0 = Big Muff (the shipped default), 1 = Fuzz Face.
 const DEFAULT_FZ_TYPE: f32 = 0.0;
+const DEFAULT_FZ_GUITAR: f32 = 1.0;
 
 const DEFAULT_TS_ENABLED: bool = true;
 const DEFAULT_TS_DRIVE: f32 = 0.45;
@@ -724,6 +725,8 @@ pub struct Params {
     pub fz_tone: Arc<AtomicF32>,
     pub fz_level: Arc<AtomicF32>,
     pub fz_type: Arc<AtomicF32>,
+    // Guitar volume as the fuzz sees it (1 = full) — drives the Fuzz Face cleanup.
+    pub fz_guitar: Arc<AtomicF32>,
 
     // TS-808
     pub ts_enabled: Arc<AtomicBool>,
@@ -918,6 +921,7 @@ impl Params {
             fz_tone: p!(DEFAULT_FZ_TONE),
             fz_level: p!(DEFAULT_FZ_LEVEL),
             fz_type: p!(DEFAULT_FZ_TYPE),
+            fz_guitar: p!(DEFAULT_FZ_GUITAR),
 
             ts_enabled: b!(DEFAULT_TS_ENABLED),
             ts_drive: p!(DEFAULT_TS_DRIVE),
@@ -1059,6 +1063,7 @@ impl Params {
         self.fz_tone.store(DEFAULT_FZ_TONE, Relaxed);
         self.fz_level.store(DEFAULT_FZ_LEVEL, Relaxed);
         self.fz_type.store(DEFAULT_FZ_TYPE, Relaxed);
+        self.fz_guitar.store(DEFAULT_FZ_GUITAR, Relaxed);
 
         self.ts_enabled.store(DEFAULT_TS_ENABLED, Relaxed);
         self.ts_drive.store(DEFAULT_TS_DRIVE, Relaxed);
@@ -1617,7 +1622,7 @@ impl DspChain {
             ),
             ChainStage::Fuzz => {
                 mono_stage!(
-                    self, p, x, fz_enabled, fz, fz_fuzz, fz_tone, fz_level, fz_type
+                    self, p, x, fz_enabled, fz, fz_fuzz, fz_tone, fz_level, fz_type, fz_guitar
                 )
             }
             ChainStage::Ts => {

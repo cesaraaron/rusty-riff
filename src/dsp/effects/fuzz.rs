@@ -35,6 +35,12 @@ pub struct Fuzz {
     post_dc: Biquad,
     // Fixed mid scoop — the Big Muff "smiley" voicing.
     scoop: Biquad,
+    // Volume-dependent input loading for the Fuzz Face voice: the pedal's low input
+    // impedance works against the guitar's volume pot + cable capacitance, so rolling
+    // the guitar volume back both thins and cleans the fuzz. Modelled as an input HP
+    // whose corner rises as `guitar` falls.
+    guitar_hp: Biquad,
+    last_guitar: f32,
     // Variable 1-pole low-pass for the tone control.
     tone: OnePoleLp,
     last_tone: f32,
@@ -52,6 +58,8 @@ impl Fuzz {
             post_dc: Biquad::highpass(sr, 45.0, 0.707),
             // −9 dB dip at 700 Hz: the scooped Muff midrange.
             scoop: Biquad::peak_eq(sr, 700.0, 0.7, -9.0),
+            guitar_hp: Biquad::highpass(sr, 70.0, 0.707),
+            last_guitar: 1.0,
             tone: OnePoleLp::new(),
             last_tone: -1.0, // force first update
         };
@@ -66,17 +74,42 @@ impl Fuzz {
         self.last_tone = tone;
     }
 
-    /// `fuzz` 0–1 (sustain/gain), `tone` 0–1, `level` 0–1, and `kind` 0–1
-    /// selecting the voicing: low = Big Muff, mid = Fuzz Face, high = Tone Bender
-    /// MkII (thresholds at 0.25 / 0.75 so the shipped presets' 0.0 and 0.5 map to
-    /// Muff and Fuzz Face).
+    /// Rebuild the Fuzz Face input-loading HP for a new guitar-volume setting: the
+    /// pedal's low input impedance eats the lows first as the guitar is rolled back.
+    fn set_guitar(&mut self, guitar: f32) {
+        let gv = guitar.clamp(0.03, 1.0);
+        let corner = (70.0 * (1.0 / gv).powf(1.3)).clamp(70.0, 1200.0);
+        self.guitar_hp = Biquad::highpass(self.sr, corner, 0.707);
+        self.last_guitar = gv;
+    }
+
+    /// `fuzz` 0–1 (sustain/gain), `tone` 0–1, `level` 0–1, `kind` 0–1 selecting the
+    /// voicing (low = Big Muff, mid = Fuzz Face, high = Tone Bender MkII; thresholds
+    /// at 0.25 / 0.75), and `guitar` 0–1 = the guitar's volume knob as the pedal sees
+    /// it (1 = full). Rolling `guitar` back cleans the fuzz up — strongest on the
+    /// Fuzz Face, whose low input impedance thins and cleans as the pot closes.
+    #[allow(clippy::too_many_arguments)]
     #[inline]
-    pub fn process(&mut self, x: f32, fuzz: f32, tone: f32, level: f32, kind: f32) -> f32 {
+    pub fn process(
+        &mut self,
+        x: f32,
+        fuzz: f32,
+        tone: f32,
+        level: f32,
+        kind: f32,
+        guitar: f32,
+    ) -> f32 {
         if param_changed(tone, self.last_tone) {
             self.set_tone(tone);
         }
+        if param_changed(guitar, self.last_guitar) {
+            self.set_guitar(guitar);
+        }
+        let gv = guitar.clamp(0.03, 1.0);
 
         let x = self.dc_block.process(x);
+        // The guitar's own volume attenuates what reaches the pedal.
+        let x = x * gv;
         let x = self.input_hp.process(x);
 
         // Three fuzz voicings share the pedal. The Big Muff slams the signal into
@@ -91,6 +124,14 @@ impl Fuzz {
         } else {
             Voice::ToneBender
         };
+        // The Fuzz Face's low input impedance loads the guitar, so its cleanup is
+        // stronger and it thins out as the guitar volume closes. Bypassed at full
+        // volume so the pedal's default voice is unchanged.
+        let x = if voice == Voice::FuzzFace && gv < 0.999 {
+            self.guitar_hp.process(x)
+        } else {
+            x
+        };
         let (x, level_scalar) = match voice {
             Voice::Muff => {
                 // Enormous gain into the cascaded clippers — this is what makes it a
@@ -103,7 +144,11 @@ impl Fuzz {
                 (x, 0.5)
             }
             Voice::FuzzFace => {
-                let gain = 1.0 + fuzz * 55.0;
+                // The Fuzz Face's input transistor is biased through the guitar's
+                // volume pot, so rolling the guitar back shaves the stage gain too —
+                // not just the signal level. Combined with the input scale above this
+                // is what lets a Fuzz Face clean up dramatically as you turn down.
+                let gain = (1.0 + fuzz * 55.0) * gv * gv;
                 let x = self.os.process(x, |u| {
                     let s = ff_clip(u * gain);
                     ff_clip(s * 1.7)
@@ -202,7 +247,7 @@ mod tests {
         let mut count = 0u32;
         for n in 0..total {
             let x = (2.0 * PI * 82.41 * n as f32 / sr).sin() * 0.8;
-            let y = fz.process(x, 1.0, 0.5, 0.7, 0.0);
+            let y = fz.process(x, 1.0, 0.5, 0.7, 0.0, 1.0);
             assert!(y.is_finite(), "fuzz produced non-finite output at {n}");
             if n >= warmup {
                 max_abs = max_abs.max(y.abs());
@@ -235,9 +280,9 @@ mod tests {
         let mut diff_bender = 0.0f32;
         for n in 0..(sr as usize) {
             let x = (2.0 * PI * 110.0 * n as f32 / sr).sin() * 0.7;
-            let a = muff.process(x, 0.8, 0.5, 0.7, 0.0);
-            let b = face.process(x, 0.8, 0.5, 0.7, 0.5);
-            let c = bender.process(x, 0.8, 0.5, 0.7, 1.0);
+            let a = muff.process(x, 0.8, 0.5, 0.7, 0.0, 1.0);
+            let b = face.process(x, 0.8, 0.5, 0.7, 0.5, 1.0);
+            let c = bender.process(x, 0.8, 0.5, 0.7, 1.0, 1.0);
             assert!(b.is_finite() && c.is_finite(), "fuzz non-finite at {n}");
             max_face = max_face.max(b.abs());
             max_bender = max_bender.max(c.abs());
@@ -261,6 +306,53 @@ mod tests {
         assert!(
             diff_bender / sr > 0.05,
             "tone bender voicing barely differs from the Muff"
+        );
+    }
+
+    /// Single-bin DFT magnitude (f64 accumulator: the long windows and the small
+    /// bins need the extra precision).
+    fn goertzel(samples: &[f32], f: f32, sr: f32) -> f32 {
+        let w = 2.0 * std::f64::consts::PI * f as f64 / sr as f64;
+        let coeff = 2.0 * w.cos();
+        let (mut s1, mut s2) = (0.0f64, 0.0f64);
+        for &x in samples {
+            let s0 = x as f64 + coeff * s1 - s2;
+            s2 = s1;
+            s1 = s0;
+        }
+        let real = s1 - s2 * w.cos();
+        let imag = s2 * w.sin();
+        ((real * real + imag * imag).sqrt() / (samples.len() as f64 / 2.0)) as f32
+    }
+
+    /// The guitar-volume model: rolling the guitar back must *clean the Fuzz Face
+    /// up* — harmonic distortion (upper harmonics over the fundamental) falls as the
+    /// clipping eases. Full volume is the dirty fuzz.
+    #[test]
+    fn fuzz_face_cleans_up_as_guitar_volume_falls() {
+        let sr = 48_000.0;
+        let thd = |guitar: f32| {
+            let mut fz = Fuzz::new(sr);
+            let n = sr as usize;
+            let warmup = n / 4;
+            let mut out = Vec::with_capacity(n - warmup);
+            for i in 0..n {
+                let x = (2.0 * PI * 100.0 * i as f32 / sr).sin() * 0.8;
+                let y = fz.process(x, 0.9, 0.5, 0.7, 0.5, guitar);
+                assert!(y.is_finite(), "fuzz non-finite at {i}");
+                if i >= warmup {
+                    out.push(y);
+                }
+            }
+            let fund = goertzel(&out, 100.0, sr);
+            let upper: f32 = (2..=8).map(|k| goertzel(&out, 100.0 * k as f32, sr)).sum();
+            upper / fund.max(1e-9)
+        };
+        let full = thd(1.0);
+        let rolled = thd(0.3);
+        assert!(
+            rolled < full * 0.7,
+            "fuzz face did not clean up with guitar volume: full THD {full:.3} vs rolled-back {rolled:.3}"
         );
     }
 }

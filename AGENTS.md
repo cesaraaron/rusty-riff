@@ -18,7 +18,7 @@ rusty-riff is a real-time guitar amplifier emulator that runs in the terminal. I
 Guitar input
   → Noise Gate          (envelope follower + gain ramp)
   → Compressor          (peak-follower detector → hard-knee gain computer)
-  → Fuzz                (Big Muff style: DC block → 70 Hz HP → two cascaded soft-clips → mid scoop → variable tone LP)
+  → Fuzz                (TYPE: Big Muff | Fuzz Face | Tone Bender; GUITAR knob models the guitar-volume cleanup/loading on the Fuzz Face)
   → TS-808 Tube Screamer (DC block → 340 Hz HP → asymmetric diode soft-clip → variable tone LP)
   → DS-1 Distortion     (DC block → 80 Hz HP → silicon diode hard-clip → active tone LP/HP blend)
   → Pre-amp EQ          (low shelf 100 Hz / mid peak 650 Hz / high shelf 3 kHz — shapes what the amp clips)
