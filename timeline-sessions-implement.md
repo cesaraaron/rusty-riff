@@ -128,6 +128,12 @@ metronome are monitor-only.
 - **Taller rows + `Tab` zoom.** Rows default to three lines drawn as a symmetric
   min/max envelope. `Tab` on the timeline cycles `Normal → Expanded(one row fills
   the pane) → Split(two rows 50/50) → Normal`; deleted rows sanitize the zoom.
+- **Waveform resolution (F6).** Peaks are stored adaptively at ~100 buckets/s
+  (`practice::peak_buckets`, clamped `[1024, 65536]`) for imports and takes, and
+  each render column aggregates the min/max over its whole time span, so
+  transients are no longer skipped. The envelope is drawn from the real `lo`/`hi`
+  around zero instead of a peak-to-peak rectangle. New sessions default to the
+  1 s seek step (`DEFAULT_SEEK_STEP`).
 
 ---
 

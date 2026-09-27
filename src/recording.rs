@@ -26,7 +26,7 @@ use std::time::Duration;
 use rtrb::{Consumer, Producer, RingBuffer};
 
 use crate::dsp::player::PlayerTrack;
-use crate::practice::peaks;
+use crate::practice::{peak_buckets, peaks};
 
 /// How many seconds of dry samples the ring can hold before the writer has to
 /// catch up. Generous: the worker only runs during a take.
@@ -333,7 +333,7 @@ fn run_capture(
         start: 0,
         l,
     };
-    reply.peaks = peaks(&track, 1024);
+    reply.peaks = peaks(&track, peak_buckets(reply.frames, sample_rate as f32));
     reply.track = Some(track);
     let _ = result.send(reply);
 }

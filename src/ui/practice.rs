@@ -31,17 +31,13 @@ use crate::dsp::Params;
 use crate::dsp::cab::{ExternalIrCab, MAX_IR_LEN, load_ir};
 use crate::dsp::metronome::Metronome;
 use crate::dsp::player::{MAX_TRACKS, TrackKind as PlayerKind};
-use crate::practice::{DecodedTrack, Practice, decode_track, peaks};
+use crate::practice::{DecodedTrack, Practice, decode_track, peak_buckets, peaks};
 use crate::preset::Preset;
 use crate::project::{self, AssetCopy, MetronomeSection, TrackSection, TransportSection};
 use crate::recording::{
     CaptureCommand, CaptureResult, CaptureState, LivePeaks, spawn_capture_worker,
 };
 use crate::session::{AssetRef, Session, TrackId, TrackKind, TrackLifecycle};
-
-/// How many waveform buckets we keep per track for the mini display (mapped to
-/// the pane width each frame). Enough detail for a glance without recomputing.
-pub(super) const PEAK_BUCKETS: usize = 512;
 
 /// Default track-row height, in terminal lines. Tall enough to read the
 /// waveform envelope; `Tab` zooms a row beyond this.
@@ -323,7 +319,7 @@ impl PracticeUi {
         let length_ticks = self.session.frames_to_ticks(frames, self.sample_rate);
         let mut player_track = decoded.track;
         player_track.start = start_frames;
-        let pk = peaks(&player_track, PEAK_BUCKETS);
+        let pk = peaks(&player_track, peak_buckets(frames, self.sample_rate));
 
         let asset = AssetRef {
             path: pending.path.clone(),
@@ -1613,29 +1609,36 @@ impl PracticeUi {
             let mut buf = String::new();
             let mut run_style: Option<Style> = None;
             for col in 0..wave_w {
-                let frame = col * total / wave_w.max(1);
-                let in_loop = loop_on && lb > la && frame >= la && frame < lb;
-                let inside = frame >= start && frame - start < frames;
+                // The column's time span, in output frames.
+                let f0 = col * total / wave_w.max(1);
+                let f1 = (((col + 1) * total) / wave_w.max(1)).max(f0 + 1);
+                let in_loop = loop_on && lb > la && f0 >= la && f0 < lb;
+                // Clip the span to the clip's own frames.
+                let a = f0.max(start);
+                let b = f1.min(start.saturating_add(frames));
                 let (ch, style) = if col == pos_col {
                     ('│', Style::default().fg(HOT).add_modifier(Modifier::BOLD))
-                } else if !inside {
+                } else if a >= b {
                     if in_loop {
                         ('·', Style::default().fg(HOT))
                     } else {
                         (' ', Style::default().fg(CHROME))
                     }
                 } else {
-                    let bucket = {
-                        let rel = frame - start;
-                        (rel * peaks.len() / frames.max(1)).min(peaks.len() - 1)
-                    };
-                    let amp = peaks
-                        .get(bucket)
-                        .map(|(lo, hi)| (hi - lo).max(0.0))
-                        .unwrap_or(0.0);
-                    let half = amp.min(1.0) * center;
-                    let top = (center - half).max(0.0);
-                    let bottom = (center + half).min((height * 2) as f32);
+                    // Aggregate every peak bucket the column covers, so a
+                    // transient anywhere in the span is not skipped.
+                    let b0 = (a - start) * peaks.len() / frames.max(1);
+                    let b1 = (((b - start) * peaks.len()) / frames.max(1))
+                        .max(b0 + 1)
+                        .min(peaks.len());
+                    let (mut lo, mut hi) = (0.0f32, 0.0f32);
+                    for &(l, h) in &peaks[b0..b1] {
+                        lo = lo.min(l);
+                        hi = hi.max(h);
+                    }
+                    // Draw the true min/max envelope around zero.
+                    let top = (center - hi.clamp(-1.0, 1.0) * center).max(0.0);
+                    let bottom = (center - lo.clamp(-1.0, 1.0) * center).min((height * 2) as f32);
                     let filled = |k: usize| (k as f32) >= top && (k as f32) < bottom;
                     let upper = filled(2 * line);
                     let lower = filled(2 * line + 1);
@@ -2362,6 +2365,52 @@ mod tests {
                 "waveform envelope missing under {zoom:?}"
             );
         }
+    }
+
+    #[test]
+    fn waveform_aggregates_a_transient_into_its_column() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut ui = PracticeUi::new();
+        let practice = Practice::new();
+        ui.session.push(
+            1,
+            "t".into(),
+            TrackKind::Import,
+            Some(AssetRef {
+                path: PathBuf::from("t.wav"),
+                source_sample_rate: 48_000,
+                source_channels: 2,
+            }),
+            0,
+            48_000,
+            TrackLifecycle::Ready,
+        );
+        // One full-scale bucket among silence: the envelope must show it as a
+        // single spike, not smear it across the whole row.
+        let mut peaks = vec![(0.0f32, 0.0f32); 64];
+        peaks[32] = (-1.0, 1.0);
+        ui.session.track_mut(1).expect("track").peaks = peaks;
+        ui.move_selection(true);
+
+        let mut term = Terminal::new(TestBackend::new(90, 12)).expect("test backend");
+        term.draw(|f| {
+            let area = f.area();
+            ui.render(f, area, &practice, true, false, false);
+        })
+        .expect("draw");
+        let text = screen_text(&term);
+        let full = text.matches('█').count();
+        assert!(
+            full >= ROW_HEIGHT,
+            "transient should fill at least one row, got {full}"
+        );
+        assert!(
+            full <= ROW_HEIGHT * 2,
+            "a single transient must not fill the pane, got {full}"
+        );
+        assert!(text.contains('·'), "silent span should show the baseline");
     }
 
     #[test]

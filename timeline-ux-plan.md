@@ -160,6 +160,28 @@ there is no way to inspect where the highs and lows sit.
 
 ---
 
+## F6. Waveform resolution & envelope
+
+**Problem.** The waveform reads as a thick block with occasional notches: a pick
+followed by a quieter note merges into one tall rectangle. Imports stored only
+512 peak buckets and takes 1024 (~0.5 s each on a few-minute track), and the
+renderer sampled a *single* bucket at each column's left edge, so most
+transients were never looked at.
+
+**Behavior.**
+- Store peaks adaptively at ~100 buckets/s (10 ms), clamped to `[1024, 65536]`
+  (`practice::peak_buckets`), for imports and finalized takes alike. Live
+  captures already publish ~5 ms buckets.
+- Each waveform column aggregates the **min of `lo` and max of `hi`** over every
+  bucket its time span covers (clipped to the clip's frames), and draws the true
+  centered min/max envelope rather than a peak-to-peak magnitude. Silence
+  collapses to the dim center baseline.
+
+Horizontal time zoom (millisecond detail) remains a possible follow-up; the
+higher bucket resolution is chosen to support it later.
+
+---
+
 ## Affected files
 
 | Area | Files |

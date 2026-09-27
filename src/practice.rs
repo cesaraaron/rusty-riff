@@ -203,6 +203,14 @@ pub fn decode_track(path: impl AsRef<Path>, target_sr: f32) -> Result<DecodedTra
     })
 }
 
+/// Peak-envelope resolution for a track of `frames` at `sample_rate`: roughly
+/// 100 buckets per second (10 ms), clamped to a sane memory range. Fine enough
+/// that the timeline's per-column min/max aggregation does not miss transients.
+pub fn peak_buckets(frames: usize, sample_rate: f32) -> usize {
+    let per_bucket = (sample_rate / 100.0).max(1.0);
+    ((frames as f32 / per_bucket).round() as usize).clamp(1024, 65_536)
+}
+
 /// Peak envelope over `buckets` buckets: (min, max) of the mono sum per bucket.
 /// Runs off the audio thread.
 pub fn peaks(track: &PlayerTrack, buckets: usize) -> Vec<(f32, f32)> {
@@ -250,6 +258,14 @@ mod tests {
         assert_eq!(t.seek, None);
         assert!(!t.loop_enabled);
         assert_eq!(p.position(), 0);
+    }
+
+    #[test]
+    fn peak_buckets_scales_with_length_and_is_clamped() {
+        // ~100 buckets/s, with a floor and a memory cap.
+        assert_eq!(peak_buckets(480_000, 48_000.0), 1_024); // 10 s → floor
+        assert_eq!(peak_buckets(2_880_000, 48_000.0), 6_000); // 1 min
+        assert_eq!(peak_buckets(48_000 * 60 * 60 * 10, 48_000.0), 65_536); // cap
     }
 
     #[test]

@@ -108,7 +108,7 @@ impl Track {
 /// precise placement; the rest are coarse jumps.
 pub const SEEK_STEPS: [f32; 5] = [0.5, 1.0, 5.0, 10.0, 30.0];
 /// The increment a new session starts on.
-pub const DEFAULT_SEEK_STEP: f32 = 5.0;
+pub const DEFAULT_SEEK_STEP: f32 = 1.0;
 
 /// The editable project. Owned by the UI thread; never touched by the audio
 /// callback.
@@ -438,10 +438,11 @@ mod tests {
     #[test]
     fn seek_steps_cycle_and_wrap() {
         let mut s = Session::new(48_000);
-        assert_eq!(s.seek_seconds(), 5.0);
+        assert_eq!(s.seek_seconds(), 1.0, "new sessions start on the fine step");
+        assert_eq!(s.cycle_seek_step(1), 5.0);
         assert_eq!(s.cycle_seek_step(1), 10.0);
         assert_eq!(s.cycle_seek_step(1), 30.0);
-        // Wraps to the fine step, then back around.
+        // Wraps to the finest step, then back around.
         assert_eq!(s.cycle_seek_step(1), 0.5);
         assert_eq!(s.cycle_seek_step(1), 1.0);
         assert_eq!(s.cycle_seek_step(-1), 0.5);
