@@ -1220,16 +1220,18 @@ pub fn run(
                         KeyCode::Enter if focus == Some(PRACTICE_TILE) => {
                             practice_ui.go_to_start(&practice);
                         }
-                        // Ctrl+↑/↓ zoom the time axis around the playhead.
+                        // Shift+↑/↓ zoom the time axis around the playhead. (No
+                        // Ctrl bindings: Kitty resizes fonts on Ctrl+ +/-, and
+                        // macOS claims Ctrl+arrows.)
                         KeyCode::Up
                             if focus == Some(PRACTICE_TILE)
-                                && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                                && key.modifiers.contains(KeyModifiers::SHIFT) =>
                         {
                             practice_ui.zoom_in();
                         }
                         KeyCode::Down
                             if focus == Some(PRACTICE_TILE)
-                                && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                                && key.modifiers.contains(KeyModifiers::SHIFT) =>
                         {
                             practice_ui.zoom_out();
                         }
@@ -1266,9 +1268,13 @@ pub fn run(
                         KeyCode::Char('l') | KeyCode::Char('L') if focus == Some(PRACTICE_TILE) => {
                             practice_ui.toggle_loop(&practice);
                         }
-                        // `Tab` zoom: cycle the selected row's height.
+                        // `Tab` cycles the selected row's height; `Shift+Tab`
+                        // cycles the waveform glyph style.
                         KeyCode::Tab if focus == Some(PRACTICE_TILE) => {
                             practice_ui.tab_zoom();
+                        }
+                        KeyCode::BackTab if focus == Some(PRACTICE_TILE) => {
+                            practice_ui.cycle_glyphs();
                         }
                         KeyCode::Delete | KeyCode::Backspace if focus == Some(PRACTICE_TILE) => {
                             practice_ui.delete_selected(&mut engine, &practice, &capture);

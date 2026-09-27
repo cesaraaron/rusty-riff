@@ -192,9 +192,15 @@ centre baseline and the playhead stays a solid `│`.
 
 **Tradeoffs.** The look is a dot-matrix (small dots can read faint on some
 fonts); braille cells are single-colour, so the loop tint is cell-granular; no
-memory or meaningful CPU cost. `braille_bit`/`braille_glyph` are small and
-self-contained, so reverting to half-blocks is easy if a terminal renders
-braille poorly.
+memory or meaningful CPU cost.
+
+**Switchable styles (`Shift+Tab`).** `WaveGlyphs` cycles Braille → Sextant →
+Quadrant → Half. Sextant (2 × 3 solid, legacy computing `U+1FB00…`) and quadrant
+(2 × 2 solid) give a connected silhouette; half-block (1 × 2) is the coarsest.
+Sextant coverage depends on a patched font (Nerd Fonts + Kitty render it); if it
+shows tofu, cycle on to quadrant. Braille stays the default. The family only
+changes `cols`/`rows`/`glyph`, so the min/max aggregation and gutter are
+untouched.
 
 ---
 
@@ -203,8 +209,10 @@ braille poorly.
 **Behavior.** A viewport `(start, len)` replaces the whole-timeline mapping.
 Fit (`None`) covers the span; otherwise the window comes from
 `ZOOM_WINDOWS = [60, 30, 10, 5, 2, 1, 0.5, 0.2] s`, centred on the playhead and
-clamped so it never runs past the span. `Ctrl+↑` zooms in, `Ctrl+↓` out; zooming
-out past 60 s returns to fit. Because `←`/`→` seek, seeking pans the window.
+clamped so it never runs past the span. `Shift+↑` zooms in, `Shift+↓` out;
+zooming out past 60 s returns to fit. Because `←`/`→` seek, seeking pans the
+window. (`Ctrl` combos are avoided: Kitty resizes fonts on `Ctrl`+`+`/`-` and
+macOS claims `Ctrl`+arrows.)
 The ruler draws sub-second ticks (`m:ss.d` / `m:ss.dd`) and the transport shows
 the active window.
 

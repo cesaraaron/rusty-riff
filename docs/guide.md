@@ -138,12 +138,13 @@ as, `Enter` load, `D` delete. Abandoned dry takes also appear here as
   select a track, `←`/`→` seek, `+`/`−` pick the step (0.5/1/5/10/30 s), `M`
   mutes, `G` sets track gain, `H` moves a clip (its arrows move by the step and
   `+`/`−` change it), `Tab` changes the selected row's height (full, then 50/50
-  with a second row, then back), `Ctrl`+`↑`/`↓` zoom the time axis around the
-  playhead for millisecond detail, `[`/`]`/`L` set the loop in/out and toggle
-  looping, `Del` removes a track, and `E` exports the unmuted raw takes as a
-  WAV. A time ruler above the rows shows where the playhead sits, the waveform
-  is drawn as a fine braille envelope that grows live while a take records, and
-  rows default to three lines so the waveform is readable.
+  with a second row, then back) and `Shift`+`Tab` cycles the waveform glyph
+  style (braille / sextant / quadrant / half-block), `Shift`+`↑`/`↓` zoom the
+  time axis around the playhead for millisecond detail, `[`/`]`/`L` set the loop
+  in/out and toggle looping, `Del` removes a track, and `E` exports the unmuted
+  raw takes as a WAV. A time ruler above the rows shows where the playhead sits,
+  the waveform is drawn as a fine envelope that grows live while a take records,
+  and rows default to three lines so the waveform is readable.
 - **Tuner** — `T` opens a chromatic tuner with a cents meter and spectrum. The
   rig is bypassed while it is open so you tune the dry signal.
 

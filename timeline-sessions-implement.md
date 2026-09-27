@@ -136,11 +136,15 @@ metronome are monitor-only.
   1 s seek step (`DEFAULT_SEEK_STEP`).
 - **Braille waveform (F7).** Each cell is a U+2800 block (2×4 dots), so one line
   shows four amplitude rows and a cell covers two time steps. Silent spans keep
-  the dim baseline; the playhead stays solid.
+  the dim baseline; the playhead stays solid. `Shift+Tab` cycles the glyph family
+  via `WaveGlyphs` (Braille → Sextant `U+1FB00…` → Quadrant → Half); braille is
+  the default, and each family only supplies `cols`/`rows`/`glyph`.
 - **Time zoom (F8).** A playhead-centred viewport (`view_secs`,
-  `ZOOM_WINDOWS`) with `Ctrl+↑`/`Ctrl+↓`, `←`/`→` panning by seeking; the ruler
+  `ZOOM_WINDOWS`) with `Shift+↑`/`Shift+↓`, `←`/`→` panning by seeking; the ruler
   gains sub-second ticks (`ruler_label`). Peaks move to ~500 buckets/s
   (`peak_buckets` clamp `[2048, 262144]`) and `LivePeaks` to ~2 ms to support it.
+  (Ctrl combos are deliberately unused: Kitty resizes fonts on `Ctrl`+`+`/`-`
+  and macOS takes `Ctrl`+arrows.)
 
 ---
 

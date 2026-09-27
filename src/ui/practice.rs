@@ -47,11 +47,6 @@ const ROW_HEIGHT: usize = 3;
 /// waveform columns line up. See `row_header`.
 const GUTTER: usize = 27;
 
-/// Braille sub-cells per character: 2 dot-columns × 4 dot-rows, so one text
-/// line renders four amplitude rows and one cell covers two time steps.
-const SUBCOLS: usize = 2;
-const SUBROWS: usize = 4;
-
 /// Tick spacings (seconds) the ruler may choose from, coarsest that avoids
 /// label collisions. Sub-second entries matter once the view is zoomed in.
 const RULER_TICKS: [f64; 17] = [
@@ -97,6 +92,81 @@ enum RowZoom {
     Split(TrackId, TrackId),
 }
 
+/// Waveform glyph family, cycled with `Shift+Tab`. Each cell is subdivided into
+/// `cols × rows` block sub-cells.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum WaveGlyphs {
+    /// 2 × 4 dots (U+2800) — finest, dotted.
+    Braille,
+    /// 2 × 3 solid blocks (legacy computing U+1FB00).
+    Sextant,
+    /// 2 × 2 solid quadrants.
+    Quadrant,
+    /// 1 × 2 half blocks — the coarsest, fully connected.
+    Half,
+}
+
+impl WaveGlyphs {
+    fn cols(self) -> usize {
+        match self {
+            WaveGlyphs::Half => 1,
+            _ => 2,
+        }
+    }
+
+    fn rows(self) -> usize {
+        match self {
+            WaveGlyphs::Braille => 4,
+            WaveGlyphs::Sextant => 3,
+            WaveGlyphs::Quadrant | WaveGlyphs::Half => 2,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            WaveGlyphs::Braille => "braille",
+            WaveGlyphs::Sextant => "sextant",
+            WaveGlyphs::Quadrant => "quadrant",
+            WaveGlyphs::Half => "half-block",
+        }
+    }
+
+    fn next(self) -> Self {
+        match self {
+            WaveGlyphs::Braille => WaveGlyphs::Sextant,
+            WaveGlyphs::Sextant => WaveGlyphs::Quadrant,
+            WaveGlyphs::Quadrant => WaveGlyphs::Half,
+            WaveGlyphs::Half => WaveGlyphs::Braille,
+        }
+    }
+
+    /// Render an occupied sub-cell pattern. `cells` is row-major: bit
+    /// `r * cols + d`.
+    fn glyph(self, cells: u32) -> char {
+        match self {
+            WaveGlyphs::Braille => {
+                let mut mask = 0u8;
+                for r in 0..4 {
+                    for d in 0..2 {
+                        if cells & (1 << (r * 2 + d)) != 0 {
+                            mask |= braille_bit(d, r);
+                        }
+                    }
+                }
+                braille_glyph(mask)
+            }
+            WaveGlyphs::Sextant => SEXTANT_GLYPHS[(cells & 0x3F) as usize],
+            WaveGlyphs::Quadrant => quadrant_glyph(cells as u8),
+            WaveGlyphs::Half => match cells & 0b11 {
+                0b01 => '▀',
+                0b10 => '▄',
+                0b11 => '█',
+                _ => ' ',
+            },
+        }
+    }
+}
+
 /// All practice UI state, owned by the UI thread. Persists across a device
 /// change: the [`Session`] and its recovery paths are the source of truth, and
 /// decoded caches are rebuilt.
@@ -119,6 +189,8 @@ pub(super) struct PracticeUi {
     row_zoom: RowZoom,
     /// Horizontal time-zoom window in seconds; `None` fits the whole timeline.
     view_secs: Option<f64>,
+    /// Waveform glyph family (cycled with `Shift+Tab`).
+    wave_glyphs: WaveGlyphs,
 
     /// Capture plumbing (attached per engine).
     capture_cmd: Option<Sender<CaptureCommand>>,
@@ -151,6 +223,7 @@ impl PracticeUi {
             selection: Selection::Transport,
             row_zoom: RowZoom::Normal,
             view_secs: None,
+            wave_glyphs: WaveGlyphs::Braille,
             capture_cmd: None,
             capture_result: None,
             recording_id: None,
@@ -624,6 +697,12 @@ impl PracticeUi {
             None => "View: fit".to_owned(),
             Some(s) => format!("View: {}s", format_step(s as f32)),
         }
+    }
+
+    /// `Shift+Tab`: cycle the waveform glyph family.
+    pub(super) fn cycle_glyphs(&mut self) {
+        self.wave_glyphs = self.wave_glyphs.next();
+        self.message = Some(format!("Waveform: {}", self.wave_glyphs.label()));
     }
 
     /// Set the loop in-point at the playhead, opening a one-second region if the
@@ -1675,11 +1754,14 @@ impl PracticeUi {
         let pos_col = (position >= view_start && position < view_start + view_len)
             .then(|| (position - view_start) * wave_w.saturating_sub(1) / view_len.max(1));
         let mid = height / 2;
-        // Vertical centre, in braille dot rows.
-        let center = (height * SUBROWS) as f32 / 2.0;
-        let sub_cols = SUBCOLS * wave_w;
+        let glyphs = self.wave_glyphs;
+        let cols = glyphs.cols();
+        let rows = glyphs.rows();
+        // Vertical centre, in sub-cell rows.
+        let center = (height * rows) as f32 / 2.0;
+        let sub_cols = cols * wave_w;
 
-        // Min/max envelope for one braille dot-column, in dot rows around the
+        // Min/max envelope for one sub-column, in sub-cell rows around the
         // centre. `None` when the sub-column falls outside the clip.
         let sub_env = |sc: usize| -> Option<(f32, f32)> {
             let f0 = view_start + sc * view_len / sub_cols.max(1);
@@ -1700,7 +1782,7 @@ impl PracticeUi {
             }
             let top = center - hi.clamp(-1.0, 1.0) * center;
             let bottom = center - lo.clamp(-1.0, 1.0) * center;
-            Some((top.max(0.0), bottom.min((height * SUBROWS) as f32)))
+            Some((top.max(0.0), bottom.min((height * rows) as f32)))
         };
 
         let mut out: Vec<Line<'a>> = Vec::with_capacity(height);
@@ -1715,8 +1797,11 @@ impl PracticeUi {
             for col in 0..wave_w {
                 let f0 = view_start + col * view_len / wave_w.max(1);
                 let in_loop = loop_on && lb > la && f0 >= la && f0 < lb;
-                let env = [sub_env(2 * col), sub_env(2 * col + 1)];
-                let inside = env.iter().any(Option::is_some);
+                let mut env = [None; 2];
+                for (d, slot) in env.iter_mut().enumerate().take(cols) {
+                    *slot = sub_env(col * cols + d);
+                }
+                let inside = env[..cols].iter().any(|e| e.is_some());
                 let (ch, style) = if Some(col) == pos_col {
                     ('│', Style::default().fg(HOT).add_modifier(Modifier::BOLD))
                 } else if !inside {
@@ -1726,21 +1811,21 @@ impl PracticeUi {
                         (' ', Style::default().fg(CHROME))
                     }
                 } else {
-                    let mut bits = 0u8;
-                    for (d, band) in env.iter().enumerate() {
+                    let mut cells = 0u32;
+                    for (d, band) in env[..cols].iter().enumerate() {
                         let Some((top, bottom)) = *band else {
                             continue;
                         };
-                        for r in 0..SUBROWS {
-                            let k = (line * SUBROWS + r) as f32;
+                        for r in 0..rows {
+                            let k = (line * rows + r) as f32;
                             if k >= top && k < bottom {
-                                bits |= braille_bit(d, r);
+                                cells |= 1 << (r * cols + d);
                             }
                         }
                     }
-                    if bits != 0 {
+                    if cells != 0 {
                         (
-                            braille_glyph(bits),
+                            glyphs.glyph(cells),
                             Style::default().fg(if in_loop { HOT } else { CHROME }),
                         )
                     } else if line == mid {
@@ -2131,6 +2216,70 @@ fn braille_bit(d: usize, r: usize) -> u8 {
 /// The Unicode braille glyph for an 8-bit dot pattern (U+2800 base).
 fn braille_glyph(bits: u8) -> char {
     char::from_u32(0x2800 + bits as u32).unwrap_or(' ')
+}
+
+/// Solid 2 × 2 quadrant glyph for a 4-bit pattern: bit 0 top-left, 1 top-right,
+/// 2 bottom-left, 3 bottom-right.
+fn quadrant_glyph(bits: u8) -> char {
+    match bits & 0b1111 {
+        0b0000 => ' ',
+        0b0001 => '▘',
+        0b0010 => '▝',
+        0b0011 => '▀',
+        0b0100 => '▖',
+        0b0101 => '▌',
+        0b0110 => '▞',
+        0b0111 => '▛',
+        0b1000 => '▗',
+        0b1001 => '▚',
+        0b1010 => '▐',
+        0b1011 => '▜',
+        0b1100 => '▄',
+        0b1101 => '▙',
+        0b1110 => '▟',
+        _ => '█',
+    }
+}
+
+/// The 64 sextant glyphs indexed by a 6-bit pattern. Positions are numbered
+/// `1 2 / 3 4 / 5 6`, so bit `k` is position `k + 1`. The block omits three
+/// patterns that already have characters: `{1,3,5}` (`▌`), `{2,4,6}` (`▐`) and
+/// all six (`█`).
+const SEXTANT_GLYPHS: [char; 64] = build_sextants();
+
+const fn build_sextants() -> [char; 64] {
+    let mut table = [' '; 64];
+    let mut cp: u32 = 0x1FB00;
+    let mut n: u32 = 1;
+    while n <= 6 {
+        let mut s: u32 = 0;
+        while s < (1u32 << (n - 1)) {
+            let mut mask: u32 = 1u32 << (n - 1);
+            let mut i: u32 = 1;
+            while i < n {
+                if s & (1u32 << (i - 1)) != 0 {
+                    mask |= 1u32 << (i - 1);
+                }
+                i += 1;
+            }
+            table[mask as usize] = match mask {
+                0b010101 => '▌',
+                0b101010 => '▐',
+                0b111111 => '█',
+                _ => {
+                    let c = match char::from_u32(cp) {
+                        Some(c) => c,
+                        None => '?',
+                    };
+                    cp += 1;
+                    c
+                }
+            };
+            s += 1;
+        }
+        n += 1;
+    }
+    table
 }
 
 /// Ruler tick label; precision follows the tick size so a zoomed-in window gets
@@ -2603,6 +2752,98 @@ mod tests {
         assert_eq!(ruler_label(0, 48_000.0, 1.0), "00:00");
         assert_eq!(ruler_label(24_000, 48_000.0, 0.1), "00:00.5");
         assert_eq!(ruler_label(480, 48_000.0, 0.01), "00:00.01");
+    }
+
+    #[test]
+    fn cycle_glyphs_walks_every_style_and_wraps() {
+        let mut ui = PracticeUi::new();
+        assert_eq!(ui.wave_glyphs, WaveGlyphs::Braille);
+        ui.cycle_glyphs();
+        assert_eq!(ui.wave_glyphs, WaveGlyphs::Sextant);
+        ui.cycle_glyphs();
+        assert_eq!(ui.wave_glyphs, WaveGlyphs::Quadrant);
+        ui.cycle_glyphs();
+        assert_eq!(ui.wave_glyphs, WaveGlyphs::Half);
+        ui.cycle_glyphs();
+        assert_eq!(ui.wave_glyphs, WaveGlyphs::Braille);
+    }
+
+    #[test]
+    fn wave_glyphs_map_their_patterns() {
+        // Half: bit 0 top, bit 1 bottom.
+        assert_eq!(WaveGlyphs::Half.glyph(0b01), '▀');
+        assert_eq!(WaveGlyphs::Half.glyph(0b10), '▄');
+        assert_eq!(WaveGlyphs::Half.glyph(0b11), '█');
+
+        // Quadrant: bits TL, TR, BL, BR (row-major).
+        assert_eq!(WaveGlyphs::Quadrant.glyph(0b0011), '▀'); // top row
+        assert_eq!(WaveGlyphs::Quadrant.glyph(0b1001), '▚'); // TL + BR
+        assert_eq!(WaveGlyphs::Quadrant.glyph(0b0110), '▞'); // TR + BL
+        assert_eq!(WaveGlyphs::Quadrant.glyph(0b1111), '█');
+
+        // Braille: bit r*2 + d, dot-column 0 top dot is U+2801.
+        assert_eq!(WaveGlyphs::Braille.glyph(0b1), '\u{2801}');
+
+        // Sextant: positions 1..6 row-major; the three patterns with existing
+        // characters are remapped.
+        assert_eq!(WaveGlyphs::Sextant.glyph(0b000001), '\u{1FB00}'); // pos 1
+        assert_eq!(WaveGlyphs::Sextant.glyph(0b000011), '\u{1FB02}'); // pos 1+2
+        assert_eq!(WaveGlyphs::Sextant.glyph(0b100000), '\u{1FB1E}'); // pos 6
+        assert_eq!(WaveGlyphs::Sextant.glyph(0b010101), '▌'); // left column
+        assert_eq!(WaveGlyphs::Sextant.glyph(0b101010), '▐'); // right column
+        assert_eq!(WaveGlyphs::Sextant.glyph(0b111111), '█'); // full
+    }
+
+    #[test]
+    fn glyph_styles_render_in_their_own_fonts() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut ui = PracticeUi::new();
+        let practice = Practice::new();
+        ui.session.push(
+            1,
+            "t".into(),
+            TrackKind::Import,
+            Some(AssetRef {
+                path: PathBuf::from("t.wav"),
+                source_sample_rate: 48_000,
+                source_channels: 2,
+            }),
+            0,
+            48_000,
+            TrackLifecycle::Ready,
+        );
+        ui.session.track_mut(1).expect("track").peaks = vec![(-0.5, 0.5); 64];
+        ui.move_selection(true);
+
+        let mut term = Terminal::new(TestBackend::new(90, 12)).expect("test backend");
+        let render = |ui: &PracticeUi, term: &mut Terminal<TestBackend>| {
+            term.draw(|f| {
+                let area = f.area();
+                ui.render(f, area, &practice, true, false, false);
+            })
+            .expect("draw");
+            screen_text(term)
+        };
+
+        ui.wave_glyphs = WaveGlyphs::Quadrant;
+        let q = render(&ui, &mut term);
+        assert!(
+            q.chars().any(|c| "▘▝▖▗▀▄▌▐▚▞▛▜▙▟█".contains(c)),
+            "quadrant style drew no solid blocks"
+        );
+        assert!(
+            !q.chars().any(|c| ('\u{2800}'..='\u{28FF}').contains(&c)),
+            "quadrant style still drew braille"
+        );
+
+        ui.wave_glyphs = WaveGlyphs::Sextant;
+        let s = render(&ui, &mut term);
+        assert!(
+            s.chars().any(|c| ('\u{1FB00}'..='\u{1FB3B}').contains(&c)),
+            "sextant style drew no legacy-computing blocks"
+        );
     }
 
     #[test]
