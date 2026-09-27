@@ -255,6 +255,8 @@ Remaining, in order:
 3. **1.1 MIDI learn/bind screen** — config already maps CCs; the screen is UI
    polish.
 
-The **fidelity path stays primary**: its only unblocked feature is a genuine amp
-effects loop (Phase 2 item 5); measured-IR matching and TS-808 input-HP
-verification remain blocked on re-amp/mic captures.
+The **fidelity path is closed**: the amp effects loop (Phase 2 item 5) was
+retired as out-of-scope, the TS-808 was corrected against the circuit (no 340 Hz
+input HP; 720 Hz gain shelf), and the built-in↔AU toggle is now clickless. Only
+the measurement-bound Phase 3 items (measured-IR / cab-capture match) remain, and
+those are blocked on re-amp/mic captures.

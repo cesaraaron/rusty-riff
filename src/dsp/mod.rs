@@ -1383,6 +1383,10 @@ struct BlockRoute {
     width: f32,
 }
 
+/// Built-in↔AU declick fade time. Long enough to smooth a waveform step, short
+/// enough to feel instant under the finger.
+const DECLICK_SECS: f32 = 0.004;
+
 pub struct DspChain {
     ng: NoiseGate,
     pitch: Pitch,
@@ -1426,6 +1430,15 @@ pub struct DspChain {
     /// falls back to it when a writer is mid-publish (see [`Self::snapshot_order`]),
     /// so it never waits on the control/UI thread.
     last_order: [u8; CHAIN_LEN],
+    /// Which amp path is currently *sounding* (`true` = hosted AU). A built-in↔AU
+    /// toggle fades the output through zero before this flips, so the path change
+    /// is never heard as a click (see [`Self::process_block`]).
+    applied_ext_amp: bool,
+    /// Output fade gain/target for the built-in↔AU declick ramp (1.0 = steady).
+    declick_gain: f32,
+    declick_target: f32,
+    /// Per-sample ramp increment for the declick.
+    declick_step: f32,
 }
 
 impl DspChain {
@@ -1460,6 +1473,10 @@ impl DspChain {
             // Cap the compensation delay at 1 s — far beyond any real plugin latency.
             comp_delay: CompDelay::new(sr as usize),
             last_order,
+            applied_ext_amp: false,
+            declick_gain: 1.0,
+            declick_target: 1.0,
+            declick_step: 1.0 / (DECLICK_SECS * sr).max(1.0),
         }
     }
 
@@ -1471,6 +1488,14 @@ impl DspChain {
     /// Install (or clear, with `None`) the external amp override.
     pub fn set_ext_amp(&mut self, amp: Option<Box<dyn StereoInsert>>) {
         self.ext_amp = amp;
+        // Loading/clearing a plugin is setup, not a live A/B toggle: adopt the
+        // current active state at once (no declick ramp) so startup/cold-load does
+        // not fade the built-in amp. Live `amp_external_active` changes still ramp
+        // through zero in `process_block`.
+        self.applied_ext_amp =
+            self.ext_amp.is_some() && self.params.amp_external_active.load(Relaxed);
+        self.declick_gain = 1.0;
+        self.declick_target = 1.0;
     }
 
     /// Swap the external-IR cab, returning the displaced one (if any) for disposal
@@ -1892,7 +1917,29 @@ impl DspChain {
 
         let amp_loaded = self.ext_amp.is_some();
         // One bounded, coherent routing snapshot for the entire block.
-        let route = self.route_for_block(true);
+        let mut route = self.route_for_block(true);
+        if amp_loaded {
+            // Built-in↔AU declick. Rather than switch the path instantly (a step
+            // discontinuity = click), fade the output through zero on the current
+            // path, switch, then fade back up. The AU and built-in paths are
+            // already latency-aligned by `comp_delay`. A dual-path equal-power
+            // crossfade is not used: the two paths share the pre/post-amp stage
+            // state, so running both would advance those filters twice.
+            let amp_only = self.params.amp_external_amp_only.load(Relaxed);
+            let want = route.use_ext_amp;
+            // Completing a switch whose fade-out finished on the previous block.
+            if self.declick_gain <= 0.0 && self.applied_ext_amp != want {
+                self.applied_ext_amp = want;
+                self.declick_target = 1.0;
+            }
+            // A fresh request starts (or keeps) a fade-out.
+            if self.applied_ext_amp != want && self.declick_target > 0.0 {
+                self.declick_target = 0.0;
+            }
+            // Sound the currently applied path until the fade-out completes.
+            route.use_ext_amp = self.applied_ext_amp;
+            route.skip_cab = self.applied_ext_amp && !amp_only;
+        }
         if route.use_ext_amp {
             let amp_idx = Self::stage_index(&route.order, ChainStage::Amp, 10);
             // Ordered stages before the amp (mono), duplicated to stereo for the
@@ -1943,8 +1990,21 @@ impl DspChain {
         // Master bus, per sample (width read once per block, in the route).
         for (l, r) in out_l.iter_mut().zip(out_r.iter_mut()) {
             let (wl, wr) = master_bus(*l, *r, route.width);
-            *l = wl;
-            *r = wr;
+            if amp_loaded {
+                // Advance the built-in↔AU declick ramp (identity when steady).
+                if self.declick_gain < self.declick_target {
+                    self.declick_gain =
+                        (self.declick_gain + self.declick_step).min(self.declick_target);
+                } else if self.declick_gain > self.declick_target {
+                    self.declick_gain =
+                        (self.declick_gain - self.declick_step).max(self.declick_target);
+                }
+                *l = wl * self.declick_gain;
+                *r = wr * self.declick_gain;
+            } else {
+                *l = wl;
+                *r = wr;
+            }
         }
     }
 }
@@ -2622,6 +2682,63 @@ mod tests {
                 || fr.iter().zip(&or).any(|(a, b)| (a - b).abs() > 1e-6),
             "amp-only mode did not route the AU output through the built-in cab"
         );
+    }
+
+    /// A live built-in↔AU toggle must not click: the output fades through zero on
+    /// the current path before the route flips. Loading a plugin up front must NOT
+    /// fade (it adopts the current state).
+    #[test]
+    fn builtin_au_toggle_fades_through_zero() {
+        struct ConstAmp;
+        impl StereoInsert for ConstAmp {
+            fn process_block(&mut self, left: &mut [f32], right: &mut [f32]) {
+                for (l, r) in left.iter_mut().zip(right.iter_mut()) {
+                    *l = 0.3;
+                    *r = -0.3;
+                }
+            }
+        }
+
+        let sr = 48_000.0;
+        let params = Arc::new(Params::new());
+        params.amp_external_active.store(false, Relaxed);
+        let mut chain = DspChain::new(sr, Arc::clone(&params));
+        chain.set_ext_amp(Some(Box::new(ConstAmp)));
+        assert!(
+            !chain.applied_ext_amp,
+            "cold load must adopt inactive state"
+        );
+
+        let input = vec![0.2f32; 64];
+        let (mut l, mut r) = (vec![0.0f32; 64], vec![0.0f32; 64]);
+
+        // A toggled-on AU fades out first, then switches.
+        params.amp_external_active.store(true, Relaxed);
+        let mut saw_zero = false;
+        let mut switched = false;
+        for _ in 0..200 {
+            chain.process_block(&input, &mut l, &mut r);
+            if chain.applied_ext_amp {
+                // The switch only happens once the fade reached zero.
+                assert!(chain.declick_gain < 0.5, "switched before fading down");
+                switched = true;
+                break;
+            }
+            if chain.declick_gain <= 0.0 {
+                saw_zero = true;
+            }
+        }
+        assert!(saw_zero, "the declick never reached zero before switching");
+        assert!(switched, "the AU never became the applied path");
+
+        // And it fades back up to unity.
+        for _ in 0..200 {
+            chain.process_block(&input, &mut l, &mut r);
+            if chain.declick_gain >= 1.0 {
+                break;
+            }
+        }
+        assert_eq!(chain.declick_gain, 1.0, "declick did not settle at unity");
     }
 
     /// `route_for_block` is the single source of truth for routing: one read per

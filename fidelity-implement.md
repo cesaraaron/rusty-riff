@@ -21,13 +21,13 @@ before reviewing or continuing. (This file was formerly
 | De-fork cleanup — docs site removed, project renamed `rusty-riff` | **Done** | increment log |
 | Phase 1 — bypass transparency, order snapshot, route tests, studio-master width | **Done** (see review: the order snapshot needs A1) | below |
 | Phase 2 items 1–4 — Amp/Cab split, migration, UI | **Done** | below |
-| Phase 2 item 5 — real preamp/loop/power-amp split | Not started | plan Phase 2.5 |
+| Phase 2 item 5 — real preamp/loop/power-amp split | **Closed — out of scope** (the plan marks it *optional*; see "Findings closed") | plan Phase 2.5 |
 | Phase 0 — reference matrix | **Done** (evidence-as-available) | `docs/fidelity-references.md` |
 | Phase 0 — offline harness, CPU/latency capture | **Done** (B1, B2) | plan "Next increments" |
 | Workstream A — routing hardening (review findings) | **Done** (A1–A5) | increment log |
 | Workstream B — input calibration + harness | **Done** (B1–B8) | increment log |
 | Phase 3 — amp/cab fidelity | **Plexi rectifier + Hiwatt/Twin audit done**; measured-IR match **blocked** (no re-amp/mic captures) | plan Phase 3 |
-| Phase 4 — named pedal/echo/reverb behavior | **Partial**: spring tank, Clean Boost, Supro 1×10 + Tweed 1×12 cabs done; fuzz-family split, TS doc/code reconciliation, Binson Echorec, manual-wah expression remain | plan Phase 4 |
+| Phase 4 — named pedal/echo/reverb behavior | **Done (models, not captures)**: spring tank, Clean Boost, Supro/Tweed cabs, fuzz-family split + guitar cleanup, Binson Echorec, Phase 90 / Electric Mistress, **TS-808 circuit corrected**, manual-wah expression all in | plan Phase 4 |
 | Phase 5 — rebuild the bundled presets | **All 4 batches done** (17 presets audited/rebuilt; **pending maintainer listening**) | increment log |
 
 The Workstream A/B work below changed routing, topology, and documentation only.
@@ -225,29 +225,48 @@ Commits: `docs: add the Phase 0 fidelity reference scaffold`,
 
 ---
 
-## Findings not yet actioned
+## Findings closed
 
-### TS-808 input-HP value still unverified
+### TS-808 input-HP — **resolved (circuit-corrected)**
 
-`src/dsp/effects/tube_screamer.rs` now documents the input coupling HP as
-**340 Hz** (`0.047 µF` into `10 kΩ`). That is an RC estimate, not a measured
-value; the code, the 720 Hz feedback-network peak, and the two EQ stages in the
-Floyd presets may still be compensating for each other. Per the roadmap, do
-**not** retune without a schematic or a measured TS-808 frequency response
-(Phase 4). The prose contradiction itself is resolved.
+The model used a phantom **340 Hz input coupling HP** (`0.047 µF` into `10 kΩ`).
+Per [R.G. Keen, *The Technology of the Tube Screamer*](http://www.geofex.com/Article_Folders/TStech/tsxtech.htm)
+(1998; component values match the Ibanez schematic) the real circuit has **no such
+high-pass**: the input buffer couples through a **1 µF** cap into the ~10 kΩ bias
+network (a few Hz), and the **720 Hz** corner is the *clipping stage's gain
+rolloff* — `Zi = 4.7 kΩ + 0.047 µF` to AC ground, so `gain = 1 + Zf/Zi` falls to
+unity below 720 Hz. The bass therefore passes **clean and at unity**; only the
+mids/highs are boosted and clipped. `src/dsp/effects/tube_screamer.rs` was
+rewritten to match: the input HP is gone, the drive gain is applied as a **720 Hz
+high-shelf** (unity bass → `1 + (51 kΩ + Drive)/4.7 kΩ` above), and the clipper
+is **symmetric** (two anti-parallel silicon diodes — the earlier asymmetric pair
+is the SD-1-style mod, not the stock pedal). No bundled preset enables the TS, so
+the render baseline is unchanged. `bass_passes_at_unity_while_treble_is_boosted`
+pins the corrected topology.
 
-### Not an actual effects loop yet
+### Genuine amp effects loop — **closed, out of scope**
 
-Phase 2 split `Amp` and `Cab` but the amp DSP is still one block. A genuine
-amp effects loop (preamp → loop send/return → power amp) is Phase 2 item 5 and
-remains unimplemented. Effects between `Amp` and `Cab` model a *virtual
-load-box / post-power-amp line-level* path, not the amp's internal loop.
+Phase 2 split `Amp` and `Cab`; the amp DSP is still one block, so an effect
+between them models a *virtual load-box / post-power-amp line-level* path, not
+the amp's internal loop. The plan calls a real `preamp → loop → power-amp` split
+**optional** (Phase 2 item 5) and "a distinct piece of work". Implementing it
+means splitting all nine amp models at the tone-stack→power-amp boundary and
+threading a loop stage plus preset schema through the chain — a large,
+voicing-risky change that no bundled preset requires. **Decision: not
+implemented**; the documented virtual-load-box semantics stand. The design is
+retained in `fidelity-plan.md` Phase 2 item 5 if it is ever picked up.
 
-### No crossfade on the built-in ↔ AU toggle
+### Built-in ↔ AU toggle — **resolved (clickless declick)**
 
-A2 guarantees the built-in/AU switch lands on a **block boundary** (one coherent
-`BlockRoute` per block), but it does not crossfade: a mid-block toggle is simply
-deferred to the next block. A clickless crossfade remains out of scope.
+A2 keeps the switch on a block boundary but did not fade, so toggling could step
+the waveform. `DspChain::process_block` now **fades the output through zero** on
+the currently-sounding path before the route flips, then fades back up
+(`DECLICK_SECS = 4 ms`, per-sample ramp), so the change is never heard as a click.
+A dual-path *equal-power* crossfade is deliberately **not** used: the two paths
+share the pre/post-amp stage state, so running both would advance those filters
+twice. Loading a plugin up front adopts the current state with no fade (only live
+`amp_external_active` toggles ramp). `builtin_au_toggle_fades_through_zero` covers
+it; with no AU loaded the path stays bit-identical (no multiply).
 
 ---
 
@@ -372,6 +391,8 @@ Append one row per commit from Workstreams A/B onward.
 | phase4-mod | effects/preset | Phase 4 item 3: added a **TYPE** knob to the phaser and flanger and wired the presets that name hardware. **Phase 90** (`phaser type = 1.0`) collapses to mono and drops the quarter-cycle stereo offset, removes regeneration (script — `feedback` is inert) and widens the sweep (130–2200 Hz); `another_brick_pt2` now uses it. **Electric Mistress** (`flanger type = 1.0`) collapses to mono, shortens the throw (0.4–3 ms) and adds the **Filter Matrix** (DEPTH → 0 freezes the sweep into a static comb); `comfortably_numb_solo_1/2` now use it. New `ph_type`/`fl_type` params, preset `[phaser]`/`[flanger] type` fields, UI `KNOBS` (now 81) + ranges; `format`/presets wired. Matrix flags resolved. | new mono/script/sweep-filter-matrix tests; `dsp::effects` (93); full suite (339); baseline regenerated + `--check` | **pending maintainer listening:** level-matched A/Bs at `target/fidelity/mod-matched/` (gitignored) — `ltas` 3.2–4.5 dB; the Phase 90 is darker (no feedback resonance), the Mistress brighter/more compressed (mono). Device modes are approximations, not measured circuit clones |
 | phase4-correctness | effects/preset/docs | Phase 4 item 2 (small correctness): (a) the TS-808 code/doc mismatch was already reconciled — the prose and constructor both say a **~340 Hz** input coupling HP; added `input_coupling_cuts_sub_bass` to pin the passband, and marked the stale plan finding resolved. (b) **truth-in-labelling**: the two preset comments that named a "Dyna Comp" now say "Dyna-Comp-style in character (the DSP is a generic peak-follower)" / "the compressor's squash", so the generic compressor isn't passed off as a modelled circuit. | `input_coupling_cuts_sub_bass`; full suite (340); no audio/baseline change | A real Dyna-Comp voicing (OTA compressor) is **not** built — logged as future work; the compressor remains a generic peak-follower |
 | phase4-fuzz-guitar | effects | Phase 4 item 1: added a **GUITAR** knob to the fuzz (guitar volume as the pedal sees it, default 1.0) and a Fuzz Face **cleanup/loading** model: the input is scaled by the guitar volume, the FF gain is biased down with it (`gain × gv²`) and a volume-dependent input HP (70 Hz → up to 1.2 kHz) thins the lows as the pot closes — so rolling the guitar back cleans the fuzz up. Bypassed at full volume, so existing presets are bit-identical. New `fz_guitar` param, `[fuzz] guitar` field, UI `KNOBS` (now 82). | new `fuzz_face_cleans_up_as_guitar_volume_falls` (THD falls as the knob rolls back); `dsp::effects` (95); full suite (341); baseline `--check` OK | Model, not a measured pedal: the pickup/source impedance is assumed, and the load is a fixed HP rather than a true reactive pickup model. The Muff/Tone Bender don't clean up (correct — high input Z); the knob affects level for all voices |
+| ts808-circuit | effects/docs | Phase 4 item 2: corrected the TS-808 to the documented circuit (R.G. Keen, *The Technology of the Tube Screamer*). Removed the phantom **340 Hz input-HP**; the input coupling is a **1 µF** cap (~16 Hz). Replaced the fixed **720 Hz mid-peak** with the real mechanism — a **720 Hz high-shelf** applying the clipping-stage gain `1 + (51 kΩ + Drive·500 kΩ)/4.7 kΩ` (bass at unity, mids/highs boosted then clipped). Made the clipper **symmetric** (two anti-parallel silicon diodes; the old asymmetric pair is the SD-1 mod). Added `Biquad::set_high_shelf` (in-place, click-free knob moves). | rewritten `tube_screamer` tests incl. `bass_passes_at_unity_while_treble_is_boosted`, `clip_is_symmetric`, `finite_and_bounded_across_controls`; full suite (386); baseline `--check` OK (no preset enables the TS) | Model, not a capture; the absolute pickup→diode gain staging and the 51 pF feedback rolloff remain approximations. `fidelity-implement.md` "Findings closed" updated; the `340 Hz` note and `input_coupling_cuts_sub_bass` test removed. |
+| au-declick | dsp/docs | Closed the last deferred routing finding: a live built-in↔AU toggle now **fades through zero** (4 ms per-sample ramp) on the current path before the `BlockRoute` flips, then fades back in — no click. Loading/clearing a plugin up front adopts the current state without a fade (only a live `amp_external_active` change ramps). No AU loaded ⇒ no multiply and the path stays bit-identical. | new `builtin_au_toggle_fades_through_zero`; existing AU routing tests (`route_truth_table`, `amp_only_…`, `per_sample_process_keeps_the_cab…`) unchanged and green; full suite (386) | A dual-path equal-power crossfade is not used (shared pre/post-amp stage state would double-advance); documented in "Findings closed". |
 
 ### Reference rig (B8)
 
