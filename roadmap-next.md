@@ -90,8 +90,12 @@ practice tracks, plugin inserts, external IRs).
 **Acceptance.** Record → loop → overdub → undo round-trips; loop timing stays
 sample-aligned; the recording tap excludes loops; tests for the loop cursor math.
 
-**Status — in progress.** A monitor-only looper (record → loop → overdub → undo)
-is being built on `feat/looper`; it is not merged yet.
+**Status — done.** `src/looper.rs` implements a monitor-only looper (record →
+loop → overdub → undo) with preallocated buffers and lock-free control; the loop
+bus rides the monitor path after the recording tap, like the metronome. Keys: `Y`
+record/pause/resume, `F` clear, `,` overdub, `.` undo; state shows in the footer.
+Unit tests cover cursor wrap, overdub, undo and no-grow; a whole-bank
+integration test (`tests/bundled_presets.rs`) guards preset renders.
 
 ---
 
@@ -196,12 +200,12 @@ site was not re-added.
 
 ## Recommended order
 
-_4.1 CI, 4.2 benchmarks, 4.3 guide, 3.1 (favorites / search / tags / A-B), and
-1.1 MIDI expression + manual wah are done (see above)._ Remaining, in order:
+_4.1 CI, 4.2 benchmarks, 4.3 guide, 3.1 (favorites / search / tags / A-B),
+1.1 MIDI expression + manual wah, and 2.1 looper are done (see above)._
+Remaining, in order:
 
-1. **2.1 Looper** — the biggest new capability; in progress on `feat/looper`.
-2. **1.2 Tap-tempo and MIDI clock** — builds on the MIDI backend.
-3. **3.2 Onboarding profiles** and **3.3 Theming** — smaller polish.
+1. **1.2 Tap-tempo and MIDI clock** — builds on the MIDI backend.
+2. **3.2 Onboarding profiles** and **3.3 Theming** — smaller polish.
 
 A learn/bind screen and CC→arbitrary-knob mapping for 1.1 are the remaining
 MIDI work after tap-tempo.
