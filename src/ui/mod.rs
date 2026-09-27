@@ -1220,6 +1220,19 @@ pub fn run(
                         KeyCode::Enter if focus == Some(PRACTICE_TILE) => {
                             practice_ui.go_to_start(&practice);
                         }
+                        // Ctrl+↑/↓ zoom the time axis around the playhead.
+                        KeyCode::Up
+                            if focus == Some(PRACTICE_TILE)
+                                && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            practice_ui.zoom_in();
+                        }
+                        KeyCode::Down
+                            if focus == Some(PRACTICE_TILE)
+                                && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            practice_ui.zoom_out();
+                        }
                         KeyCode::Up if focus == Some(PRACTICE_TILE) => {
                             practice_ui.move_selection(false);
                         }

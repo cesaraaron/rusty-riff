@@ -108,10 +108,10 @@ pub struct LivePeaks {
 }
 
 impl LivePeaks {
-    /// ~5 ms per bucket: fine enough to read as continuous, and bounded memory
+    /// ~2 ms per bucket: fine enough for the zoomed timeline, and bounded memory
     /// for a long take.
     pub fn new(sample_rate: u32) -> Self {
-        let samples_per_bucket = (sample_rate as usize / 200).max(1);
+        let samples_per_bucket = (sample_rate as usize / 500).max(1);
         Self {
             buckets: Vec::new(),
             samples_per_bucket,
@@ -435,23 +435,23 @@ mod tests {
 
     #[test]
     fn live_peaks_bucket_and_count() {
-        // 48 kHz → 240 samples per ~5 ms bucket.
+        // 48 kHz → 96 samples per ~2 ms bucket.
         let mut lp = LivePeaks::new(48_000);
         assert_eq!(lp.frames(), 0);
         assert!(lp.peaks().is_empty());
 
-        for _ in 0..240 {
+        for _ in 0..96 {
             lp.push(0.5);
         }
         assert_eq!(lp.peaks().len(), 1);
-        assert_eq!(lp.frames(), 240);
+        assert_eq!(lp.frames(), 96);
         assert_eq!(lp.peaks()[0], (0.5, 0.5));
 
         // A partial bucket advances the sample count but not the bucket list yet.
-        for _ in 0..120 {
+        for _ in 0..48 {
             lp.push(-0.25);
         }
         assert_eq!(lp.peaks().len(), 1, "tail is not a completed bucket");
-        assert_eq!(lp.frames(), 360);
+        assert_eq!(lp.frames(), 144);
     }
 }

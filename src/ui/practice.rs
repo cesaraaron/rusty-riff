@@ -53,10 +53,15 @@ const SUBCOLS: usize = 2;
 const SUBROWS: usize = 4;
 
 /// Tick spacings (seconds) the ruler may choose from, coarsest that avoids
-/// label collisions.
-const RULER_TICKS: [f64; 11] = [
-    0.5, 1.0, 2.0, 5.0, 10.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0,
+/// label collisions. Sub-second entries matter once the view is zoomed in.
+const RULER_TICKS: [f64; 17] = [
+    0.01, 0.02, 0.05, 0.1, 0.2, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 15.0, 30.0, 60.0, 120.0, 300.0,
+    600.0,
 ];
+
+/// Horizontal time-zoom windows in seconds, largest first. `None` (fit) sits
+/// above these; zooming out past the largest returns to fit.
+const ZOOM_WINDOWS: [f64; 8] = [60.0, 30.0, 10.0, 5.0, 2.0, 1.0, 0.5, 0.2];
 
 /// One discovered audio file in the browser.
 struct TrackFile {
@@ -112,6 +117,8 @@ pub(super) struct PracticeUi {
     selection: Selection,
     /// Track-list row-height zoom (cycled with `Tab`).
     row_zoom: RowZoom,
+    /// Horizontal time-zoom window in seconds; `None` fits the whole timeline.
+    view_secs: Option<f64>,
 
     /// Capture plumbing (attached per engine).
     capture_cmd: Option<Sender<CaptureCommand>>,
@@ -143,6 +150,7 @@ impl PracticeUi {
             session: Session::new(48_000),
             selection: Selection::Transport,
             row_zoom: RowZoom::Normal,
+            view_secs: None,
             capture_cmd: None,
             capture_result: None,
             recording_id: None,
@@ -574,6 +582,50 @@ impl PracticeUi {
         extent.max(practice.position()).max(1)
     }
 
+    /// The visible time window `(start_frame, len_frames)`. Fit (`None`) covers
+    /// the whole span; a zoomed window is centred on the playhead and clamped so
+    /// it never runs past the span.
+    fn view(&self, practice: &Practice) -> (usize, usize) {
+        let span = self.span_frames(practice);
+        let Some(secs) = self.view_secs else {
+            return (0, span);
+        };
+        let len = ((secs * f64::from(self.sample_rate)).round() as usize).clamp(1, span.max(1));
+        let pos = practice.position().min(span);
+        let start = pos.saturating_sub(len / 2).min(span - len);
+        (start, len)
+    }
+
+    /// Zoom the time axis in (smaller window) around the playhead.
+    pub(super) fn zoom_in(&mut self) {
+        self.view_secs = match self.view_secs {
+            None => Some(ZOOM_WINDOWS[0]),
+            Some(cur) => ZOOM_WINDOWS
+                .iter()
+                .rev()
+                .find(|&&w| w < cur - 1e-9)
+                .copied()
+                .or(Some(cur)),
+        };
+        self.message = Some(self.view_label());
+    }
+
+    /// Zoom the time axis out; past the largest window returns to fit.
+    pub(super) fn zoom_out(&mut self) {
+        self.view_secs = match self.view_secs {
+            None => None,
+            Some(cur) => ZOOM_WINDOWS.iter().find(|&&w| w > cur + 1e-9).copied(),
+        };
+        self.message = Some(self.view_label());
+    }
+
+    fn view_label(&self) -> String {
+        match self.view_secs {
+            None => "View: fit".to_owned(),
+            Some(s) => format!("View: {}s", format_step(s as f32)),
+        }
+    }
+
     /// Set the loop in-point at the playhead, opening a one-second region if the
     /// current out-point is not ahead of it.
     pub(super) fn set_loop_start(&self, practice: &Practice) {
@@ -791,6 +843,7 @@ impl PracticeUi {
         self.rate_adopted = true;
         self.selection = Selection::Transport;
         self.row_zoom = RowZoom::Normal;
+        self.view_secs = None;
         practice.reset();
         metronome.active.store(false, Relaxed);
         self.message = Some("New session".to_owned());
@@ -971,6 +1024,7 @@ impl PracticeUi {
         self.capture_result = None;
         self.live_peaks = None;
         self.row_zoom = RowZoom::Normal;
+        self.view_secs = None;
 
         manifest.rig.apply(params);
 
@@ -1320,13 +1374,17 @@ impl PracticeUi {
         if wave_w == 0 {
             return;
         }
-        let total = self.span_frames(practice);
-        let secs = total as f64 / f64::from(self.sample_rate.max(1.0));
-        // Coarsest tick that keeps ~6-cell label spacing, else the largest.
+        let (view_start, view_len) = self.view(practice);
+        let secs = view_len as f64 / f64::from(self.sample_rate.max(1.0));
+        // Coarsest tick whose labels do not collide at this window width.
         let tick = RULER_TICKS
             .iter()
             .copied()
-            .find(|&t| secs > 0.0 && (t / secs) * wave_w as f64 >= 6.0)
+            .find(|&t| {
+                secs > 0.0
+                    && (t / secs) * wave_w as f64
+                        >= ruler_label(view_start, self.sample_rate, t).len() as f64 + 1.0
+            })
             .unwrap_or(*RULER_TICKS.last().unwrap_or(&1.0));
 
         let mut cells: Vec<(char, bool)> = vec![(' ', false); wave_w];
@@ -1338,7 +1396,8 @@ impl PracticeUi {
                 0
             };
             if col < wave_w {
-                let label = mmss((t * f64::from(self.sample_rate)) as usize, self.sample_rate);
+                let clock = view_start + (t * f64::from(self.sample_rate)) as usize;
+                let label = ruler_label(clock, self.sample_rate, tick);
                 for (k, ch) in label.chars().enumerate() {
                     if col + k < wave_w {
                         cells[col + k] = (ch, false);
@@ -1351,9 +1410,12 @@ impl PracticeUi {
             }
             t = next;
         }
-        let pos_col = practice.position() * wave_w.saturating_sub(1) / total;
-        if pos_col < wave_w {
-            cells[pos_col] = ('▼', true);
+        let pos = practice.position();
+        if pos >= view_start && pos < view_start + view_len {
+            let pos_col = (pos - view_start) * wave_w.saturating_sub(1) / view_len.max(1);
+            if pos_col < wave_w {
+                cells[pos_col] = ('▼', true);
+            }
         }
 
         let label_color = if focused { AMBER } else { DIM };
@@ -1425,6 +1487,14 @@ impl PracticeUi {
                 format!("{}s ", format_step(self.session.seek_seconds())),
                 Style::default().fg(AMBER),
             ),
+            if let Some(secs) = self.view_secs {
+                Span::styled(
+                    format!("view {}s ", format_step(secs as f32)),
+                    Style::default().fg(ACCENT),
+                )
+            } else {
+                Span::raw("")
+            },
             Span::styled(
                 if loop_on { "LOOP " } else { "loop " },
                 Style::default()
@@ -1473,8 +1543,8 @@ impl PracticeUi {
             Selection::Transport => None,
             Selection::Track(id) => self.session.index_of(id),
         };
-        let total = self.span_frames(practice);
-        let position = practice.position().min(total);
+        let (view_start, view_len) = self.view(practice);
+        let position = practice.position();
         let width = area.width as usize;
         let h = area.height as usize;
 
@@ -1529,7 +1599,8 @@ impl PracticeUi {
                 focused_row,
                 practice,
                 position,
-                total,
+                view_start,
+                view_len,
                 width,
                 live,
                 row_h,
@@ -1549,7 +1620,8 @@ impl PracticeUi {
         focused: bool,
         practice: &Practice,
         position: usize,
-        total: usize,
+        view_start: usize,
+        view_len: usize,
         width: usize,
         live: Option<&LivePeaks>,
         height: usize,
@@ -1577,7 +1649,7 @@ impl PracticeUi {
         let wave_w = width.saturating_sub(GUTTER);
         let height = height.max(1);
 
-        let empty = !loaded || wave_w == 0 || total == 0 || peaks.is_empty();
+        let empty = !loaded || wave_w == 0 || view_len == 0 || peaks.is_empty();
         if empty {
             let mut first = header;
             if let TrackLifecycle::Error(e) = &track.lifecycle {
@@ -1600,7 +1672,8 @@ impl PracticeUi {
             practice.loop_start.load(Relaxed) as usize,
             practice.loop_end.load(Relaxed) as usize,
         );
-        let pos_col = position * wave_w.saturating_sub(1) / total;
+        let pos_col = (position >= view_start && position < view_start + view_len)
+            .then(|| (position - view_start) * wave_w.saturating_sub(1) / view_len.max(1));
         let mid = height / 2;
         // Vertical centre, in braille dot rows.
         let center = (height * SUBROWS) as f32 / 2.0;
@@ -1609,8 +1682,8 @@ impl PracticeUi {
         // Min/max envelope for one braille dot-column, in dot rows around the
         // centre. `None` when the sub-column falls outside the clip.
         let sub_env = |sc: usize| -> Option<(f32, f32)> {
-            let f0 = sc * total / sub_cols.max(1);
-            let f1 = (((sc + 1) * total) / sub_cols.max(1)).max(f0 + 1);
+            let f0 = view_start + sc * view_len / sub_cols.max(1);
+            let f1 = (view_start + ((sc + 1) * view_len) / sub_cols.max(1)).max(f0 + 1);
             let a = f0.max(start);
             let b = f1.min(start.saturating_add(frames));
             if a >= b {
@@ -1640,11 +1713,11 @@ impl PracticeUi {
             let mut buf = String::new();
             let mut run_style: Option<Style> = None;
             for col in 0..wave_w {
-                let f0 = col * total / wave_w.max(1);
+                let f0 = view_start + col * view_len / wave_w.max(1);
                 let in_loop = loop_on && lb > la && f0 >= la && f0 < lb;
                 let env = [sub_env(2 * col), sub_env(2 * col + 1)];
                 let inside = env.iter().any(Option::is_some);
-                let (ch, style) = if col == pos_col {
+                let (ch, style) = if Some(col) == pos_col {
                     ('│', Style::default().fg(HOT).add_modifier(Modifier::BOLD))
                 } else if !inside {
                     if in_loop {
@@ -2060,6 +2133,25 @@ fn braille_glyph(bits: u8) -> char {
     char::from_u32(0x2800 + bits as u32).unwrap_or(' ')
 }
 
+/// Ruler tick label; precision follows the tick size so a zoomed-in window gets
+/// sub-second readouts (`m:ss.d` / `m:ss.dd`).
+fn ruler_label(frames: usize, sr: f32, tick: f64) -> String {
+    let secs = if sr > 0.0 {
+        frames as f64 / f64::from(sr)
+    } else {
+        0.0
+    };
+    let m = (secs / 60.0).floor() as u64;
+    let s = secs - m as f64 * 60.0;
+    if tick >= 1.0 {
+        format!("{m:02}:{:02}", s.floor() as u64)
+    } else if tick >= 0.1 {
+        format!("{m:02}:{s:04.1}")
+    } else {
+        format!("{m:02}:{s:05.2}")
+    }
+}
+
 /// Format a step in seconds without a trailing `.0` (e.g. `5`, `0.5`).
 fn format_step(secs: f32) -> String {
     if secs.fract().abs() < 1e-6 {
@@ -2460,6 +2552,57 @@ mod tests {
             "a single transient must not fill the pane, got {braille}"
         );
         assert!(text.contains('·'), "silent span should show the baseline");
+    }
+
+    #[test]
+    fn zoom_in_and_out_cycle_windows_and_reset_to_fit() {
+        let mut ui = PracticeUi::new();
+        assert_eq!(ui.view_secs, None);
+        ui.zoom_in();
+        assert_eq!(ui.view_secs, Some(60.0), "first zoom-in picks the widest");
+        for _ in 0..20 {
+            ui.zoom_in();
+        }
+        assert_eq!(ui.view_secs, Some(0.2), "zoom-in clamps at the closest");
+        for _ in 0..20 {
+            ui.zoom_out();
+        }
+        assert_eq!(
+            ui.view_secs, None,
+            "zoom-out past the widest returns to fit"
+        );
+    }
+
+    #[test]
+    fn view_is_playhead_centred_and_clamped() {
+        let mut ui = PracticeUi::new();
+        let practice = Practice::new();
+        let (asset, kind) = ready("a.wav");
+        ui.session.push(
+            1,
+            "a".into(),
+            kind,
+            asset,
+            0,
+            48_000 * 10,
+            TrackLifecycle::Ready,
+        );
+        assert_eq!(ui.view(&practice), (0, 480_000), "fit covers the span");
+        ui.view_secs = Some(2.0);
+        assert_eq!(ui.view(&practice), (0, 96_000), "clamped at the left edge");
+        practice.store_position(240_000);
+        assert_eq!(
+            ui.view(&practice),
+            (192_000, 96_000),
+            "centred on the playhead"
+        );
+    }
+
+    #[test]
+    fn ruler_label_precision_follows_tick() {
+        assert_eq!(ruler_label(0, 48_000.0, 1.0), "00:00");
+        assert_eq!(ruler_label(24_000, 48_000.0, 0.1), "00:00.5");
+        assert_eq!(ruler_label(480, 48_000.0, 0.01), "00:00.01");
     }
 
     #[test]

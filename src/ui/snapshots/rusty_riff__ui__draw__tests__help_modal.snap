@@ -49,11 +49,11 @@ expression: text
                                       ║  Enter  jump to start (loop in-point if looped)                                           ║                                       
                                       ║  ↑/↓  ←/→  select row / seek by the step                                                  ║                                       
                                       ║  +/−  step (seek & clip move): 0.5 / 1 / 5 / 10 / 30 s                                    ║                                       
-                                      ║  Tab  zoom selected row: full height / 50-50 / normal                                     ║                                       
+                                      ║  Tab  row height: full / 50-50 / normal                                                   ║                                       
+                                      ║  Ctrl+↑/↓  zoom the time axis around the playhead                                         ║                                       
                                       ║  G  selected track gain                                                                   ║                                       
                                       ║  H  move selected clip (arrows by step; +/− changes it)                                   ║                                       
                                       ║  E  export unmuted raw takes (WAV)                                                        ║                                       
                                       ║  [ / ]  L  loop in-point / out-point, toggle loop                                         ║                                       
-                                      ║  Del  remove selected track                                                               ║                                       
                                       ║                                       Esc / K close                                       ║                                       
                                       ╚═══════════════════════════════════════════════════════════════════════════════════════════╝

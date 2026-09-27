@@ -182,6 +182,42 @@ higher bucket resolution is chosen to support it later.
 
 ---
 
+## F7. Braille waveform
+
+**Behavior.** Each character cell is rendered as a braille block (U+2800): two
+dot-columns and four dot-rows, so one text line gives four amplitude rows and
+one cell covers two time steps — 2× the time and 4× the amplitude resolution of
+half-blocks. The filled min/max envelope is unchanged; silent cells keep the dim
+centre baseline and the playhead stays a solid `│`.
+
+**Tradeoffs.** The look is a dot-matrix (small dots can read faint on some
+fonts); braille cells are single-colour, so the loop tint is cell-granular; no
+memory or meaningful CPU cost. `braille_bit`/`braille_glyph` are small and
+self-contained, so reverting to half-blocks is easy if a terminal renders
+braille poorly.
+
+---
+
+## F8. Playhead-centred time zoom
+
+**Behavior.** A viewport `(start, len)` replaces the whole-timeline mapping.
+Fit (`None`) covers the span; otherwise the window comes from
+`ZOOM_WINDOWS = [60, 30, 10, 5, 2, 1, 0.5, 0.2] s`, centred on the playhead and
+clamped so it never runs past the span. `Ctrl+↑` zooms in, `Ctrl+↓` out; zooming
+out past 60 s returns to fit. Because `←`/`→` seek, seeking pans the window.
+The ruler draws sub-second ticks (`m:ss.d` / `m:ss.dd`) and the transport shows
+the active window.
+
+**Supporting change.** Stored peaks rise to ~500 buckets/s
+(`practice::peak_buckets`, clamp `[2048, 262144]`) and `LivePeaks` to ~2 ms
+buckets, so the window stays sharp to about 0.2 s before aliasing.
+
+**Tradeoffs.** Memory up to ~2 MB per long track at the cap; viewport state
+touches the ruler, waveform mapping and playhead/loop clipping; off-screen clips
+need seeking to reach. Zoom resets to fit on a new/loaded session.
+
+---
+
 ## Affected files
 
 | Area | Files |

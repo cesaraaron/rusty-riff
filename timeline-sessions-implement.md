@@ -134,6 +134,13 @@ metronome are monitor-only.
   transients are no longer skipped. The envelope is drawn from the real `lo`/`hi`
   around zero instead of a peak-to-peak rectangle. New sessions default to the
   1 s seek step (`DEFAULT_SEEK_STEP`).
+- **Braille waveform (F7).** Each cell is a U+2800 block (2×4 dots), so one line
+  shows four amplitude rows and a cell covers two time steps. Silent spans keep
+  the dim baseline; the playhead stays solid.
+- **Time zoom (F8).** A playhead-centred viewport (`view_secs`,
+  `ZOOM_WINDOWS`) with `Ctrl+↑`/`Ctrl+↓`, `←`/`→` panning by seeking; the ruler
+  gains sub-second ticks (`ruler_label`). Peaks move to ~500 buckets/s
+  (`peak_buckets` clamp `[2048, 262144]`) and `LivePeaks` to ~2 ms to support it.
 
 ---
 

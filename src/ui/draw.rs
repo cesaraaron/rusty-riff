@@ -1346,7 +1346,8 @@ pub(super) fn render_help_modal(f: &mut Frame) {
             "  +/−",
             "  step (seek & clip move): 0.5 / 1 / 5 / 10 / 30 s",
         ),
-        row("  Tab", "  zoom selected row: full height / 50-50 / normal"),
+        row("  Tab", "  row height: full / 50-50 / normal"),
+        row("  Ctrl+↑/↓", "  zoom the time axis around the playhead"),
         row("  G", "  selected track gain"),
         row(
             "  H",
