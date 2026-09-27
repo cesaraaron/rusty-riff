@@ -18,11 +18,13 @@ pub(super) fn render_preset_modal(
     presets: &[Preset],
     cursor: usize,
     favorites: &HashSet<String>,
+    filter: &str,
 ) {
-    let on_user_preset = cursor > 0
-        && presets
-            .get(cursor - 1)
-            .is_some_and(|p| p.source == PresetSource::User);
+    let visible = filter_indices(presets, filter);
+    let on_user_preset = cursor
+        .checked_sub(1)
+        .and_then(|i| visible.get(i))
+        .is_some_and(|&i| presets[i].source == PresetSource::User);
     let area = centered_rect(60, f.area());
 
     f.render_widget(Clear, area);
@@ -32,7 +34,11 @@ pub(super) fn render_preset_modal(
         .border_type(BorderType::Double)
         .border_style(Style::default().fg(ACCENT))
         .title(Span::styled(
-            " P R E S E T S ",
+            if filter.is_empty() {
+                " P R E S E T S ".to_string()
+            } else {
+                format!(" P R E S E T S   filter: {filter} ")
+            },
             Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
         ))
         .style(Style::default().bg(ratatui::style::Color::Black));
@@ -45,7 +51,7 @@ pub(super) fn render_preset_modal(
         .constraints([Constraint::Min(1), Constraint::Length(2)])
         .split(inner);
 
-    let mut lines: Vec<Line> = Vec::with_capacity(presets.len() + 1);
+    let mut lines: Vec<Line> = Vec::with_capacity(visible.len() + 1);
 
     let entry = |name: &str, desc: &str, tag: Option<&str>, selected: bool, fav: bool| -> Line {
         let (prefix, name_style, desc_style) = if selected {
@@ -100,7 +106,8 @@ pub(super) fn render_preset_modal(
     };
 
     lines.push(entry("Default values", "", None, cursor == 0, false));
-    for (i, p) in presets.iter().enumerate() {
+    for (pos, &i) in visible.iter().enumerate() {
+        let p = &presets[i];
         let desc = p.description.as_deref().unwrap_or("");
         let tag = if p.source == PresetSource::User {
             Some("user")
@@ -111,7 +118,7 @@ pub(super) fn render_preset_modal(
             &p.name,
             desc,
             tag,
-            cursor == i + 1,
+            cursor == pos + 1,
             favorites.contains(&p.name),
         ));
     }
@@ -170,6 +177,52 @@ pub(super) fn render_preset_modal(
         .alignment(Alignment::Center),
         footer[1],
     );
+}
+
+/// Whether `p` matches `filter` (case-insensitively) over its name or
+/// description. An empty filter matches everything.
+fn preset_matches(p: &Preset, filter: &str) -> bool {
+    let needle = filter.to_lowercase();
+    p.name.to_lowercase().contains(&needle)
+        || p.description
+            .as_deref()
+            .is_some_and(|d| d.to_lowercase().contains(&needle))
+}
+
+/// Indices into `presets` visible under `filter`, in list order.
+pub(super) fn filter_indices(presets: &[Preset], filter: &str) -> Vec<usize> {
+    if filter.is_empty() {
+        return (0..presets.len()).collect();
+    }
+    presets
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| preset_matches(p, filter))
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// Number of preset rows visible under `filter`, excluding the "Default values"
+/// row.
+pub(super) fn visible_len(presets: &[Preset], filter: &str) -> usize {
+    if filter.is_empty() {
+        presets.len()
+    } else {
+        presets.iter().filter(|p| preset_matches(p, filter)).count()
+    }
+}
+
+/// The preset under the modal `cursor` (`0` is "Default values"), respecting
+/// the active `filter`.
+pub(super) fn selected_preset<'a>(
+    presets: &'a [Preset],
+    filter: &str,
+    cursor: usize,
+) -> Option<&'a Preset> {
+    let idx = cursor.checked_sub(1)?;
+    filter_indices(presets, filter)
+        .get(idx)
+        .map(|&i| &presets[i])
 }
 
 pub(super) fn render_save_dialog(
