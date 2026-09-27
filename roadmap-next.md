@@ -44,6 +44,16 @@ only atomic stores cross the boundary (same discipline as A/B and the timeline).
 - Learn/bind persists across restarts; unbinding restores auto/default.
 - Unit tests for the mapping; a manual pass with a real controller.
 
+**Status — done (CC bind via config; no learn UI yet).** The wah gained a
+**manual treadle mode** (`wah mode = 1`) with a `POSITION` knob (250 Hz–2.5 kHz),
+and `src/midi.rs` (new `midir` dependency) connects to the first MIDI input and
+drives `wah_position` from the **Expression CC (11)**, switching the wah to
+manual when the pedal moves. The CC is set or MIDI disabled in
+`~/.config/rusty-riff/midi.conf` (`enabled`/`cc`). No hardware was available to
+verify the live path here — the parsing/mapping are unit-tested, and the app
+runs fine with no controller. A learn/bind **screen** and CC→arbitrary-knob
+mapping remain.
+
 ### 1.2 Tap-tempo and MIDI clock sync
 
 **Why.** Delay times are set by a normalized knob; players set delay by tapping

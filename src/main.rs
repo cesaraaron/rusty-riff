@@ -15,6 +15,10 @@ fn main() -> Result<()> {
     let practice = Arc::new(practice::Practice::new());
     let calibration = Arc::new(audio::InputCalibration::new());
 
+    // Optional MIDI expression input for the wah; disabled if no controller or
+    // `midi.conf` says so. The handle keeps the connection open for the run.
+    let _midi = rusty_riff::midi::start(params.clone());
+
     // TUI starts immediately; device selection happens inside via modals.
     ui::run(
         params,

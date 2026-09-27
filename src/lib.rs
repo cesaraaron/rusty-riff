@@ -14,6 +14,7 @@ pub mod export;
 /// feature) and macOS Audio Units as an amp-position override (behind `au`).
 #[cfg(any(feature = "clap", feature = "au"))]
 pub mod host;
+pub mod midi;
 pub mod practice;
 pub mod preset;
 pub mod project;
