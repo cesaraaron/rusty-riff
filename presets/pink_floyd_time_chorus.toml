@@ -10,7 +10,7 @@ threshold = 0.06
 release   = 0.40
 
 # ── Compressor ────────────────────────────────────────────────────────────────
-# Off. The recorded chorus is dynamic and clean — the Dyna Comp squash is what
+# Off. The recorded chorus is dynamic and clean — the compressor's squash is what
 # was flattening the transients and pushing up the low-level mud. Values kept
 # light so the pedal can be nudged back on if a touch of evening is wanted.
 [compressor]

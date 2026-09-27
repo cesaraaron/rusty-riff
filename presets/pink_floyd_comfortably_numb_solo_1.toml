@@ -10,8 +10,9 @@ threshold = 0.10
 release   = 0.45
 
 # ── Compressor ────────────────────────────────────────────────────────────────
-# Gilmour's always-on Dyna Comp: evens the picking and holds the note up so the
-# lead sings, without squashing the dynamics that give it life.
+# An always-on compressor — Dyna-Comp-style in character (the DSP is a generic
+# peak-follower): evens the picking and holds the note up so the lead sings,
+# without squashing the dynamics that give it life.
 [compressor]
 enabled = true
 sustain = 0.52

@@ -358,4 +358,20 @@ mod tests {
             "drive did not add harmonics monotonically: {lo:.3} -> {mid:.3} -> {hi:.3}"
         );
     }
+
+    /// The input coupling cap must cut the sub-bass before the clipper: a note well
+    /// below the documented ~340 Hz corner comes out far weaker than one above it at
+    /// the same input amplitude. Pins the passband the code and docs agree on.
+    #[test]
+    fn input_coupling_cuts_sub_bass() {
+        // 80 Hz (below the corner) vs 400 Hz (above it); both divide the render
+        // window into whole cycles so the Goertzel bins land exactly.
+        let amp = |f0: f32| goertzel(&render(f0, 0.2, 0.1, 0.6, 0.7), f0, SR);
+        let low = amp(80.0);
+        let mid = amp(400.0);
+        assert!(
+            mid > low * 3.0,
+            "input coupling does not cut the sub-bass: 80 Hz {low:.4} vs 400 Hz {mid:.4}"
+        );
+    }
 }
