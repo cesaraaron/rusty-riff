@@ -1342,9 +1342,16 @@ pub(super) fn render_help_modal(f: &mut Frame) {
         row("  M", "  mute the selected track"),
         row("  Enter", "  jump to start (loop in-point if looped)"),
         row("  ↑/↓  ←/→", "  select row / seek by the step"),
-        row("  +/−", "  seek step: 1 / 5 / 10 / 30 s"),
+        row(
+            "  +/−",
+            "  step (seek & clip move): 0.5 / 1 / 5 / 10 / 30 s",
+        ),
+        row("  Tab", "  zoom selected row: full height / 50-50 / normal"),
         row("  G", "  selected track gain"),
-        row("  H", "  move selected clip"),
+        row(
+            "  H",
+            "  move selected clip (arrows by step; +/− changes it)",
+        ),
         row("  E", "  export unmuted raw takes (WAV)"),
         row("  [ / ]  L", "  loop in-point / out-point, toggle loop"),
         row("  Del", "  remove selected track"),

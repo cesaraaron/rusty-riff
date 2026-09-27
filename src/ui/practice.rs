@@ -12,6 +12,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::{Arc, Mutex};
 
 use crossterm::event::KeyCode;
 use ratatui::{
@@ -33,12 +34,28 @@ use crate::dsp::player::{MAX_TRACKS, TrackKind as PlayerKind};
 use crate::practice::{DecodedTrack, Practice, decode_track, peaks};
 use crate::preset::Preset;
 use crate::project::{self, AssetCopy, MetronomeSection, TrackSection, TransportSection};
-use crate::recording::{CaptureCommand, CaptureResult, CaptureState, spawn_capture_worker};
+use crate::recording::{
+    CaptureCommand, CaptureResult, CaptureState, LivePeaks, spawn_capture_worker,
+};
 use crate::session::{AssetRef, Session, TrackId, TrackKind, TrackLifecycle};
 
 /// How many waveform buckets we keep per track for the mini display (mapped to
 /// the pane width each frame). Enough detail for a glance without recomputing.
 pub(super) const PEAK_BUCKETS: usize = 512;
+
+/// Default track-row height, in terminal lines. Tall enough to read the
+/// waveform envelope; `Tab` zooms a row beyond this.
+const ROW_HEIGHT: usize = 3;
+
+/// Fixed left gutter width shared by the ruler and every track row, so the
+/// waveform columns line up. See `row_header`.
+const GUTTER: usize = 27;
+
+/// Tick spacings (seconds) the ruler may choose from, coarsest that avoids
+/// label collisions.
+const RULER_TICKS: [f64; 11] = [
+    0.5, 1.0, 2.0, 5.0, 10.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0,
+];
 
 /// One discovered audio file in the browser.
 struct TrackFile {
@@ -63,6 +80,17 @@ enum Selection {
     Track(TrackId),
 }
 
+/// Track-list row heights, cycled with `Tab` on a focused row.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum RowZoom {
+    /// Every visible row at the default height.
+    Normal,
+    /// One row fills the whole track-list area.
+    Expanded(TrackId),
+    /// Two rows share the area 50/50.
+    Split(TrackId, TrackId),
+}
+
 /// All practice UI state, owned by the UI thread. Persists across a device
 /// change: the [`Session`] and its recovery paths are the source of truth, and
 /// decoded caches are rebuilt.
@@ -81,11 +109,15 @@ pub(super) struct PracticeUi {
     /// Canonical project state.
     pub(super) session: Session,
     selection: Selection,
+    /// Track-list row-height zoom (cycled with `Tab`).
+    row_zoom: RowZoom,
 
     /// Capture plumbing (attached per engine).
     capture_cmd: Option<Sender<CaptureCommand>>,
     capture_result: Option<Receiver<CaptureResult>>,
     recording_id: Option<TrackId>,
+    /// Growing peaks published by the capture worker while a take records.
+    live_peaks: Option<Arc<Mutex<LivePeaks>>>,
     /// Small modal editing a track's gain.
     gain_edit: Option<TrackId>,
     /// Small modal nudging a track's timeline start.
@@ -109,9 +141,11 @@ impl PracticeUi {
             decodes: Vec::new(),
             session: Session::new(48_000),
             selection: Selection::Transport,
+            row_zoom: RowZoom::Normal,
             capture_cmd: None,
             capture_result: None,
             recording_id: None,
+            live_peaks: None,
             gain_edit: None,
             move_edit: None,
             next_generation: 1,
@@ -351,6 +385,7 @@ impl PracticeUi {
             return false;
         }
         self.recording_id = None;
+        self.live_peaks = None;
         let mut touched = false;
         if let Some(err) = result.error.clone() {
             self.set_error(result.generation, err);
@@ -359,6 +394,7 @@ impl PracticeUi {
         let Some(player_track) = result.track else {
             self.session.remove(result.generation);
             self.selection = Selection::Transport;
+            self.sanitize_zoom();
             self.message = Some("Empty take discarded".to_owned());
             return touched;
         };
@@ -484,20 +520,57 @@ impl PracticeUi {
         }
     }
 
+    /// `Tab` on the timeline: cycle the focused row's zoom state.
+    /// `Normal → Expanded(focused)`; from `Expanded(A)`, `Tab` on `B` gives
+    /// `Split(A, B)`; `Tab` on an already zoomed row collapses to `Normal`.
+    pub(super) fn tab_zoom(&mut self) {
+        let Selection::Track(id) = self.selection else {
+            return;
+        };
+        if self.session.track(id).is_none() {
+            return;
+        }
+        self.row_zoom = match self.row_zoom {
+            RowZoom::Normal => RowZoom::Expanded(id),
+            RowZoom::Expanded(a) if a == id => RowZoom::Normal,
+            RowZoom::Expanded(a) => RowZoom::Split(a, id),
+            RowZoom::Split(_, _) => RowZoom::Normal,
+        };
+    }
+
+    /// Drop a zoom state that references a removed row.
+    fn sanitize_zoom(&mut self) {
+        let dead = |id: &TrackId| self.session.track(*id).is_none();
+        match self.row_zoom {
+            RowZoom::Expanded(a) if dead(&a) => self.row_zoom = RowZoom::Normal,
+            RowZoom::Split(a, b) if dead(&a) || dead(&b) => self.row_zoom = RowZoom::Normal,
+            _ => {}
+        }
+    }
+
     pub(super) fn seek_by(&self, practice: &Practice, direction: i32) {
         let step = f64::from(self.session.seek_seconds());
         let delta = (step * f64::from(self.sample_rate)) as i64;
-        let total =
-            self.session
-                .ticks_to_frames(self.session.extent_ticks(), self.sample_rate) as i64;
         let cur = practice.position() as i64;
-        let next = (cur + delta * i64::from(direction)).clamp(0, total.max(0));
+        // No upward clamp to the clip extent: an empty (or short) timeline must
+        // still let the playhead move so the first import lands where you put it.
+        let next = (cur + delta * i64::from(direction)).max(0);
         practice.request_seek(next as usize);
     }
 
     pub(super) fn cycle_seek_step(&mut self, direction: i32) {
         let step = self.session.cycle_seek_step(direction);
-        self.message = Some(format!("Seek step: {step}s"));
+        self.message = Some(format!("Step: {}s", format_step(step)));
+    }
+
+    /// Shared time-axis length for the transport, ruler, and waveform rows: the
+    /// last clip's end, but at least the current playhead, so a seek into empty
+    /// space (or a fresh recording) stays visible.
+    fn span_frames(&self, practice: &Practice) -> usize {
+        let extent = self
+            .session
+            .ticks_to_frames(self.session.extent_ticks(), self.sample_rate);
+        extent.max(practice.position()).max(1)
     }
 
     /// Set the loop in-point at the playhead, opening a one-second region if the
@@ -552,6 +625,7 @@ impl PracticeUi {
         let _ = engine.remove_track(id);
         self.session.remove(id);
         self.selection = Selection::Transport;
+        self.sanitize_zoom();
     }
 
     fn selected_track(&self) -> Option<TrackId> {
@@ -632,12 +706,14 @@ impl PracticeUi {
             .map(|d| d.join(format!("take-{id}.wav")))
             .unwrap_or_else(|| PathBuf::from(format!("take-{id}.wav")));
         let (tx, rx) = std::sync::mpsc::channel();
+        let live = Arc::new(Mutex::new(LivePeaks::new(self.sample_rate as u32)));
         if cmd
             .send(CaptureCommand::Begin {
                 generation: id,
                 path,
                 sample_rate: self.sample_rate as u32,
                 result: tx,
+                live: live.clone(),
             })
             .is_err()
         {
@@ -648,6 +724,7 @@ impl PracticeUi {
         }
         self.capture_result = Some(rx);
         self.recording_id = Some(id);
+        self.live_peaks = Some(live);
         capture.arm(id);
         // Start transport if paused so the take follows the playhead.
         practice.playing.store(true, Relaxed);
@@ -674,6 +751,7 @@ impl PracticeUi {
             self.session.remove(id);
         }
         self.capture_result = None;
+        self.live_peaks = None;
         self.selection = Selection::Transport;
     }
 
@@ -705,11 +783,13 @@ impl PracticeUi {
         }
         self.decodes.clear();
         self.capture_result = None;
+        self.live_peaks = None;
         let rate = self.sample_rate as u32;
         self.session = Session::new(rate);
         self.session.set_project_sample_rate(rate);
         self.rate_adopted = true;
         self.selection = Selection::Transport;
+        self.row_zoom = RowZoom::Normal;
         practice.reset();
         metronome.active.store(false, Relaxed);
         self.message = Some("New session".to_owned());
@@ -888,6 +968,8 @@ impl PracticeUi {
         }
         self.decodes.clear();
         self.capture_result = None;
+        self.live_peaks = None;
+        self.row_zoom = RowZoom::Normal;
 
         manifest.rig.apply(params);
 
@@ -1131,23 +1213,18 @@ impl PracticeUi {
         self.move_edit.is_some()
     }
 
-    /// `←`/`→` nudge the clip by 0.1 s; `↑`/`↓` by the current seek step; `R`
-    /// returns it to the top.
+    /// Arrows nudge the clip by the current step; `+`/`-` cycle that step from
+    /// inside the modal; `R` returns the clip to the top.
     pub(super) fn handle_move_key(&mut self, code: KeyCode, engine: &mut AudioEngine) {
         let Some(id) = self.move_edit else {
             return;
         };
+        let step = self.session.seek_seconds();
         match code {
-            KeyCode::Left => self.nudge_start(engine, id, -0.1),
-            KeyCode::Right => self.nudge_start(engine, id, 0.1),
-            KeyCode::Down => {
-                let step = self.session.seek_seconds() as f32;
-                self.nudge_start(engine, id, -step);
-            }
-            KeyCode::Up => {
-                let step = self.session.seek_seconds() as f32;
-                self.nudge_start(engine, id, step);
-            }
+            KeyCode::Left | KeyCode::Down => self.nudge_start(engine, id, -step),
+            KeyCode::Right | KeyCode::Up => self.nudge_start(engine, id, step),
+            KeyCode::Char('+') | KeyCode::Char('=') => self.cycle_seek_step(1),
+            KeyCode::Char('-') => self.cycle_seek_step(-1),
             KeyCode::Char('r') | KeyCode::Char('R') => self.set_start_ticks(engine, id, 0),
             KeyCode::Enter | KeyCode::Esc => self.move_edit = None,
             _ => {}
@@ -1200,18 +1277,100 @@ impl PracticeUi {
         let inner = block.inner(area);
         f.render_widget(block, area);
 
+        // The ruler needs a spare line; on a very short pane fall back to the
+        // old transport + rows + hint layout.
+        let show_ruler = inner.height >= 4;
         let rows = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(1), // transport
-                Constraint::Min(1),    // track list
-                Constraint::Length(1), // hint/message
-            ])
+            .constraints(if show_ruler {
+                vec![
+                    Constraint::Length(1), // transport
+                    Constraint::Length(1), // time ruler
+                    Constraint::Min(1),    // track list
+                    Constraint::Length(1), // hint/message
+                ]
+            } else {
+                vec![
+                    Constraint::Length(1), // transport
+                    Constraint::Min(1),    // track list
+                    Constraint::Length(1), // hint/message
+                ]
+            })
             .split(inner);
+        let (tracks_row, hint_row) = if show_ruler {
+            (rows[2], rows[3])
+        } else {
+            (rows[1], rows[2])
+        };
 
         self.render_transport(f, rows[0], practice, focused, blink, recording);
-        self.render_tracks(f, rows[1], practice, focused);
-        self.render_hint(f, rows[2], focused);
+        if show_ruler {
+            self.render_ruler(f, rows[1], practice, focused);
+        }
+        self.render_tracks(f, tracks_row, practice, focused);
+        self.render_hint(f, hint_row, focused);
+    }
+
+    /// The time axis under the transport: `m:ss` tick labels at a spacing that
+    /// never collides, plus the playhead marker, aligned to the waveform gutter.
+    fn render_ruler(&self, f: &mut Frame, area: Rect, practice: &Practice, focused: bool) {
+        let width = area.width as usize;
+        let wave_w = width.saturating_sub(GUTTER);
+        if wave_w == 0 {
+            return;
+        }
+        let total = self.span_frames(practice);
+        let secs = total as f64 / f64::from(self.sample_rate.max(1.0));
+        // Coarsest tick that keeps ~6-cell label spacing, else the largest.
+        let tick = RULER_TICKS
+            .iter()
+            .copied()
+            .find(|&t| secs > 0.0 && (t / secs) * wave_w as f64 >= 6.0)
+            .unwrap_or(*RULER_TICKS.last().unwrap_or(&1.0));
+
+        let mut cells: Vec<(char, bool)> = vec![(' ', false); wave_w];
+        let mut t = 0.0f64;
+        loop {
+            let col = if secs > 0.0 {
+                ((t / secs) * wave_w.saturating_sub(1) as f64).round() as usize
+            } else {
+                0
+            };
+            if col < wave_w {
+                let label = mmss((t * f64::from(self.sample_rate)) as usize, self.sample_rate);
+                for (k, ch) in label.chars().enumerate() {
+                    if col + k < wave_w {
+                        cells[col + k] = (ch, false);
+                    }
+                }
+            }
+            let next = t + tick;
+            if next <= t || next > secs {
+                break;
+            }
+            t = next;
+        }
+        let pos_col = practice.position() * wave_w.saturating_sub(1) / total;
+        if pos_col < wave_w {
+            cells[pos_col] = ('▼', true);
+        }
+
+        let label_color = if focused { AMBER } else { DIM };
+        let mut spans = vec![Span::styled(
+            format!("{:>width$}", "", width = GUTTER),
+            Style::default().fg(DIM),
+        )];
+        for (ch, playhead) in cells {
+            let style = if playhead {
+                Style::default().fg(HOT).add_modifier(Modifier::BOLD)
+            } else if ch == ' ' {
+                Style::default().fg(DIM)
+            } else {
+                Style::default().fg(label_color)
+            };
+            spans.push(Span::styled(ch.to_string(), style));
+        }
+        f.render_widget(Paragraph::new(Line::from(spans)), area);
     }
 
     fn render_transport(
@@ -1224,10 +1383,8 @@ impl PracticeUi {
         recording: bool,
     ) {
         let playing = practice.playing.load(Relaxed);
-        let total = self
-            .session
-            .ticks_to_frames(self.session.extent_ticks(), self.sample_rate);
-        let position = practice.position().min(total.max(1));
+        let total = self.span_frames(practice);
+        let position = practice.position().min(total);
         let state = if playing {
             Span::styled(
                 " ▶ ",
@@ -1264,7 +1421,7 @@ impl PracticeUi {
                 Style::default().fg(CHROME),
             ),
             Span::styled(
-                format!("{}s ", self.session.seek_seconds()),
+                format!("{}s ", format_step(self.session.seek_seconds())),
                 Style::default().fg(AMBER),
             ),
             Span::styled(
@@ -1311,32 +1468,81 @@ impl PracticeUi {
             );
             return;
         }
-        let visible = area.height as usize;
         let selected_idx = match self.selection {
             Selection::Transport => None,
             Selection::Track(id) => self.session.index_of(id),
         };
-        let offset = match selected_idx {
-            Some(idx) => idx.saturating_sub(visible.saturating_sub(1)),
-            None => 0,
-        };
-        let total = self
-            .session
-            .ticks_to_frames(self.session.extent_ticks(), self.sample_rate)
-            .max(1);
+        let total = self.span_frames(practice);
         let position = practice.position().min(total);
         let width = area.width as usize;
+        let h = area.height as usize;
 
-        let mut lines: Vec<Line> = Vec::with_capacity(visible);
-        for (i, track) in tracks.iter().enumerate().skip(offset).take(visible) {
+        // Resolve the zoom state into a top-to-bottom list of (track index,
+        // row height). Zoomed rows hide the others so they can use the pane.
+        let rows: Vec<(usize, usize)> = match self.row_zoom {
+            RowZoom::Expanded(id) if self.session.index_of(id).is_some() => {
+                vec![(self.session.index_of(id).unwrap_or(0), h)]
+            }
+            RowZoom::Split(a, b)
+                if self.session.index_of(a).is_some() && self.session.index_of(b).is_some() =>
+            {
+                vec![
+                    (self.session.index_of(a).unwrap_or(0), h / 2),
+                    (self.session.index_of(b).unwrap_or(0), h - h / 2),
+                ]
+            }
+            _ => {
+                let visible = (h / ROW_HEIGHT).max(1);
+                let offset = selected_idx.map_or(0, |i| i.saturating_sub(visible - 1));
+                tracks
+                    .iter()
+                    .enumerate()
+                    .skip(offset)
+                    .take(visible)
+                    .map(|(i, _)| (i, ROW_HEIGHT))
+                    .collect()
+            }
+        };
+
+        let live_guard = self.live_peaks.as_ref().and_then(|m| m.try_lock().ok());
+        let mut y = area.y;
+        for (i, row_h) in rows {
+            let row_h = row_h.min(area.bottom().saturating_sub(y) as usize);
+            if row_h == 0 {
+                break;
+            }
+            let track = &tracks[i];
+            let live = match (self.recording_id, live_guard.as_deref()) {
+                (Some(rid), Some(lp)) if rid == track.id => Some(lp),
+                _ => None,
+            };
             let focused_row = focused && selected_idx == Some(i);
-            lines.push(self.track_line(track, focused_row, practice, position, total, width));
+            let rect = Rect {
+                x: area.x,
+                y,
+                width: area.width,
+                height: row_h as u16,
+            };
+            let lines = self.track_lines(
+                track,
+                focused_row,
+                practice,
+                position,
+                total,
+                width,
+                live,
+                row_h,
+            );
+            f.render_widget(Paragraph::new(lines), rect);
+            y += row_h as u16;
         }
-        f.render_widget(Paragraph::new(lines), area);
     }
 
+    /// Build the `height` lines for one track row: a fixed-width header in the
+    /// gutter on the first line and a symmetric min/max envelope across every
+    /// line, so taller rows reveal more of the waveform.
     #[allow(clippy::too_many_arguments)]
-    fn track_line<'a>(
+    fn track_lines<'a>(
         &self,
         track: &crate::session::Track,
         focused: bool,
@@ -1344,62 +1550,48 @@ impl PracticeUi {
         position: usize,
         total: usize,
         width: usize,
-    ) -> Line<'a> {
+        live: Option<&LivePeaks>,
+        height: usize,
+    ) -> Vec<Line<'a>> {
         let start = self
             .session
             .ticks_to_frames(track.start_ticks, self.sample_rate);
-        let frames = self
+        let length = self
             .session
             .ticks_to_frames(track.length_ticks, self.sample_rate);
-        let loaded = track.is_ready() && frames > 0;
-        let (tag, tag_color) = match track.kind {
-            TrackKind::Import => ("IMP ", CHROME),
-            TrackKind::RawTake => ("TAKE", CHROME),
-        };
-        // A raw take captured before calibration carries no input trim.
-        let uncal = matches!(track.kind, TrackKind::RawTake) && track.input_trim_db.is_none();
-        let led = if track.muted {
-            Span::styled("○ ", Style::default().fg(DIM))
-        } else if loaded {
-            Span::styled("● ", Style::default().fg(SAFE))
-        } else if matches!(track.lifecycle, TrackLifecycle::Recording) {
-            Span::styled("◉ ", Style::default().fg(HOT))
-        } else {
-            Span::styled("· ", Style::default().fg(DIM))
-        };
-        let name_w = 14usize;
-        let gain = format!("{:>3}%", (track.gain * 100.0).round() as i32);
-        let mut spans = vec![
-            Span::styled(
-                if focused { "▌" } else { " " }.to_owned(),
-                Style::default().fg(ACCENT),
+        let (peaks, frames, loaded): (&[(f32, f32)], usize, bool) = match live {
+            Some(lp) => {
+                let n = lp.frames();
+                (lp.peaks(), n, n > 0)
+            }
+            None => (
+                track.peaks.as_slice(),
+                length,
+                track.is_ready() && length > 0,
             ),
-            led,
-            Span::styled(tag.to_owned(), Style::default().fg(tag_color)),
-        ];
-        let tag_w = if uncal {
-            spans.push(Span::styled(" uncal", Style::default().fg(DIM)));
-            tag.len() + 6
-        } else {
-            tag.len()
         };
-        spans.push(Span::raw(" "));
-        spans.push(Span::styled(
-            format!("{:<name_w$}", truncate(&track.name, name_w)),
-            Style::default().fg(if loaded { CHROME } else { DIM }),
-        ));
-        spans.push(Span::styled(gain, Style::default().fg(AMBER)));
-        spans.push(Span::raw(" "));
-        let used = 1 + 2 + tag_w + 1 + name_w + 4 + 1;
-        let wave_w = width.saturating_sub(used);
-        if !loaded || wave_w == 0 || total == 0 || track.peaks.is_empty() {
+        let recording = matches!(track.lifecycle, TrackLifecycle::Recording);
+        let header = self.row_header(track, focused, loaded || recording);
+        let blank = Line::from(Span::raw(" ".repeat(GUTTER)));
+        let wave_w = width.saturating_sub(GUTTER);
+        let height = height.max(1);
+
+        let empty = !loaded || wave_w == 0 || total == 0 || peaks.is_empty();
+        if empty {
+            let mut first = header;
             if let TrackLifecycle::Error(e) = &track.lifecycle {
-                spans.push(Span::styled(
+                first.push(Span::styled(
                     format!(" {}", truncate(e, wave_w.max(4))),
                     Style::default().fg(WARN),
                 ));
+            } else if recording {
+                first.push(Span::styled(" recording…", Style::default().fg(HOT)));
             }
-            return Line::from(spans);
+            let mut out = vec![Line::from(first)];
+            for _ in 1..height {
+                out.push(blank.clone());
+            }
+            return out;
         }
 
         let loop_on = practice.loop_enabled.load(Relaxed);
@@ -1408,36 +1600,119 @@ impl PracticeUi {
             practice.loop_end.load(Relaxed) as usize,
         );
         let pos_col = position * wave_w.saturating_sub(1) / total;
-        let bars = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
-        for col in 0..wave_w {
-            let frame = col * total / wave_w.max(1);
-            if col == pos_col {
-                spans.push(Span::styled(
-                    "│",
-                    Style::default().fg(HOT).add_modifier(Modifier::BOLD),
-                ));
-                continue;
-            }
-            let in_loop = loop_on && lb > la && frame >= la && frame < lb;
-            let inside = frame >= start && frame - start < frames;
-            let ch = if !inside {
-                if in_loop { '·' } else { ' ' }
+        let center = height as f32; // vertical centre, in half-row units
+        let mid = height / 2;
+
+        let mut out: Vec<Line<'a>> = Vec::with_capacity(height);
+        for line in 0..height {
+            let mut spans: Vec<Span<'a>> = if line == 0 {
+                header.clone()
             } else {
-                let rel = frame - start;
-                let bucket = rel * track.peaks.len() / frames.max(1);
-                let amp = track
-                    .peaks
-                    .get(bucket.min(track.peaks.len() - 1))
-                    .map(|(lo, hi)| (hi - lo).max(0.0))
-                    .unwrap_or(0.0);
-                bars[(amp.sqrt() * 8.0).round() as usize % bars.len()]
+                vec![Span::raw(" ".repeat(GUTTER))]
             };
-            spans.push(Span::styled(
-                ch.to_string(),
-                Style::default().fg(if in_loop { HOT } else { CHROME }),
-            ));
+            let mut buf = String::new();
+            let mut run_style: Option<Style> = None;
+            for col in 0..wave_w {
+                let frame = col * total / wave_w.max(1);
+                let in_loop = loop_on && lb > la && frame >= la && frame < lb;
+                let inside = frame >= start && frame - start < frames;
+                let (ch, style) = if col == pos_col {
+                    ('│', Style::default().fg(HOT).add_modifier(Modifier::BOLD))
+                } else if !inside {
+                    if in_loop {
+                        ('·', Style::default().fg(HOT))
+                    } else {
+                        (' ', Style::default().fg(CHROME))
+                    }
+                } else {
+                    let bucket = {
+                        let rel = frame - start;
+                        (rel * peaks.len() / frames.max(1)).min(peaks.len() - 1)
+                    };
+                    let amp = peaks
+                        .get(bucket)
+                        .map(|(lo, hi)| (hi - lo).max(0.0))
+                        .unwrap_or(0.0);
+                    let half = amp.min(1.0) * center;
+                    let top = (center - half).max(0.0);
+                    let bottom = (center + half).min((height * 2) as f32);
+                    let filled = |k: usize| (k as f32) >= top && (k as f32) < bottom;
+                    let upper = filled(2 * line);
+                    let lower = filled(2 * line + 1);
+                    let style = Style::default().fg(if in_loop { HOT } else { CHROME });
+                    match (upper, lower) {
+                        (true, true) => ('█', style),
+                        (true, false) => ('▀', style),
+                        (false, true) => ('▄', style),
+                        (false, false) if line == mid => ('·', Style::default().fg(DIM)),
+                        (false, false) => (' ', style),
+                    }
+                };
+                if run_style != Some(style) {
+                    if !buf.is_empty() {
+                        spans.push(Span::styled(
+                            std::mem::take(&mut buf),
+                            run_style.unwrap_or_default(),
+                        ));
+                    }
+                    run_style = Some(style);
+                }
+                buf.push(ch);
+            }
+            if !buf.is_empty() {
+                spans.push(Span::styled(buf, run_style.unwrap_or_default()));
+            }
+            out.push(Line::from(spans));
         }
-        Line::from(spans)
+        out
+    }
+
+    /// Fixed-width left gutter (see [`GUTTER`]): cursor, LED, tag, `uncal`
+    /// flag, name, gain. Kept a constant width so every row's waveform — and the
+    /// ruler — share one column grid.
+    fn row_header<'a>(
+        &self,
+        track: &crate::session::Track,
+        focused: bool,
+        active: bool,
+    ) -> Vec<Span<'a>> {
+        let (tag, tag_color) = match track.kind {
+            TrackKind::Import => ("IMP ", CHROME),
+            TrackKind::RawTake => ("TAKE", CHROME),
+        };
+        // A raw take captured before calibration carries no input trim.
+        let uncal = matches!(track.kind, TrackKind::RawTake) && track.input_trim_db.is_none();
+        let recording = matches!(track.lifecycle, TrackLifecycle::Recording);
+        let led = if track.muted {
+            Span::styled("○ ", Style::default().fg(DIM))
+        } else if recording {
+            Span::styled("◉ ", Style::default().fg(HOT))
+        } else if active {
+            Span::styled("● ", Style::default().fg(SAFE))
+        } else {
+            Span::styled("· ", Style::default().fg(DIM))
+        };
+        let name_w = 13usize;
+        let gain = format!("{:>3}%", (track.gain * 100.0).round() as i32);
+        vec![
+            Span::styled(
+                if focused { "▌" } else { " " }.to_owned(),
+                Style::default().fg(ACCENT),
+            ),
+            led,
+            Span::styled(tag.to_owned(), Style::default().fg(tag_color)),
+            Span::styled(
+                if uncal { "!" } else { " " }.to_owned(),
+                Style::default().fg(AMBER),
+            ),
+            Span::raw(" "),
+            Span::styled(
+                format!("{:<name_w$}", truncate(&track.name, name_w)),
+                Style::default().fg(if active { CHROME } else { DIM }),
+            ),
+            Span::styled(gain, Style::default().fg(AMBER)),
+            Span::raw(" "),
+        ]
     }
 
     fn render_hint(&self, f: &mut Frame, area: Rect, focused: bool) {
@@ -1457,6 +1732,8 @@ impl PracticeUi {
                 Span::styled(" gain  ", Style::default().fg(DIM)),
                 Span::styled("H", Style::default().fg(AMBER)),
                 Span::styled(" move  ", Style::default().fg(DIM)),
+                Span::styled("Tab", Style::default().fg(AMBER)),
+                Span::styled(" zoom  ", Style::default().fg(DIM)),
                 Span::styled("[ ] L", Style::default().fg(AMBER)),
                 Span::styled(" loop  ", Style::default().fg(DIM)),
                 Span::styled("Del", Style::default().fg(AMBER)),
@@ -1678,7 +1955,7 @@ impl PracticeUi {
                 ),
             ]),
             Line::from(Span::styled(
-                "←/→ 0.1 s · ↑/↓ seek step · R to top",
+                "←/→ move by step · +/− change step · R to top",
                 Style::default().fg(DIM),
             )),
             Line::from(Span::styled("Enter / Esc close", Style::default().fg(DIM))),
@@ -1732,6 +2009,15 @@ fn file_entry(file: &TrackFile, selected: bool) -> Line<'static> {
         Span::styled(file.label.clone(), style),
         Span::styled(format!("  {}", file.detail), Style::default().fg(DIM)),
     ])
+}
+
+/// Format a step in seconds without a trailing `.0` (e.g. `5`, `0.5`).
+fn format_step(secs: f32) -> String {
+    if secs.fract().abs() < 1e-6 {
+        format!("{}", secs as i64)
+    } else {
+        format!("{secs}")
+    }
 }
 
 /// `mm:ss` for a frame count at `sr`.
@@ -1975,5 +2261,120 @@ mod tests {
         practice.playing.store(true, Relaxed);
         ui.finalize_capture(&capture, &practice);
         assert!(!practice.playing.load(Relaxed), "stop must pause");
+    }
+
+    #[test]
+    fn seek_moves_on_an_empty_timeline() {
+        let ui = PracticeUi::new();
+        let practice = Practice::new();
+        // No tracks: extent is zero, but stepping must still move the playhead
+        // so the first import can be placed.
+        ui.seek_by(&practice, 1);
+        let step = (ui.session.seek_seconds() * 48_000.0) as usize;
+        assert_eq!(practice.snapshot().seek, Some(step));
+        ui.seek_by(&practice, -1);
+        assert_eq!(practice.snapshot().seek, Some(0));
+    }
+
+    #[test]
+    fn tab_zoom_cycles_through_row_heights() {
+        let mut ui = PracticeUi::new();
+        let (asset, kind) = ready("a.wav");
+        ui.session
+            .push(1, "a".into(), kind, asset, 0, 48_000, TrackLifecycle::Ready);
+        let (asset, kind) = ready("b.wav");
+        ui.session
+            .push(2, "b".into(), kind, asset, 0, 48_000, TrackLifecycle::Ready);
+
+        // Transport focus is inert.
+        ui.selection = Selection::Transport;
+        ui.tab_zoom();
+        assert_eq!(ui.row_zoom, RowZoom::Normal);
+
+        ui.selection = Selection::Track(1);
+        ui.tab_zoom();
+        assert_eq!(ui.row_zoom, RowZoom::Expanded(1));
+        // Tab on a different row splits the pane 50/50.
+        ui.selection = Selection::Track(2);
+        ui.tab_zoom();
+        assert_eq!(ui.row_zoom, RowZoom::Split(1, 2));
+        // Tab again collapses back to normal.
+        ui.tab_zoom();
+        assert_eq!(ui.row_zoom, RowZoom::Normal);
+
+        // Tab on an already expanded row collapses it.
+        ui.selection = Selection::Track(1);
+        ui.tab_zoom();
+        assert_eq!(ui.row_zoom, RowZoom::Expanded(1));
+        ui.tab_zoom();
+        assert_eq!(ui.row_zoom, RowZoom::Normal);
+    }
+
+    fn screen_text(term: &ratatui::Terminal<ratatui::backend::TestBackend>) -> String {
+        let buf = term.backend().buffer();
+        let mut out = String::new();
+        for y in 0..buf.area.height {
+            for x in 0..buf.area.width {
+                out.push_str(buf[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    #[test]
+    fn renders_ruler_and_every_zoom_state() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut ui = PracticeUi::new();
+        let practice = Practice::new();
+        for id in 1..=2u64 {
+            ui.session.push(
+                id,
+                format!("t{id}"),
+                TrackKind::Import,
+                Some(AssetRef {
+                    path: PathBuf::from(format!("{id}.wav")),
+                    source_sample_rate: 48_000,
+                    source_channels: 2,
+                }),
+                0,
+                48_000,
+                TrackLifecycle::Ready,
+            );
+            ui.session.track_mut(id).expect("track").peaks = vec![(-0.5, 0.5); 64];
+        }
+        ui.move_selection(true);
+
+        let mut term = Terminal::new(TestBackend::new(90, 20)).expect("test backend");
+        for zoom in [RowZoom::Normal, RowZoom::Expanded(1), RowZoom::Split(1, 2)] {
+            ui.row_zoom = zoom;
+            term.draw(|f| {
+                let area = f.area();
+                ui.render(f, area, &practice, true, false, false);
+            })
+            .expect("draw");
+            let text = screen_text(&term);
+            assert!(text.contains(":00"), "ruler tick missing under {zoom:?}");
+            assert!(
+                text.contains('█') || text.contains('▀') || text.contains('▄'),
+                "waveform envelope missing under {zoom:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn deleting_a_zoomed_row_clears_the_zoom() {
+        let mut ui = PracticeUi::new();
+        let (asset, kind) = ready("a.wav");
+        ui.session
+            .push(1, "a".into(), kind, asset, 0, 48_000, TrackLifecycle::Ready);
+        ui.selection = Selection::Track(1);
+        ui.tab_zoom();
+        assert_eq!(ui.row_zoom, RowZoom::Expanded(1));
+        ui.session.remove(1);
+        ui.sanitize_zoom();
+        assert_eq!(ui.row_zoom, RowZoom::Normal);
     }
 }

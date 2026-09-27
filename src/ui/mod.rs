@@ -1253,6 +1253,10 @@ pub fn run(
                         KeyCode::Char('l') | KeyCode::Char('L') if focus == Some(PRACTICE_TILE) => {
                             practice_ui.toggle_loop(&practice);
                         }
+                        // `Tab` zoom: cycle the selected row's height.
+                        KeyCode::Tab if focus == Some(PRACTICE_TILE) => {
+                            practice_ui.tab_zoom();
+                        }
                         KeyCode::Delete | KeyCode::Backspace if focus == Some(PRACTICE_TILE) => {
                             practice_ui.delete_selected(&mut engine, &practice, &capture);
                         }

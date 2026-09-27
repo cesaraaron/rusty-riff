@@ -18,9 +18,9 @@
 //! reach this ring.
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering::Relaxed};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use rtrb::{Consumer, Producer, RingBuffer};
@@ -93,6 +93,58 @@ pub fn capture_ring(sample_rate: f32) -> (Producer<f32>, Consumer<f32>) {
     RingBuffer::<f32>::new(cap)
 }
 
+/// Bucketed min/max feed published by the capture writer while a take records,
+/// so the timeline can draw a growing waveform instead of waiting for finalize.
+///
+/// Touched only by the writer worker (producer) and the UI thread (reader) — the
+/// audio callback never sees it. The UI reads through `try_lock` so a busy
+/// writer can never stall a redraw.
+pub struct LivePeaks {
+    buckets: Vec<(f32, f32)>,
+    samples_per_bucket: usize,
+    cur_min: f32,
+    cur_max: f32,
+    cur_count: usize,
+}
+
+impl LivePeaks {
+    /// ~5 ms per bucket: fine enough to read as continuous, and bounded memory
+    /// for a long take.
+    pub fn new(sample_rate: u32) -> Self {
+        let samples_per_bucket = (sample_rate as usize / 200).max(1);
+        Self {
+            buckets: Vec::new(),
+            samples_per_bucket,
+            cur_min: f32::INFINITY,
+            cur_max: f32::NEG_INFINITY,
+            cur_count: 0,
+        }
+    }
+
+    /// Fold one sample into the running bucket.
+    pub fn push(&mut self, sample: f32) {
+        self.cur_min = self.cur_min.min(sample);
+        self.cur_max = self.cur_max.max(sample);
+        self.cur_count += 1;
+        if self.cur_count >= self.samples_per_bucket {
+            self.buckets.push((self.cur_min, self.cur_max));
+            self.cur_min = f32::INFINITY;
+            self.cur_max = f32::NEG_INFINITY;
+            self.cur_count = 0;
+        }
+    }
+
+    /// Completed buckets; the in-progress tail is not included.
+    pub fn peaks(&self) -> &[(f32, f32)] {
+        &self.buckets
+    }
+
+    /// Samples consumed so far, including the in-progress bucket.
+    pub fn frames(&self) -> usize {
+        self.buckets.len() * self.samples_per_bucket + self.cur_count
+    }
+}
+
 /// A finished capture, sent from the writer worker back to the UI.
 pub struct CaptureResult {
     pub generation: u64,
@@ -107,12 +159,14 @@ pub struct CaptureResult {
 
 /// Commands the UI sends to the writer worker.
 pub enum CaptureCommand {
-    /// Start writing a new take to `path`. The worker replies on `result`.
+    /// Start writing a new take to `path`. The worker replies on `result` and
+    /// publishes a growing waveform through `live` while it records.
     Begin {
         generation: u64,
         path: PathBuf,
         sample_rate: u32,
         result: Sender<CaptureResult>,
+        live: Arc<Mutex<LivePeaks>>,
     },
     /// Flush and finalize the active take.
     End,
@@ -139,12 +193,22 @@ fn worker_loop(consumer: &mut Consumer<f32>, cmds: &Receiver<CaptureCommand>) {
                 path,
                 sample_rate,
                 result,
-            } => run_capture(consumer, cmds, generation, path, sample_rate, &result),
+                live,
+            } => run_capture(
+                consumer,
+                cmds,
+                generation,
+                path,
+                sample_rate,
+                &result,
+                &live,
+            ),
             CaptureCommand::End | CaptureCommand::Abort => {}
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_capture(
     consumer: &mut Consumer<f32>,
     cmds: &Receiver<CaptureCommand>,
@@ -152,6 +216,7 @@ fn run_capture(
     path: PathBuf,
     sample_rate: u32,
     result: &Sender<CaptureResult>,
+    live: &Arc<Mutex<LivePeaks>>,
 ) {
     let mut reply = CaptureResult {
         generation,
@@ -190,15 +255,19 @@ fn run_capture(
     let mut samples: Vec<f32> = Vec::new();
     let mut aborted = false;
     loop {
-        while let Ok(s) = consumer.pop() {
-            if let Some(w) = writer.as_mut()
-                && w.write_sample(s).is_err()
-            {
-                reply.error = Some("writing capture samples failed".to_owned());
-                aborted = true;
-                break;
+        {
+            let mut live = live.lock().unwrap_or_else(|e| e.into_inner());
+            while let Ok(s) = consumer.pop() {
+                if let Some(w) = writer.as_mut()
+                    && w.write_sample(s).is_err()
+                {
+                    reply.error = Some("writing capture samples failed".to_owned());
+                    aborted = true;
+                    break;
+                }
+                live.push(s);
+                samples.push(s);
             }
-            samples.push(s);
         }
         if aborted {
             break;
@@ -206,6 +275,7 @@ fn run_capture(
         match cmds.try_recv() {
             Ok(CaptureCommand::End) => {
                 // Drain whatever the callback left in the ring, then finalize.
+                let mut live = live.lock().unwrap_or_else(|e| e.into_inner());
                 while let Ok(s) = consumer.pop() {
                     if let Some(w) = writer.as_mut()
                         && w.write_sample(s).is_err()
@@ -213,6 +283,7 @@ fn run_capture(
                         reply.error = Some("writing capture samples failed".to_owned());
                         break;
                     }
+                    live.push(s);
                     samples.push(s);
                 }
                 break;
@@ -291,6 +362,7 @@ mod tests {
             path: path.clone(),
             sample_rate: 48_000,
             result: result_tx,
+            live: Arc::new(Mutex::new(LivePeaks::new(48_000))),
         })
         .ok();
 
@@ -322,6 +394,7 @@ mod tests {
             path: path.clone(),
             sample_rate: 48_000,
             result: result_tx,
+            live: Arc::new(Mutex::new(LivePeaks::new(48_000))),
         })
         .ok();
         let _ = producer.push(1.0);
@@ -347,6 +420,7 @@ mod tests {
             path: path.clone(),
             sample_rate: 48_000,
             result: result_tx,
+            live: Arc::new(Mutex::new(LivePeaks::new(48_000))),
         })
         .ok();
         tx.send(CaptureCommand::End).ok();
@@ -357,5 +431,27 @@ mod tests {
         assert_eq!(res.frames, 0);
         assert!(res.track.is_none());
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn live_peaks_bucket_and_count() {
+        // 48 kHz → 240 samples per ~5 ms bucket.
+        let mut lp = LivePeaks::new(48_000);
+        assert_eq!(lp.frames(), 0);
+        assert!(lp.peaks().is_empty());
+
+        for _ in 0..240 {
+            lp.push(0.5);
+        }
+        assert_eq!(lp.peaks().len(), 1);
+        assert_eq!(lp.frames(), 240);
+        assert_eq!(lp.peaks()[0], (0.5, 0.5));
+
+        // A partial bucket advances the sample count but not the bucket list yet.
+        for _ in 0..120 {
+            lp.push(-0.25);
+        }
+        assert_eq!(lp.peaks().len(), 1, "tail is not a completed bucket");
+        assert_eq!(lp.frames(), 360);
     }
 }

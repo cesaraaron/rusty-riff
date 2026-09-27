@@ -104,10 +104,11 @@ impl Track {
     }
 }
 
-/// Selectable seek increments, in seconds.
-pub const SEEK_STEPS: [u32; 4] = [1, 5, 10, 30];
+/// Selectable seek increments, in seconds. `0.5` is the fine step used for
+/// precise placement; the rest are coarse jumps.
+pub const SEEK_STEPS: [f32; 5] = [0.5, 1.0, 5.0, 10.0, 30.0];
 /// The increment a new session starts on.
-pub const DEFAULT_SEEK_STEP: u32 = 5;
+pub const DEFAULT_SEEK_STEP: f32 = 5.0;
 
 /// The editable project. Owned by the UI thread; never touched by the audio
 /// callback.
@@ -115,7 +116,7 @@ pub struct Session {
     project_sample_rate: u32,
     tracks: Vec<Track>,
     selected: Option<TrackId>,
-    seek_seconds: u32,
+    seek_seconds: f32,
     next_id: TrackId,
     temp_id: String,
     name: String,
@@ -297,18 +298,18 @@ impl Session {
         self.tracks.iter().map(Track::end_ticks).max().unwrap_or(0)
     }
 
-    pub fn seek_seconds(&self) -> u32 {
+    pub fn seek_seconds(&self) -> f32 {
         self.seek_seconds
     }
 
-    pub fn set_seek_seconds(&mut self, secs: u32) {
+    pub fn set_seek_seconds(&mut self, secs: f32) {
         if SEEK_STEPS.contains(&secs) {
             self.seek_seconds = secs;
         }
     }
 
     /// Advance/reverse through [`SEEK_STEPS`] by `dir` (+1 / -1), wrapping.
-    pub fn cycle_seek_step(&mut self, dir: i32) -> u32 {
+    pub fn cycle_seek_step(&mut self, dir: i32) -> f32 {
         let idx = SEEK_STEPS
             .iter()
             .position(|&s| s == self.seek_seconds)
@@ -437,13 +438,16 @@ mod tests {
     #[test]
     fn seek_steps_cycle_and_wrap() {
         let mut s = Session::new(48_000);
-        assert_eq!(s.seek_seconds(), 5);
-        assert_eq!(s.cycle_seek_step(1), 10);
-        assert_eq!(s.cycle_seek_step(1), 30);
-        assert_eq!(s.cycle_seek_step(1), 1);
-        assert_eq!(s.cycle_seek_step(-1), 30);
-        s.set_seek_seconds(7);
-        assert_eq!(s.seek_seconds(), 30, "unsupported steps are ignored");
+        assert_eq!(s.seek_seconds(), 5.0);
+        assert_eq!(s.cycle_seek_step(1), 10.0);
+        assert_eq!(s.cycle_seek_step(1), 30.0);
+        // Wraps to the fine step, then back around.
+        assert_eq!(s.cycle_seek_step(1), 0.5);
+        assert_eq!(s.cycle_seek_step(1), 1.0);
+        assert_eq!(s.cycle_seek_step(-1), 0.5);
+        assert_eq!(s.cycle_seek_step(-1), 30.0);
+        s.set_seek_seconds(7.0);
+        assert_eq!(s.seek_seconds(), 30.0, "unsupported steps are ignored");
     }
 
     #[test]

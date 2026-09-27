@@ -135,10 +135,14 @@ as, `Enter` load, `D` delete. Abandoned dry takes also appear here as
   summed into the output **after** the recording tap, so they are never captured
   into a rendered WAV.
 - **Timeline** — focus it with `3`. `Space` plays/pauses any row, `↑`/`↓`
-  select a track, `←`/`→` seek, `+`/`−` pick the seek step (1/5/10/30 s), `M`
-  mutes, `G` sets track gain, `H` moves a clip, `[`/`]`/`L` set the loop
-  in/out and toggle looping, `Del` removes a track, and `E` exports the unmuted
-  raw takes as a WAV.
+  select a track, `←`/`→` seek, `+`/`−` pick the step (0.5/1/5/10/30 s), `M`
+  mutes, `G` sets track gain, `H` moves a clip (its arrows move by the step and
+  `+`/`−` change it), `Tab` zooms the selected row (full height, then 50/50 with
+  a second row, then back), `[`/`]`/`L` set the loop in/out and toggle looping,
+  `Del` removes a track, and `E` exports the unmuted raw takes as a WAV. A time
+  ruler above the rows shows where the playhead sits, and the waveform grows
+  live while a take records. The row heights default to three lines so the
+  waveform is readable.
 - **Tuner** — `T` opens a chromatic tuner with a cents meter and spectrum. The
   rig is bypassed while it is open so you tune the dry signal.
 

@@ -108,6 +108,27 @@ metronome are monitor-only.
 - Dependency fix: added symphonia's `pcm` codec feature — `wav` alone is only the
   RIFF reader, so no WAV ever decoded before (including captures).
 
+### D3 — timeline UX (see [`timeline-ux-plan.md`](timeline-ux-plan.md))
+- **Empty-timeline navigation.** `seek_by` no longer clamps to `extent_ticks()`
+  (zero on an empty session); it clamps only at `0`, so `←`/`→` step into empty
+  space and the first import lands where the playhead is. The transport total is
+  `max(extent, position)`.
+- **Time ruler.** A one-line ruler under the transport shows `m:ss` ticks at a
+  spacing chosen to avoid collisions, plus a `▼` playhead marker, aligned to a
+  fixed 27-column waveform gutter shared by every row (the old `uncal` tag that
+  shifted rows by six columns is now a one-column `!` flag).
+- **Fractional steps.** `SEEK_STEPS = [0.5, 1, 5, 10, 30]`; `Session::seek_seconds`
+  is `f32`, and `TransportSection.seek_seconds` deserializes both the old integer
+  form and the new float form. The clip-move modal nudges by the step and its
+  `+`/`-` cycle it.
+- **Live waveform.** `recording::LivePeaks` (~5 ms buckets) is shared between the
+  capture writer and the UI; a recording row draws the growing envelope. The
+  writer only ever touches it alongside the existing WAV drain, and the UI reads
+  it with `try_lock`, so the audio callback and the redraw are unaffected.
+- **Taller rows + `Tab` zoom.** Rows default to three lines drawn as a symmetric
+  min/max envelope. `Tab` on the timeline cycles `Normal → Expanded(one row fills
+  the pane) → Split(two rows 50/50) → Normal`; deleted rows sanitize the zoom.
+
 ---
 
 ## 3. Invariants — do not break

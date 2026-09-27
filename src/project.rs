@@ -132,10 +132,37 @@ pub struct AssetBytes {
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct TransportSection {
     pub playhead: u64,
-    pub seek_seconds: u32,
+    /// Active seek/move step in seconds. Deserialized leniently so manifests
+    /// written before fractional steps (whole-second integers) still load.
+    #[serde(deserialize_with = "de_seek_seconds")]
+    pub seek_seconds: f32,
     pub loop_enabled: bool,
     pub loop_start: u64,
     pub loop_end: u64,
+}
+
+/// Accept a seek step written either as an integer (`5`) or a float (`0.5`).
+fn de_seek_seconds<'de, D>(deserializer: D) -> Result<f32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct Secs;
+    impl serde::de::Visitor<'_> for Secs {
+        type Value = f32;
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("a number of seconds (integer or float)")
+        }
+        fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<f32, E> {
+            Ok(v as f32)
+        }
+        fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<f32, E> {
+            Ok(v as f32)
+        }
+        fn visit_f64<E: serde::de::Error>(self, v: f64) -> Result<f32, E> {
+            Ok(v as f32)
+        }
+    }
+    deserializer.deserialize_any(Secs)
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -598,7 +625,7 @@ mod tests {
             48_000,
             TransportSection {
                 playhead: 1234,
-                seek_seconds: 10,
+                seek_seconds: 10.0,
                 loop_enabled: true,
                 loop_start: 100,
                 loop_end: 200,
@@ -639,7 +666,7 @@ mod tests {
 
         let read = read_manifest(&dir).expect("read");
         assert_eq!(read.name, "My Session");
-        assert_eq!(read.transport.seek_seconds, 10);
+        assert_eq!(read.transport.seek_seconds, 10.0);
         assert_eq!(read.tracks.len(), 1);
         assert_eq!(read.tracks[0].id, 7);
 
@@ -647,9 +674,23 @@ mod tests {
         assert_eq!(session.name(), "My Session");
         assert_eq!(session.track(7).map(|t| t.muted), Some(true));
         assert_eq!(session.track(7).and_then(|t| t.input_trim_db), None);
-        assert_eq!(session.seek_seconds(), 10);
+        assert_eq!(session.seek_seconds(), 10.0);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Old manifests spelled `seek_seconds` as a whole number; fractional steps
+    /// are new, so both integer and float forms must parse.
+    #[test]
+    fn seek_seconds_accepts_integer_and_fractional_forms() {
+        let old =
+            "playhead = 0\nseek_seconds = 5\nloop_enabled = false\nloop_start = 0\nloop_end = 0\n";
+        let t: TransportSection = toml::from_str(old).expect("old integer step must load");
+        assert_eq!(t.seek_seconds, 5.0);
+
+        let new = old.replace("seek_seconds = 5", "seek_seconds = 0.5");
+        let t: TransportSection = toml::from_str(&new).expect("fractional step must load");
+        assert_eq!(t.seek_seconds, 0.5);
     }
 
     /// Trim metadata round-trips, and an older manifest without the fields still
