@@ -1782,6 +1782,21 @@ impl PracticeUi {
             }
             t = next;
         }
+
+        // Minor ticks between the labelled ranges, as dim dots. Never overwrite
+        // a label, and skip when they would crowd.
+        let minor = tick / 5.0;
+        if secs > 0.0 && minor > 0.0 && (minor / secs) * wave_w as f64 >= 2.0 {
+            let mut t = minor;
+            while t < secs {
+                let col = ((t / secs) * wave_w.saturating_sub(1) as f64).round() as usize;
+                if col < wave_w && cells[col].0 == ' ' {
+                    cells[col] = ('·', false);
+                }
+                t += minor;
+            }
+        }
+
         let pos = practice.position();
         if pos >= view_start && pos < view_start + view_len {
             let pos_col = (pos - view_start) * wave_w.saturating_sub(1) / view_len.max(1);
@@ -1790,15 +1805,17 @@ impl PracticeUi {
             }
         }
 
-        let mut spans = vec![Span::styled(
-            format!("{:>width$}", "", width = GUTTER),
-            Style::default(),
-        )];
+        let mut spans = vec![
+            Span::raw(" ".repeat(GUTTER - 1)),
+            Span::styled("│", divider_style()),
+        ];
         for (ch, playhead) in cells {
             let style = if playhead {
                 Style::default().fg(HOT).add_modifier(Modifier::BOLD)
             } else if ch == ' ' {
                 Style::default()
+            } else if ch == '·' {
+                Style::default().fg(DIM)
             } else {
                 Style::default().fg(GRID)
             };
@@ -1890,24 +1907,37 @@ impl PracticeUi {
     fn render_tracks(&self, f: &mut Frame, area: Rect, practice: &Practice, focused: bool) {
         let tracks = self.session.tracks();
         if tracks.is_empty() {
-            // Even with nothing to draw, keep the playhead line spanning the
-            // pane so it connects to the ruler marker.
+            // Even with nothing to draw, keep the gutter divider and the
+            // playhead line spanning the pane.
+            let width = area.width as usize;
             let (view_start, view_len) = self.view(practice);
             let position = practice.position();
-            let wave_w = (area.width as usize).saturating_sub(GUTTER);
-            if wave_w > 0 && position >= view_start && position < view_start + view_len {
-                let pos_col = (position - view_start) * wave_w.saturating_sub(1) / view_len.max(1);
-                let cur_col = GUTTER + pos_col.min(wave_w - 1);
+            let wave_w = width.saturating_sub(GUTTER);
+            if width > GUTTER {
+                let pos_col =
+                    (wave_w > 0 && position >= view_start && position < view_start + view_len)
+                        .then(|| {
+                            ((position - view_start) * wave_w.saturating_sub(1) / view_len.max(1))
+                                .min(wave_w - 1)
+                        });
                 let line_style = Style::default().fg(HOT).add_modifier(Modifier::BOLD);
                 let lines: Vec<Line> = (0..area.height)
                     .map(|_| {
-                        Line::from(vec![
-                            Span::raw(" ".repeat(cur_col)),
-                            Span::styled("│", line_style),
-                            Span::raw(
-                                " ".repeat((area.width as usize).saturating_sub(cur_col + 1)),
-                            ),
-                        ])
+                        let mut spans = vec![
+                            Span::raw(" ".repeat(GUTTER - 1)),
+                            Span::styled("│", divider_style()),
+                        ];
+                        match pos_col {
+                            Some(pc) => {
+                                spans.push(Span::raw(" ".repeat(pc)));
+                                spans.push(Span::styled("│", line_style));
+                                spans.push(Span::raw(
+                                    " ".repeat(width.saturating_sub(GUTTER + pc + 1)),
+                                ));
+                            }
+                            None => spans.push(Span::raw(" ".repeat(wave_w))),
+                        }
+                        Line::from(spans)
                     })
                     .collect();
                 f.render_widget(Paragraph::new(lines), area);
@@ -2037,7 +2067,10 @@ impl PracticeUi {
         };
         let recording = matches!(track.lifecycle, TrackLifecycle::Recording);
         let header = self.row_header(track, focused, loaded || recording);
-        let blank = Line::from(Span::raw(" ".repeat(GUTTER)));
+        let blank = Line::from(vec![
+            Span::raw(" ".repeat(GUTTER - 1)),
+            Span::styled("│", divider_style()),
+        ]);
         let wave_w = width.saturating_sub(GUTTER);
         let height = height.max(1);
 
@@ -2108,7 +2141,10 @@ impl PracticeUi {
             let mut spans: Vec<Span<'a>> = if line == 0 {
                 header.clone()
             } else {
-                vec![Span::raw(" ".repeat(GUTTER))]
+                vec![
+                    Span::raw(" ".repeat(GUTTER - 1)),
+                    Span::styled("│", divider_style()),
+                ]
             };
             let mut buf = String::new();
             let mut run_style: Option<Style> = None;
@@ -2215,7 +2251,7 @@ impl PracticeUi {
                 Style::default().fg(if active { CHROME } else { DIM }),
             ),
             Span::styled(gain, Style::default().fg(AMBER)),
-            Span::raw(" "),
+            Span::styled("│", divider_style()),
         ]
     }
 
@@ -2990,6 +3026,12 @@ fn border_style(active: bool) -> Style {
     Style::default().fg(if active { ACCENT } else { shade(ACCENT, 0.5) })
 }
 
+/// Dimmed accent used for the gutter/timeline divider (matches an unfocused
+/// pane border).
+fn divider_style() -> Style {
+    Style::default().fg(shade(ACCENT, 0.5))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3580,6 +3622,26 @@ mod tests {
         ui.session.remove(1);
         ui.sanitize_zoom();
         assert_eq!(ui.row_zoom, RowZoom::Normal);
+    }
+
+    #[test]
+    fn empty_timeline_shows_the_divider_and_minor_ticks() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let ui = PracticeUi::new();
+        let practice = Practice::new();
+        let mut term = Terminal::new(TestBackend::new(90, 16)).expect("test backend");
+        term.draw(|f| {
+            let area = f.area();
+            ui.render(f, area, &practice, true, false, false);
+        })
+        .expect("draw");
+        let text = screen_text(&term);
+        // Divider at the gutter plus the playhead at frame 0 sit side by side.
+        assert!(text.contains("││"), "gutter divider missing");
+        // Minor ruler ticks between the labels.
+        assert!(text.contains('·'), "ruler minor ticks missing");
     }
 
     #[test]
