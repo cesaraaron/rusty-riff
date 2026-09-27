@@ -59,6 +59,9 @@ pub(super) struct SessionBrowser {
     view: View,
     cursor: usize,
     rows: Vec<Row>,
+    /// Live filter over the row list while `/` search is active.
+    filter: String,
+    searching: bool,
     name_input: String,
     pub message: Option<String>,
 }
@@ -70,6 +73,8 @@ impl SessionBrowser {
             view: View::List,
             cursor: 0,
             rows: Vec::new(),
+            filter: String::new(),
+            searching: false,
             name_input: String::new(),
             message: None,
         }
@@ -80,6 +85,8 @@ impl SessionBrowser {
         self.reload();
         self.cursor = 0;
         self.view = View::List;
+        self.filter.clear();
+        self.searching = false;
         self.name_input.clear();
         self.message = None;
         self.open = true;
@@ -90,7 +97,38 @@ impl SessionBrowser {
         let sessions = project::list_sessions();
         let recovery = project::list_recovery();
         self.rows = build_rows(sessions, recovery);
-        self.cursor = self.cursor.min(self.rows.len().saturating_sub(1));
+        let n = self.visible_rows().len();
+        self.cursor = self.cursor.min(n.saturating_sub(1));
+    }
+
+    /// Indices into `rows` visible under the active filter, in list order.
+    fn visible_rows(&self) -> Vec<usize> {
+        if self.filter.is_empty() {
+            return (0..self.rows.len()).collect();
+        }
+        let needle = self.filter.to_lowercase();
+        self.rows
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| {
+                r.label.to_lowercase().contains(&needle)
+                    || r.detail.to_lowercase().contains(&needle)
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// The row under the cursor, honoring the active filter.
+    fn selected_row(&self) -> Option<&Row> {
+        self.visible_rows().get(self.cursor).map(|&i| &self.rows[i])
+    }
+
+    fn activate_selected(&self) -> Action {
+        match self.selected_row().map(|r| &r.kind) {
+            Some(RowKind::Session(dir)) => Action::Load(dir.clone()),
+            Some(RowKind::Recovery(take)) => Action::Restore(take.clone()),
+            None => Action::None,
+        }
     }
 
     fn reload(&mut self) {
@@ -118,33 +156,65 @@ impl SessionBrowser {
     }
 
     fn handle_list_key(&mut self, code: KeyCode) -> Action {
+        if self.searching {
+            return match code {
+                KeyCode::Esc => {
+                    self.filter.clear();
+                    self.cursor = 0;
+                    self.searching = false;
+                    Action::None
+                }
+                KeyCode::Backspace => {
+                    self.filter.pop();
+                    self.cursor = 0;
+                    Action::None
+                }
+                KeyCode::Char(c) => {
+                    self.filter.push(c);
+                    self.cursor = 0;
+                    Action::None
+                }
+                KeyCode::Up => {
+                    self.cursor = self.cursor.saturating_sub(1);
+                    Action::None
+                }
+                KeyCode::Down => {
+                    let n = self.visible_rows().len();
+                    self.cursor = (self.cursor + 1).min(n.saturating_sub(1));
+                    Action::None
+                }
+                KeyCode::Enter => self.activate_selected(),
+                _ => Action::None,
+            };
+        }
         match code {
             KeyCode::Up => {
                 self.cursor = self.cursor.saturating_sub(1);
                 Action::None
             }
             KeyCode::Down => {
-                self.cursor = (self.cursor + 1).min(self.rows.len().saturating_sub(1));
+                let n = self.visible_rows().len();
+                self.cursor = (self.cursor + 1).min(n.saturating_sub(1));
                 Action::None
             }
-            KeyCode::Enter => match self.rows.get(self.cursor).map(|r| &r.kind) {
-                Some(RowKind::Session(dir)) => Action::Load(dir.clone()),
-                Some(RowKind::Recovery(take)) => Action::Restore(take.clone()),
-                None => Action::None,
-            },
+            KeyCode::Enter => self.activate_selected(),
+            KeyCode::Char('/') => {
+                self.filter.clear();
+                self.cursor = 0;
+                self.searching = true;
+                Action::None
+            }
             KeyCode::Char('n') | KeyCode::Char('N') => Action::New,
             KeyCode::Char('s') | KeyCode::Char('S') => Action::Save,
             KeyCode::Char('a') | KeyCode::Char('A') => {
                 self.prompt_name("");
                 Action::None
             }
-            KeyCode::Char('d') | KeyCode::Char('D') => {
-                match self.rows.get(self.cursor).map(|r| &r.kind) {
-                    Some(RowKind::Session(dir)) => Action::Delete(dir.clone()),
-                    Some(RowKind::Recovery(take)) => Action::Discard(take.clone()),
-                    None => Action::None,
-                }
-            }
+            KeyCode::Char('d') | KeyCode::Char('D') => match self.selected_row().map(|r| &r.kind) {
+                Some(RowKind::Session(dir)) => Action::Delete(dir.clone()),
+                Some(RowKind::Recovery(take)) => Action::Discard(take.clone()),
+                None => Action::None,
+            },
             KeyCode::Esc | KeyCode::Char('j') | KeyCode::Char('J') => {
                 self.open = false;
                 Action::None
@@ -185,8 +255,11 @@ impl SessionBrowser {
         let area = centered_rect(64, f.area());
         f.render_widget(Clear, area);
         let title = match self.view {
-            View::List => " S E S S I O N S ",
-            View::NameInput => " S A V E   S E S S I O N ",
+            View::List if !self.filter.is_empty() => {
+                format!(" S E S S I O N S   filter: {} ", self.filter)
+            }
+            View::List => " S E S S I O N S ".to_owned(),
+            View::NameInput => " S A V E   S E S S I O N ".to_owned(),
         };
         let block = Block::default()
             .borders(Borders::ALL)
@@ -213,16 +286,23 @@ impl SessionBrowser {
             .split(area);
 
         let mut lines: Vec<Line> = Vec::with_capacity(self.rows.len() + 1);
+        let visible_idx = self.visible_rows();
         if self.rows.is_empty() {
             lines.push(Line::from(Span::styled(
                 "  (no saved sessions — press S to save the current one)",
+                Style::default().fg(DIM),
+            )));
+        } else if visible_idx.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "  (no matching sessions)",
                 Style::default().fg(DIM),
             )));
         }
         let visible = rows[0].height as usize;
         let offset = self.cursor.saturating_sub(visible.saturating_sub(1));
         let mut last_recovery = false;
-        for (i, row) in self.rows.iter().enumerate() {
+        for (pos, &i) in visible_idx.iter().enumerate() {
+            let row = &self.rows[i];
             let recovery = matches!(row.kind, RowKind::Recovery(_));
             if recovery && !last_recovery {
                 lines.push(Line::from(Span::styled(
@@ -231,7 +311,7 @@ impl SessionBrowser {
                 )));
             }
             last_recovery = recovery;
-            let selected = i == self.cursor;
+            let selected = pos == self.cursor;
             let (prefix, style) = if selected {
                 (
                     "▶ ",
@@ -269,18 +349,28 @@ impl SessionBrowser {
                 Span::styled(" save as  ", Style::default().fg(DIM)),
                 Span::styled("D", Style::default().fg(HOT)),
                 Span::styled(" delete/discard  ", Style::default().fg(DIM)),
+                Span::styled("/", Style::default().fg(AMBER)),
+                Span::styled(" search  ", Style::default().fg(DIM)),
                 Span::styled("Esc / J", Style::default().fg(AMBER)),
                 Span::styled(" close", Style::default().fg(DIM)),
             ]))
             .alignment(Alignment::Center),
             footer[0],
         );
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
+        let status = if self.searching {
+            Line::from(vec![
+                Span::styled("filter ", Style::default().fg(DIM)),
+                Span::styled(self.filter.clone(), Style::default().fg(CHROME)),
+                Span::styled("▌", Style::default().fg(ACCENT)),
+            ])
+        } else {
+            Line::from(Span::styled(
                 self.message.clone().unwrap_or_default(),
                 Style::default().fg(SAFE),
-            )))
-            .alignment(Alignment::Center),
+            ))
+        };
+        f.render_widget(
+            Paragraph::new(status).alignment(Alignment::Center),
             footer[1],
         );
     }
@@ -374,5 +464,36 @@ fn centered_rect(percent_x: u16, area: ratatui::layout::Rect) -> ratatui::layout
         y: area.y + y,
         width,
         height,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(label: &str, detail: &str) -> Row {
+        Row {
+            label: label.into(),
+            detail: detail.into(),
+            kind: RowKind::Session(PathBuf::from(format!("/s/{label}"))),
+        }
+    }
+
+    #[test]
+    fn session_filter_matches_label_and_detail() {
+        let mut b = SessionBrowser::new();
+        b.rows = vec![row("Rock", "3 tracks"), row("Jazz", "5 tracks")];
+        assert_eq!(b.visible_rows(), vec![0, 1]);
+
+        b.filter = "jazz".into();
+        assert_eq!(b.visible_rows(), vec![1]);
+        assert_eq!(b.selected_row().map(|r| r.label.as_str()), Some("Jazz"));
+
+        b.filter = "3 tracks".into();
+        assert_eq!(b.visible_rows(), vec![0]);
+
+        b.filter = "zzz".into();
+        assert!(b.visible_rows().is_empty());
+        assert!(b.selected_row().is_none());
     }
 }

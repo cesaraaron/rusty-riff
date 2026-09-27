@@ -35,6 +35,8 @@ the app asks for your input device, input channel, and output device.
 | `[` / `]` | Move the selected stage earlier or later |
 | `1`–`4` | Focus the chain, amp, timeline, or pedals |
 | `R` | Record / stop a dry take |
+| `/` | Search the preset, session, or import list |
+| `L` | Import library settings (path, only, subpaths) |
 | `N` | Calibrate the input level |
 | `Q` | Quit |
 

@@ -107,7 +107,7 @@ A preset is a snapshot of the whole rig. Press `P` to open the browser:
 | Key | Action |
 | --- | --- |
 | `↑` / `↓`, `Enter` | Navigate / apply (audio stays uninterrupted) |
-| type | Filter by name, description, or tag (`Backspace`; `Esc` clears) |
+| `/` | Search: type to filter by name, description, or tag (`Backspace`; `Esc` clears) |
 | `S` | Save the current rig as a preset |
 | `E` / `I` | Export / import a preset file |
 | `F` | Favorite the selected preset |
@@ -124,18 +124,31 @@ Where things live:
 - External IRs: `~/.config/rusty-riff/irs/`
 - Sessions: `~/.config/rusty-riff/sessions/`
 - Recoverable takes: `~/.config/rusty-riff/recovery/`
+- Import library: `~/.config/rusty-riff/practice.conf`
 
 Sessions bundle the rig plus timeline tracks (and clips the referenced IR) into a
 portable folder. Press `J` for the session browser: `N` new, `S` save, `A` save
-as, `Enter` load, `D` delete. Abandoned dry takes also appear here as
-"recoverable takes" you can restore into the current session.
+as, `Enter` load, `D` delete, and `/` to search. A new session starts on the
+factory rig. Abandoned dry takes also appear here as "recoverable takes" you can
+restore into the current session.
 
 ## Practice & recording
 
 - **Metronome** — `M` opens it. `←`/`→` set the tempo, `Space` starts/stops. The
   metronome is monitor-only and is never recorded.
 - **Backing track** — `B` opens the import browser (MP3 / WAV / FLAC). Selecting
-  a file adds it as a track at the playhead.
+  a file adds it as a track at the playhead; `/` searches the list. `L` opens the
+  **library** settings: the directory to fetch from, plus *only this path* and
+  *include subpaths* (off by default), persisted in
+  `~/.config/rusty-riff/practice.conf`:
+
+  ```text
+  path     = ~/Music/guitar
+  only     = false   # true = use only this path
+  subpaths = false   # recurse into subdirectories
+  ```
+
+  `$RUSTY_AMP_PRACTICE_DIR` still overrides `path`.
 - **Dry-take recording** — `R` arms and stops a dry (pre-rig) raw take. The take
   auto-plays and lands on the timeline; its row expands to the full pane while
   recording (it returns to the previous height when you stop). Backing tracks and

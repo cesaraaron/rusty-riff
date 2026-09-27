@@ -60,6 +60,25 @@ fn sync_board(params: &Params) -> Vec<bool> {
         .collect()
 }
 
+/// Reset the rig to factory defaults and repair the board + focus, mirroring the
+/// preset browser's "Default values" row. Used at startup and for a new session.
+fn apply_factory_defaults(
+    params: &Params,
+    board: &mut Vec<bool>,
+    focus: &mut Option<usize>,
+    panels: &Panels,
+) {
+    params.reset_to_defaults();
+    *board = sync_board(params);
+    if let Some(i) = *focus
+        && let Some(pi) = pedal_of(i)
+        && !board[pi]
+    {
+        *focus = Some(AMP_START);
+    }
+    *focus = ensure_focus_visible(*focus, board, panels, &params.chain_slots());
+}
+
 /// Lists devices, logs them, and returns the user's choice — either the saved
 /// selection (unless `force_prompt`) or a fresh pick from the modal. Returns
 /// `Ok(None)` if the user quits from the picker. `notice` is shown atop the modal
@@ -273,6 +292,9 @@ pub fn run(
     let mut preset_cursor = 0usize;
     // Type-to-filter query for the preset browser (empty = show everything).
     let mut preset_filter = String::new();
+    // `/` search mode: while active, every printable key appends to the filter
+    // and the S/D/E/I/F/X commands are disabled.
+    let mut preset_search = false;
     // A/B compare: the two most recently applied presets (by name), so `X` in the
     // browser flips between them without leaving the modal.
     let mut applied_preset: Option<String> = None;
@@ -300,6 +322,8 @@ pub fn run(
     let mut help_open = false;
     // Which top-level panels are shown (session-only; toggled with 1/2/3).
     let mut panels = Panels::all_visible();
+    // Open on the factory rig.
+    apply_factory_defaults(&params, &mut board, &mut focus, &panels);
     // Canonical timeline project, owned by the UI and preserved across device
     // changes; decoded playback buffers are rebuilt per engine.
     let mut practice_ui = PracticeUi::new();
@@ -778,6 +802,7 @@ pub fn run(
                         SessionAction::None => {}
                         SessionAction::New => {
                             practice_ui.new_session(&mut engine, &practice, &metronome, &capture);
+                            apply_factory_defaults(&params, &mut board, &mut focus, &panels);
                             session_browser.refresh();
                             session_browser.open = false;
                         }
@@ -1071,7 +1096,14 @@ pub fn run(
                             preset_open = false;
                             preset_filter.clear();
                         }
-                        KeyCode::Char('X') => {
+                        // `/` starts a fresh search (while searching, `/` is a
+                        // literal filter character, handled by the catch-all).
+                        KeyCode::Char('/') if !preset_search => {
+                            preset_search = true;
+                            preset_filter.clear();
+                            preset_cursor = 0;
+                        }
+                        KeyCode::Char('X') if !preset_search => {
                             // A/B: flip to the other of the two most recently applied
                             // presets (or apply the highlighted one if none yet),
                             // keeping the browser open.
@@ -1100,15 +1132,16 @@ pub fn run(
                                 );
                             }
                         }
-                        KeyCode::Char('S') => {
+                        KeyCode::Char('S') if !preset_search => {
                             preset_open = false;
+                            preset_search = false;
                             save_open = true;
                             save_name.clear();
                             save_desc.clear();
                             save_field = 0;
                             save_error = None;
                         }
-                        KeyCode::Char('D') if preset_cursor > 0 => {
+                        KeyCode::Char('D') if preset_cursor > 0 && !preset_search => {
                             if let Some(p) =
                                 selected_preset(&presets, &preset_filter, preset_cursor)
                                 && p.source == crate::preset::PresetSource::User
@@ -1119,7 +1152,7 @@ pub fn run(
                                     preset_cursor.min(visible_len(&presets, &preset_filter));
                             }
                         }
-                        KeyCode::Char('E') if preset_cursor > 0 => {
+                        KeyCode::Char('E') if preset_cursor > 0 && !preset_search => {
                             if let Some(p) =
                                 selected_preset(&presets, &preset_filter, preset_cursor)
                             {
@@ -1134,12 +1167,12 @@ pub fn run(
                                 path_open = Some(PathDialogKind::Export);
                             }
                         }
-                        KeyCode::Char('I') => {
+                        KeyCode::Char('I') if !preset_search => {
                             path_input.clear();
                             path_error = None;
                             path_open = Some(PathDialogKind::Import);
                         }
-                        KeyCode::Char('F') if preset_cursor > 0 => {
+                        KeyCode::Char('F') if preset_cursor > 0 && !preset_search => {
                             if let Some(p) =
                                 selected_preset(&presets, &preset_filter, preset_cursor)
                             {
@@ -1150,12 +1183,18 @@ pub fn run(
                                 crate::preset::save_favorites(&favorites);
                             }
                         }
-                        KeyCode::Char('P') => {
+                        KeyCode::Char('P') if !preset_search => {
                             preset_open = false;
                             preset_filter.clear();
+                            preset_search = false;
                         }
                         KeyCode::Esc => {
-                            if preset_filter.is_empty() {
+                            if preset_search {
+                                // Leave search mode and drop the filter.
+                                preset_filter.clear();
+                                preset_cursor = 0;
+                                preset_search = false;
+                            } else if preset_filter.is_empty() {
                                 preset_open = false;
                             } else {
                                 preset_filter.clear();
@@ -1168,8 +1207,11 @@ pub fn run(
                                     preset_cursor.min(visible_len(&presets, &preset_filter));
                             }
                         }
+                        // Lower-case (and any printable char while searching)
+                        // appends to the filter; the upper-case command arms
+                        // above are disabled during search.
                         KeyCode::Char(c)
-                            if !c.is_ascii_uppercase()
+                            if (!c.is_ascii_uppercase() || preset_search)
                                 && !key.modifiers.contains(KeyModifiers::CONTROL)
                                 && !key.modifiers.contains(KeyModifiers::ALT) =>
                         {

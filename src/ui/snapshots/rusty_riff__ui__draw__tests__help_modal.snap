@@ -23,7 +23,7 @@ expression: text
 ││SELECT A PEDAL — ←→                 ║Tools                                                                                      ║                                     ││
 ││                                    ║  P  preset browser (rig snapshot)                                                         ║                                     ││
 ││                                    ║  S  save current rig as preset                                                            ║                                     ││
-││                                    ║  J  session browser: new / save / save as / load                                          ║                                     ││
+││                                    ║  J  session browser: new / save / save as / load (/ search)                               ║                                     ││
 ││                                    ║  T  chromatic tuner                                                                       ║                                     ││
 ││                                    ║  M  practice metronome (+/− tempo, Space on/off)                                          ║                                     ││
 │└────────────────────────────────────║  N  calibrate input level                                                                 ║─────────────────────────────────────┘│
@@ -35,9 +35,9 @@ expression: text
                                       ║  , / .  toggle overdub / undo the last overdub layer                                      ║                                       
                                       ║  Q / Ctrl-C  quit                                                                         ║                                       
                                       ║Panels                                                                                     ║                                       
-                                      ║  B  import a track at the playhead (MP3 / WAV / FLAC)                                     ║                                       
+                                      ║  B  import a track (MP3/WAV/FLAC); / search · L library                                   ║                                       
                                       ║Preset browser                                                                             ║                                       
-                                      ║  type  filter by name / description (Backspace; Esc clears)                               ║                                       
+                                      ║  /  search: type to filter name / description (Backspace; Esc clears)                     ║                                       
                                       ║  ↑/↓  Enter  navigate / apply (audio uninterrupted)                                       ║                                       
                                       ║  S / E / I  save / export / import                                                        ║                                       
                                       ║  F  favorite the selected preset                                                          ║                                       

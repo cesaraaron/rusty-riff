@@ -13,6 +13,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use crossterm::event::KeyCode;
 use ratatui::{
@@ -208,6 +209,22 @@ impl WaveGlyphs {
     }
 }
 
+/// How long a transient status message stays on screen.
+const NOTICE_TTL: Duration = Duration::from_secs(5);
+
+/// A transient status message with the time it was raised, so the header can
+/// retire it after [`NOTICE_TTL`].
+struct Notice {
+    text: String,
+    at: Instant,
+}
+
+impl Notice {
+    fn expired(&self, now: Instant) -> bool {
+        now.duration_since(self.at) >= NOTICE_TTL
+    }
+}
+
 /// All practice UI state, owned by the UI thread. Persists across a device
 /// change: the [`Session`] and its recovery paths are the source of truth, and
 /// decoded caches are rebuilt.
@@ -219,7 +236,16 @@ pub(super) struct PracticeUi {
     path_input: String,
     /// 0 = file list, 1 = path field.
     field: usize,
-    message: Option<String>,
+    /// Live filter over the file list while `/` search is active.
+    browser_filter: String,
+    searching: bool,
+    /// The Library sub-view (edit + persist the import path and its flags).
+    library_open: bool,
+    library_field: usize,
+    library_path: String,
+    library_only: bool,
+    library_subpaths: bool,
+    message: Option<Notice>,
     sample_rate: f32,
     decodes: Vec<PendingDecode>,
 
@@ -262,6 +288,13 @@ impl PracticeUi {
             files: Vec::new(),
             path_input: String::new(),
             field: 0,
+            browser_filter: String::new(),
+            searching: false,
+            library_open: false,
+            library_field: 0,
+            library_path: String::new(),
+            library_only: false,
+            library_subpaths: false,
             message: None,
             sample_rate: 48_000.0,
             decodes: Vec::new(),
@@ -332,13 +365,54 @@ impl PracticeUi {
         }
     }
 
-    /// Open the browser, rescanning the standard practice locations.
+    /// Open the browser, rescanning the configured practice locations.
     pub(super) fn open_browser(&mut self) {
         self.files = scan();
         self.browser_cursor = 0;
         self.field = 0;
+        self.browser_filter.clear();
+        self.searching = false;
+        self.library_open = false;
         self.message = None;
         self.browser_open = true;
+    }
+
+    /// Rescan the library after a settings change, keeping the cursor in range.
+    fn rescan_files(&mut self) {
+        self.files = scan();
+        self.browser_cursor = self.browser_cursor.min(self.files.len().saturating_sub(1));
+    }
+
+    /// Open the Library settings sub-view, seeded from the saved config.
+    fn open_library(&mut self) {
+        let cfg = load_import_config();
+        self.library_path = cfg
+            .path
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        self.library_only = cfg.only;
+        self.library_subpaths = cfg.subpaths;
+        self.library_field = 0;
+        self.library_open = true;
+        self.searching = false;
+    }
+
+    /// Persist the Library settings and rescan.
+    fn save_library(&mut self) {
+        let path = self.library_path.trim();
+        let cfg = ImportConfig {
+            path: (!path.is_empty()).then(|| PathBuf::from(path)),
+            only: self.library_only,
+            subpaths: self.library_subpaths,
+        };
+        match save_import_config(&cfg) {
+            Ok(()) => {
+                self.library_open = false;
+                self.rescan_files();
+                self.note("Library saved");
+            }
+            Err(e) => self.note(format!("Library save failed: {e}")),
+        }
     }
 
     /// Start a background decode of `path`, targeting `id`.
@@ -382,7 +456,7 @@ impl PracticeUi {
         );
         self.selection = Selection::Track(id);
         self.start_decode(id, TrackKind::Import, path);
-        self.message = Some("Loading…".to_owned());
+        self.note("Loading…".to_owned());
     }
 
     /// Poll background decodes and capture results once per UI tick. Returns
@@ -394,6 +468,15 @@ impl PracticeUi {
         capture: &CaptureState,
         calibration: &InputCalibration,
     ) -> bool {
+        // Retire a stale status message.
+        if self
+            .message
+            .as_ref()
+            .is_some_and(|n| n.expired(Instant::now()))
+        {
+            self.message = None;
+        }
+
         let mut touched = false;
         touched |= self.poll_decodes(engine);
         touched |= self.poll_capture(engine, capture, calibration);
@@ -480,7 +563,7 @@ impl PracticeUi {
             self.set_error(pending.id, e.to_string());
             return;
         }
-        self.message = Some(format!("Loaded {name}"));
+        self.note(format!("Loaded {name}"));
     }
 
     fn poll_acks(&mut self, engine: &mut AudioEngine) -> bool {
@@ -525,7 +608,7 @@ impl PracticeUi {
             self.session.remove(result.generation);
             self.reselect_after_removal();
             self.sanitize_zoom();
-            self.message = Some("Empty take discarded".to_owned());
+            self.note("Empty take discarded".to_owned());
             return touched;
         };
         let frames = player_track.frames();
@@ -596,7 +679,7 @@ impl PracticeUi {
         } else {
             ""
         };
-        self.message = Some(format!("Take ready{note}{meta_note}"));
+        self.note(format!("Take ready{note}{meta_note}"));
         touched
     }
 
@@ -604,7 +687,7 @@ impl PracticeUi {
         if let Some(track) = self.session.track_mut(id) {
             track.lifecycle = TrackLifecycle::Error(msg.clone());
         }
-        self.message = Some(msg);
+        self.note(msg);
     }
 
     // ── Focused-control edits (called from the key handler) ─────────────────────
@@ -690,7 +773,7 @@ impl PracticeUi {
 
     pub(super) fn cycle_seek_step(&mut self, direction: i32) {
         let step = self.session.cycle_seek_step(direction);
-        self.message = Some(format!("Step: {}s", format_step(step)));
+        self.note(format!("Step: {}s", format_step(step)));
     }
 
     /// Shared time-axis length for the transport, ruler, and waveform rows: the
@@ -733,7 +816,7 @@ impl PracticeUi {
                 .copied()
                 .or(Some(cur)),
         };
-        self.message = Some(self.view_label());
+        self.note(self.view_label());
     }
 
     /// Zoom the time axis out; past the largest window returns to fit.
@@ -742,7 +825,7 @@ impl PracticeUi {
             None => None,
             Some(cur) => ZOOM_WINDOWS.iter().find(|&&w| w > cur + 1e-9).copied(),
         };
-        self.message = Some(self.view_label());
+        self.note(self.view_label());
     }
 
     fn view_label(&self) -> String {
@@ -755,13 +838,13 @@ impl PracticeUi {
     /// `Shift+Tab`: cycle the waveform glyph family.
     pub(super) fn cycle_glyphs(&mut self) {
         self.wave_glyphs = self.wave_glyphs.next();
-        self.message = Some(format!("Waveform: {}", self.wave_glyphs.label()));
+        self.note(format!("Waveform: {}", self.wave_glyphs.label()));
     }
 
     /// `Shift+A`: toggle the waveform amplitude mapping.
     pub(super) fn cycle_gain(&mut self) {
         self.wave_gain = self.wave_gain.next();
-        self.message = Some(format!("Waveform gain: {}", self.wave_gain.label()));
+        self.note(format!("Waveform gain: {}", self.wave_gain.label()));
     }
 
     /// Set the loop in-point at the playhead, opening a one-second region if the
@@ -862,11 +945,11 @@ impl PracticeUi {
             .filter(|t| t.is_ready())
             .count();
         if ready >= MAX_TRACKS {
-            self.message = Some(format!("Timeline is full ({MAX_TRACKS} tracks)"));
+            self.note(format!("Timeline is full ({MAX_TRACKS} tracks)"));
             return;
         }
         let Some(cmd) = &self.capture_cmd else {
-            self.message = Some("Capture writer unavailable".to_owned());
+            self.note("Capture writer unavailable".to_owned());
             return;
         };
         let id = self.session.alloc_id();
@@ -912,7 +995,7 @@ impl PracticeUi {
             })
             .is_err()
         {
-            self.message = Some("Capture writer unavailable".to_owned());
+            self.note("Capture writer unavailable".to_owned());
             self.session.remove(id);
             self.reselect_after_removal();
             return;
@@ -923,7 +1006,7 @@ impl PracticeUi {
         capture.arm(id);
         // Start transport if paused so the take follows the playhead.
         practice.playing.store(true, Relaxed);
-        self.message = Some("Recording…".to_owned());
+        self.note("Recording…".to_owned());
     }
 
     fn finalize_capture(&mut self, capture: &CaptureState, practice: &Practice) {
@@ -936,7 +1019,7 @@ impl PracticeUi {
         if let Some(z) = self.record_zoom.take() {
             self.row_zoom = z;
         }
-        self.message = Some("Finalizing take…".to_owned());
+        self.note("Finalizing take…".to_owned());
     }
 
     /// Abort an in-flight take (device change / quit).
@@ -961,7 +1044,15 @@ impl PracticeUi {
     }
 
     pub(super) fn set_message(&mut self, msg: String) {
-        self.message = Some(msg);
+        self.note(msg);
+    }
+
+    /// Raise a transient status message in the timeline header.
+    fn note(&mut self, text: impl Into<String>) {
+        self.message.replace(Notice {
+            text: text.into(),
+            at: Instant::now(),
+        });
     }
 
     // ── Session persistence ─────────────────────────────────────────────────────
@@ -995,7 +1086,7 @@ impl PracticeUi {
         self.record_zoom = None;
         practice.reset();
         metronome.active.store(false, Relaxed);
-        self.message = Some("New session".to_owned());
+        self.note("New session".to_owned());
     }
 
     /// Save the current project to `ctx.dir`, copying every ready track's source
@@ -1237,7 +1328,7 @@ impl PracticeUi {
         metronome.set_bpm(manifest.metronome.bpm);
         metronome.active.store(manifest.metronome.enabled, Relaxed);
 
-        self.message = Some(match ir_error {
+        self.note(match ir_error {
             Some(note) => format!("Loaded {} · {note}", self.session.name()),
             None => format!("Loaded {}", self.session.name()),
         });
@@ -1254,7 +1345,7 @@ impl PracticeUi {
             .iter()
             .any(|t| t.asset.as_ref().is_some_and(|a| a.path == take.wav))
         {
-            self.message = Some("That take is already in the session".to_owned());
+            self.note("That take is already in the session".to_owned());
             return;
         }
         let ready = self
@@ -1264,7 +1355,7 @@ impl PracticeUi {
             .filter(|t| t.is_ready())
             .count();
         if ready >= MAX_TRACKS {
-            self.message = Some(format!("Timeline is full ({MAX_TRACKS} tracks)"));
+            self.note(format!("Timeline is full ({MAX_TRACKS} tracks)"));
             return;
         }
         let id = self.session.alloc_id();
@@ -1283,7 +1374,7 @@ impl PracticeUi {
         );
         self.selection = Selection::Track(id);
         self.start_decode(id, TrackKind::RawTake, take.wav.clone());
-        self.message = Some(format!("Restoring {}", take.label()));
+        self.note(format!("Restoring {}", take.label()));
     }
 
     /// Build a frozen export job for the unmuted raw takes. Returns a
@@ -1366,28 +1457,61 @@ impl PracticeUi {
     // ── Browser / gain modal input ──────────────────────────────────────────────
 
     pub(super) fn handle_browser_key(&mut self, code: KeyCode, practice: &Practice) -> bool {
+        if self.library_open {
+            self.handle_library_key(code);
+            return false;
+        }
+        if self.searching {
+            match code {
+                KeyCode::Esc => {
+                    self.browser_filter.clear();
+                    self.searching = false;
+                }
+                KeyCode::Backspace => {
+                    self.browser_filter.pop();
+                    self.browser_cursor = 0;
+                }
+                KeyCode::Char(c) => {
+                    self.browser_filter.push(c);
+                    self.browser_cursor = 0;
+                }
+                KeyCode::Up => self.browser_cursor = self.browser_cursor.saturating_sub(1),
+                KeyCode::Down => {
+                    let n = self.visible_file_indices().len();
+                    self.browser_cursor = (self.browser_cursor + 1).min(n.saturating_sub(1));
+                }
+                KeyCode::Enter => self.import_selected(practice),
+                _ => {}
+            }
+            return false;
+        }
         match code {
             KeyCode::Up if self.field == 0 => {
                 self.browser_cursor = self.browser_cursor.saturating_sub(1);
             }
             KeyCode::Down if self.field == 0 => {
-                self.browser_cursor =
-                    (self.browser_cursor + 1).min(self.files.len().saturating_sub(1));
+                let n = self.visible_file_indices().len();
+                self.browser_cursor = (self.browser_cursor + 1).min(n.saturating_sub(1));
             }
             KeyCode::Tab => self.field = 1 - self.field,
+            // `/` starts a fresh filter over the file list.
+            KeyCode::Char('/') if self.field == 0 => {
+                self.browser_filter.clear();
+                self.browser_cursor = 0;
+                self.searching = true;
+            }
+            KeyCode::Char('l') | KeyCode::Char('L') if self.field == 0 => self.open_library(),
             KeyCode::Enter => {
                 if self.field == 1 {
                     let p = self.path_input.trim().to_owned();
                     if p.is_empty() {
-                        self.message = Some("Type a file path first".to_owned());
+                        self.note("Type a file path first".to_owned());
                     } else {
                         self.import_at_playhead(PathBuf::from(p), practice);
                         self.browser_open = false;
                     }
-                } else if let Some(file) = self.files.get(self.browser_cursor) {
-                    let path = file.path.clone();
-                    self.import_at_playhead(path, practice);
-                    self.browser_open = false;
+                } else {
+                    self.import_selected(practice);
                 }
             }
             KeyCode::Backspace if self.field == 1 => {
@@ -1402,6 +1526,58 @@ impl PracticeUi {
             _ => {}
         }
         false
+    }
+
+    /// Indices into `files` visible under the active filter, in list order.
+    fn visible_file_indices(&self) -> Vec<usize> {
+        if self.browser_filter.is_empty() {
+            return (0..self.files.len()).collect();
+        }
+        let needle = self.browser_filter.to_lowercase();
+        self.files
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| {
+                f.label.to_lowercase().contains(&needle)
+                    || f.detail.to_lowercase().contains(&needle)
+                    || f.path.to_string_lossy().to_lowercase().contains(&needle)
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// Import the highlighted file, honoring the active filter.
+    fn import_selected(&mut self, practice: &Practice) {
+        let path = self
+            .visible_file_indices()
+            .get(self.browser_cursor)
+            .map(|&i| self.files[i].path.clone());
+        if let Some(path) = path {
+            self.import_at_playhead(path, practice);
+            self.browser_open = false;
+            self.searching = false;
+        }
+    }
+
+    /// Library settings sub-view: edit the import path and its flags.
+    fn handle_library_key(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Esc => self.library_open = false,
+            KeyCode::Tab | KeyCode::Down => self.library_field = (self.library_field + 1) % 3,
+            KeyCode::BackTab | KeyCode::Up => self.library_field = (self.library_field + 2) % 3,
+            KeyCode::Char(' ') if self.library_field == 0 => self.library_path.push(' '),
+            KeyCode::Char(' ') => match self.library_field {
+                1 => self.library_only = !self.library_only,
+                2 => self.library_subpaths = !self.library_subpaths,
+                _ => {}
+            },
+            KeyCode::Backspace if self.library_field == 0 => {
+                self.library_path.pop();
+            }
+            KeyCode::Char(c) if self.library_field == 0 => self.library_path.push(c),
+            KeyCode::Enter => self.save_library(),
+            _ => {}
+        }
     }
 
     pub(super) fn open_gain_edit(&mut self) {
@@ -1706,7 +1882,7 @@ impl PracticeUi {
             ));
         }
         if let Some(msg) = &self.message {
-            transport.push(Span::styled(msg.clone(), Style::default().fg(WARN)));
+            transport.push(Span::styled(msg.text.clone(), Style::default().fg(WARN)));
         }
         f.render_widget(Paragraph::new(Line::from(transport)), area);
     }
@@ -2086,22 +2262,37 @@ impl PracticeUi {
     pub(super) fn render_browser(&self, f: &mut Frame) {
         let area = centered_rect(62, f.area());
         f.render_widget(Clear, area);
+        let title = if self.library_open {
+            " I M P O R T   L I B R A R Y ".to_owned()
+        } else if self.browser_filter.is_empty() {
+            " I M P O R T   T R A C K ".to_owned()
+        } else {
+            format!(
+                " I M P O R T   T R A C K   filter: {} ",
+                self.browser_filter
+            )
+        };
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Double)
             .border_style(Style::default().fg(ACCENT))
             .title(Span::styled(
-                " I M P O R T   T R A C K ",
+                title,
                 Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
             ))
             .style(Style::default().bg(Color::Black));
         let inner = block.inner(area);
         f.render_widget(block, area);
 
+        if self.library_open {
+            self.render_library(f, inner);
+            return;
+        }
+
         let rows = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(1), // intro
+                Constraint::Length(1), // intro / filter
                 Constraint::Length(1), // path field
                 Constraint::Min(1),    // file list
                 Constraint::Length(1), // hint
@@ -2109,16 +2300,27 @@ impl PracticeUi {
             ])
             .split(inner);
 
-        f.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled("Enter", Style::default().fg(AMBER)),
-                Span::styled(
-                    " adds the file as a new track at the playhead",
-                    Style::default().fg(DIM),
-                ),
-            ])),
-            rows[0],
-        );
+        if self.searching {
+            f.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled("filter ", Style::default().fg(DIM)),
+                    Span::styled(self.browser_filter.clone(), Style::default().fg(CHROME)),
+                    Span::styled("▌", Style::default().fg(ACCENT)),
+                ])),
+                rows[0],
+            );
+        } else {
+            f.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled("Enter", Style::default().fg(AMBER)),
+                    Span::styled(
+                        " adds the file as a new track at the playhead",
+                        Style::default().fg(DIM),
+                    ),
+                ])),
+                rows[0],
+            );
+        }
 
         let path_focus = if self.field == 1 { "▌" } else { " " };
         f.render_widget(
@@ -2141,16 +2343,19 @@ impl PracticeUi {
             rows[1],
         );
 
-        let mut lines: Vec<Line> = Vec::with_capacity(self.files.len());
-        for (i, file) in self.files.iter().enumerate() {
-            let selected = i == self.browser_cursor && self.field == 0;
-            lines.push(file_entry(file, selected));
+        let visible_idx = self.visible_file_indices();
+        let mut lines: Vec<Line> = Vec::with_capacity(visible_idx.len());
+        for (pos, &i) in visible_idx.iter().enumerate() {
+            let selected = pos == self.browser_cursor && self.field == 0 && !self.searching;
+            lines.push(file_entry(&self.files[i], selected));
         }
-        if self.files.is_empty() {
-            lines.push(Line::from(Span::styled(
-                "  (no audio files found — type a path above, or set RUSTY_AMP_PRACTICE_DIR)",
-                Style::default().fg(DIM),
-            )));
+        if visible_idx.is_empty() {
+            let text = if self.browser_filter.is_empty() {
+                "  (no audio files found — L sets the library, or type a path above)"
+            } else {
+                "  (no matching files)"
+            };
+            lines.push(Line::from(Span::styled(text, Style::default().fg(DIM))));
         }
         let visible = rows[2].height as usize;
         let offset = self
@@ -2161,24 +2366,127 @@ impl PracticeUi {
             rows[2],
         );
 
-        f.render_widget(
-            Paragraph::new(Line::from(vec![
+        let footer = if self.searching {
+            vec![
+                Span::styled("type", Style::default().fg(AMBER)),
+                Span::styled(" filter  ", Style::default().fg(DIM)),
+                Span::styled("Backspace", Style::default().fg(AMBER)),
+                Span::styled(" edit  ", Style::default().fg(DIM)),
+                Span::styled("Esc", Style::default().fg(AMBER)),
+                Span::styled(" clear", Style::default().fg(DIM)),
+            ]
+        } else {
+            vec![
                 Span::styled("↑/↓", Style::default().fg(AMBER)),
                 Span::styled(" files  ", Style::default().fg(DIM)),
+                Span::styled("/", Style::default().fg(AMBER)),
+                Span::styled(" search  ", Style::default().fg(DIM)),
                 Span::styled("Tab", Style::default().fg(AMBER)),
                 Span::styled(" path  ", Style::default().fg(DIM)),
+                Span::styled("L", Style::default().fg(AMBER)),
+                Span::styled(" library  ", Style::default().fg(DIM)),
                 Span::styled("Esc / B", Style::default().fg(AMBER)),
                 Span::styled(" close", Style::default().fg(DIM)),
-            ]))
-            .alignment(Alignment::Center),
+            ]
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(footer)).alignment(Alignment::Center),
             rows[3],
         );
 
-        let msg = self.message.clone().unwrap_or_default();
+        let msg = self
+            .message
+            .as_ref()
+            .map(|n| n.text.clone())
+            .unwrap_or_default();
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(msg, Style::default().fg(WARN))))
                 .alignment(Alignment::Center),
             rows[4],
+        );
+    }
+
+    /// The Library settings sub-view: the import path and its two flags.
+    fn render_library(&self, f: &mut Frame, area: Rect) {
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1), // path label
+                Constraint::Length(2), // path input
+                Constraint::Length(1), // only
+                Constraint::Length(1), // subpaths
+                Constraint::Min(1),    // spacer
+                Constraint::Length(1), // hint
+            ])
+            .split(area);
+
+        let field_style = |active: bool| {
+            if active {
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(DIM)
+            }
+        };
+
+        f.render_widget(
+            Paragraph::new(Span::styled(
+                "Library path (empty = the usual folders):",
+                field_style(self.library_field == 0),
+            )),
+            rows[0],
+        );
+        f.render_widget(
+            Paragraph::new(Span::styled(
+                if self.library_path.is_empty() {
+                    "(type a directory…)".to_owned()
+                } else {
+                    self.library_path.clone()
+                },
+                Style::default().fg(if self.library_path.is_empty() {
+                    DIM
+                } else {
+                    CHROME
+                }),
+            ))
+            .block(Block::default().borders(Borders::BOTTOM).border_style(
+                if self.library_field == 0 {
+                    Style::default().fg(ACCENT)
+                } else {
+                    Style::default().fg(DIM)
+                },
+            )),
+            rows[1],
+        );
+
+        let mark = |on: bool| if on { "[x]" } else { "[ ]" };
+        f.render_widget(
+            Paragraph::new(Span::styled(
+                format!("{} Only this path", mark(self.library_only)),
+                field_style(self.library_field == 1),
+            )),
+            rows[2],
+        );
+        f.render_widget(
+            Paragraph::new(Span::styled(
+                format!("{} Include subpaths", mark(self.library_subpaths)),
+                field_style(self.library_field == 2),
+            )),
+            rows[3],
+        );
+
+        f.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("↑/↓", Style::default().fg(AMBER)),
+                Span::styled(" field  ", Style::default().fg(DIM)),
+                Span::styled("Space", Style::default().fg(AMBER)),
+                Span::styled(" toggle  ", Style::default().fg(DIM)),
+                Span::styled("Enter", Style::default().fg(AMBER)),
+                Span::styled(" save  ", Style::default().fg(DIM)),
+                Span::styled("Esc", Style::default().fg(AMBER)),
+                Span::styled(" cancel", Style::default().fg(DIM)),
+            ]))
+            .alignment(Alignment::Center),
+            rows[5],
         );
     }
 
@@ -2494,20 +2802,109 @@ fn truncate(s: &str, n: usize) -> String {
 }
 
 /// Standard practice locations, scanned for audio files.
+/// User import-library settings, persisted in `~/.config/rusty-riff/practice.conf`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct ImportConfig {
+    /// Base directory to fetch tracks from.
+    path: Option<PathBuf>,
+    /// Scan only `path` (skip the Music/Desktop/`.` defaults).
+    only: bool,
+    /// Recurse into `path`'s subdirectories (off by default).
+    subpaths: bool,
+}
+
+fn import_config_path() -> Option<PathBuf> {
+    dirs::home_dir().map(|h| h.join(".config").join("rusty-riff").join("practice.conf"))
+}
+
+/// Parse `practice.conf`. Unknown keys and `#` comments are ignored.
+fn parse_import_config(text: &str) -> ImportConfig {
+    let mut cfg = ImportConfig::default();
+    for line in text.lines() {
+        let line = line.split('#').next().unwrap_or("").trim();
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        match key.trim() {
+            "path" | "dir" => {
+                let value = value.trim();
+                if !value.is_empty() {
+                    cfg.path = Some(PathBuf::from(value));
+                }
+            }
+            "only" => cfg.only = truthy(value.trim()),
+            "subpaths" => cfg.subpaths = truthy(value.trim()),
+            _ => {}
+        }
+    }
+    cfg
+}
+
+fn load_import_config() -> ImportConfig {
+    import_config_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|t| parse_import_config(&t))
+        .unwrap_or_default()
+}
+
+fn save_import_config(cfg: &ImportConfig) -> std::io::Result<()> {
+    let path = import_config_path()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no config dir"))?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut text = String::new();
+    if let Some(p) = &cfg.path {
+        text.push_str(&format!("path = {}\n", p.display()));
+    }
+    text.push_str(&format!("only = {}\n", cfg.only));
+    text.push_str(&format!("subpaths = {}\n", cfg.subpaths));
+    std::fs::write(path, text)
+}
+
+fn truthy(value: &str) -> bool {
+    matches!(
+        value.to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
+/// Expand a leading `~` against the home directory.
+fn expand_tilde(path: &Path) -> PathBuf {
+    if let Ok(rest) = path.strip_prefix("~")
+        && let Some(home) = dirs::home_dir()
+    {
+        return home.join(rest);
+    }
+    path.to_path_buf()
+}
+
 fn scan() -> Vec<TrackFile> {
-    let mut roots: Vec<PathBuf> = Vec::new();
-    if let Ok(dir) = std::env::var("RUSTY_AMP_PRACTICE_DIR") {
-        roots.push(PathBuf::from(dir));
+    let cfg = load_import_config();
+    // `$RUSTY_AMP_PRACTICE_DIR` overrides the configured base path.
+    let base = std::env::var("RUSTY_AMP_PRACTICE_DIR")
+        .ok()
+        .map(PathBuf::from)
+        .or_else(|| cfg.path.clone());
+    let depth = if cfg.subpaths { 3 } else { 0 };
+
+    let mut roots: Vec<(PathBuf, usize)> = Vec::new();
+    if let Some(base) = base {
+        roots.push((expand_tilde(&base), depth));
     }
-    if let Some(home) = dirs::home_dir() {
-        roots.push(home.join("Music"));
-        roots.push(home.join("Desktop"));
+    // The usual locations stay unless the user restricted the library to one
+    // path (or there is no configured path at all).
+    if !cfg.only || roots.is_empty() {
+        if let Some(home) = dirs::home_dir() {
+            roots.push((home.join("Music"), 3));
+            roots.push((home.join("Desktop"), 3));
+        }
+        roots.push((PathBuf::from("."), 3));
     }
-    roots.push(PathBuf::from("."));
 
     let mut out: Vec<TrackFile> = Vec::new();
-    for root in roots {
-        collect_audio(&root, 3, &mut out);
+    for (root, depth) in roots {
+        collect_audio(&root, depth, &mut out);
     }
     out.sort_by(|a, b| a.label.cmp(&b.label).then(a.path.cmp(&b.path)));
     out.dedup_by(|a, b| a.path == b.path);
@@ -3183,5 +3580,59 @@ mod tests {
         ui.session.remove(1);
         ui.sanitize_zoom();
         assert_eq!(ui.row_zoom, RowZoom::Normal);
+    }
+
+    #[test]
+    fn notices_expire_after_the_ttl() {
+        let n = Notice {
+            text: "hi".into(),
+            at: Instant::now(),
+        };
+        assert!(!n.expired(Instant::now()));
+        assert!(n.expired(Instant::now() + NOTICE_TTL));
+    }
+
+    #[test]
+    fn import_config_parses_flags_and_comments() {
+        let cfg =
+            parse_import_config("path = ~/Music/guitar\nonly = yes\nsubpaths = true  # recurse\n");
+        assert_eq!(cfg.path.as_deref(), Some(Path::new("~/Music/guitar")));
+        assert!(cfg.only);
+        assert!(cfg.subpaths);
+
+        let cfg = parse_import_config("only = false\nsubpaths = 0\n");
+        assert_eq!(cfg.path, None);
+        assert!(!cfg.only && !cfg.subpaths);
+    }
+
+    #[test]
+    fn expand_tilde_uses_the_home_dir() {
+        let expanded = expand_tilde(Path::new("~/guitar"));
+        assert!(expanded.ends_with("guitar"));
+        assert!(!expanded.to_string_lossy().starts_with('~'));
+        // Relative paths are untouched.
+        assert_eq!(expand_tilde(Path::new("tracks")), PathBuf::from("tracks"));
+    }
+
+    #[test]
+    fn browser_filter_matches_label_and_path() {
+        let mut ui = PracticeUi::new();
+        ui.files = vec![
+            TrackFile {
+                path: PathBuf::from("/a/backing_track.wav"),
+                label: "backing_track".into(),
+                detail: "/a".into(),
+            },
+            TrackFile {
+                path: PathBuf::from("/b/solo.flac"),
+                label: "solo".into(),
+                detail: "/b".into(),
+            },
+        ];
+        assert_eq!(ui.visible_file_indices(), vec![0, 1]);
+        ui.browser_filter = "solo".into();
+        assert_eq!(ui.visible_file_indices(), vec![1]);
+        ui.browser_filter = "/A/".into();
+        assert_eq!(ui.visible_file_indices(), vec![0]);
     }
 }

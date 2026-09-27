@@ -148,6 +148,8 @@ pub(super) fn render_preset_modal(
     let mut footer_spans = vec![
         Span::styled("↑/↓", Style::default().fg(AMBER)),
         Span::styled(" navigate  ", Style::default().fg(DIM)),
+        Span::styled("/", Style::default().fg(AMBER)),
+        Span::styled(" search  ", Style::default().fg(DIM)),
         Span::styled("Enter", Style::default().fg(AMBER)),
         Span::styled(" apply  ", Style::default().fg(DIM)),
         Span::styled("S", Style::default().fg(AMBER)),
