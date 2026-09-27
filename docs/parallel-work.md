@@ -23,6 +23,10 @@ No branch in this trio touches `src/dsp/**`, `src/preset.rs`,
 `src/ui/config.rs`, or the baseline, so they cannot conflict with each other and
 CI's fidelity `--check` stays valid.
 
+> **Status:** the first run of this trio landed on `main` together
+> (bench + guide + preset search). Keep the table below as the template for the
+> next batch.
+
 ## Setting up the worktrees
 
 From the main checkout (replace `../rusty-riff-x` with any path outside this

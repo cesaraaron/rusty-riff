@@ -93,10 +93,12 @@ Finding and comparing tones should not be scrolling.
 (backward-compatible TOML, defaulted); an A/B compare that flips between two
 selected presets without leaving the modal.
 
-**Status — partial.** **Favorites** are done: `F` in the preset browser stars the
-selected preset (a `★` column), persisted by name in
-`~/.config/rusty-riff/favorites.txt` (`preset::load_favorites`/`save_favorites`).
-**Search/filter, tags, and A/B compare remain.**
+**Status — favorites + search done.** `F` in the preset browser stars the selected
+preset (a `★` column), persisted by name in
+`~/.config/rusty-riff/favorites.txt`. **Type-to-filter** is in: while the modal is
+open, printable (lower-case) keys filter by name/description, `Backspace` deletes,
+`Esc` clears then closes, and commands are the upper-case letters. **Tags and
+A/B compare remain.**
 
 **Acceptance.** Snapshot tests for the modal; loading/search round-trips;
 favorites persist.
@@ -155,7 +157,11 @@ note `DspChain::new` is ~1.7 s in debug). Regressions should be visible.
 **Scope.** Benchmarks for the callback cost per stage and for `CabBank::new`
 (construction), runnable locally and (optionally) in CI with generous thresholds.
 
-**Acceptance.** Baseline numbers recorded; a synthetic regression is caught.
+**Status — done.** `examples/bench.rs` (dependency-free) times `DspChain::new`,
+`CabBank::new`, and `process_block` on representative presets, printing µs/block
+and % of the 10 ms realtime budget. Measured on the maintainer rig: chain build
+~222 ms, cab build ~221 ms, `process_block` 3.3–3.6 % of realtime. **Not yet a CI
+gate** (thresholds would be machine-dependent).
 
 ### 4.3 Docs site or generated user guide
 
@@ -166,16 +172,20 @@ README plus the in-app `K` overlay. A generated guide would help onboarding.
 mdBook guide mirroring the README + `K` reference. No docs-parity rule beyond
 keeping the README honest.
 
-**Acceptance.** Builds in CI; covers build, calibration, chain, presets, keys.
+**Status — done.** `docs/guide.md` covers build/run, calibration (`N`), the
+signal chain, presets (browser, favorites, search, save/export/import, config
+paths), practice/recording, and plugins; linked from the README. A hosted docs
+site was not re-added.
 
 ---
 
 ## Recommended order
 
-_4.1 CI is done (see above)._ Remaining, in order:
+_4.1 CI, 4.2 benchmarks, 4.3 guide, and 3.1 favorites+search are done (see
+above)._ Remaining, in order:
 
 1. **1.1 MIDI + expression** — highest playability payoff; unlocks the wah.
-2. **3.1 Preset browser** — quality-of-life as the preset set grows.
-3. **2.1 Looper** — the biggest new capability; benefits from CI + browser first.
+2. **3.1 remainder** — preset **tags** and **A/B compare**.
+3. **2.1 Looper** — the biggest new capability.
 
 Items 1.2, 3.2, 3.3, 4.2, 4.3 are smaller and can slot in around these.
