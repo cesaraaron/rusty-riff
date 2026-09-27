@@ -162,9 +162,10 @@ keeping the README honest.
 
 ## Recommended order
 
-1. **4.1 CI** — cheap, protects everything already built.
-2. **1.1 MIDI + expression** — highest playability payoff; unlocks the wah.
-3. **3.1 Preset browser** — quality-of-life as the preset set grows.
-4. **2.1 Looper** — the biggest new capability; benefits from CI + browser first.
+_4.1 CI is done (see above)._ Remaining, in order:
+
+1. **1.1 MIDI + expression** — highest playability payoff; unlocks the wah.
+2. **3.1 Preset browser** — quality-of-life as the preset set grows.
+3. **2.1 Looper** — the biggest new capability; benefits from CI + browser first.
 
 Items 1.2, 3.2, 3.3, 4.2, 4.3 are smaller and can slot in around these.
