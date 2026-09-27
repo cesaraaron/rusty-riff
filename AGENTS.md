@@ -90,7 +90,8 @@ The user-facing guide is the in-app help overlay (`K`) plus the README. The
 design/as-built notes live at the repository root (`fidelity-plan.md`,
 `fidelity-implement.md`, `timeline-sessions-plan.md`,
 `timeline-sessions-implement.md`), and the off-path product/engineering roadmap
-is `roadmap-next.md`. There is no separate docs website.
+is `roadmap-next.md`. For running parallel feature branches/agents, see
+`docs/parallel-work.md`. There is no separate docs website.
 
 ---
 
