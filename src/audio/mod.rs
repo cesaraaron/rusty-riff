@@ -13,6 +13,7 @@ use crate::dsp::metronome::{Metronome, MetronomeVoice};
 use crate::dsp::player::{PlayerTrack, PlayerVoice, TrackKind};
 use crate::dsp::tuner::{Tuner, TunerDetector};
 use crate::dsp::{DspChain, Levels, Params, StereoInsert};
+use crate::looper::{Looper, LooperControl};
 use crate::practice::Practice;
 use crate::recording::{CaptureState, capture_ring};
 
@@ -527,6 +528,7 @@ pub fn start(
     metronome: Arc<Metronome>,
     practice: Arc<Practice>,
     calibration: Arc<InputCalibration>,
+    looper: Arc<LooperControl>,
 ) -> Result<AudioEngine> {
     let host = cpal::default_host();
 
@@ -595,6 +597,7 @@ pub fn start(
         Arc::clone(&metronome),
         Arc::clone(&practice),
         Arc::clone(&calibration),
+        Arc::clone(&looper),
         identity.clone(),
     ) {
         Ok(engine) => Ok(engine),
@@ -621,6 +624,7 @@ pub fn start(
                 metronome,
                 practice,
                 calibration,
+                looper,
                 identity,
             )
         }
@@ -776,6 +780,9 @@ struct InputState {
     tuner: Arc<Tuner>,
     metronome: Arc<Metronome>,
     practice: Arc<Practice>,
+    /// The looper voice and the shared transport it drains each block.
+    looper: Looper,
+    looper_ctl: Arc<LooperControl>,
     /// Shared input-calibration state (trim dB + measuring/clip flags).
     cal: Arc<InputCalibration>,
     /// Pushes raw measurement windows to the control thread while calibrating.
@@ -917,6 +924,11 @@ impl InputState {
         let frames = data.len() / self.in_channels;
         debug_assert!(frames <= MAX_BLOCK, "chunk exceeds the preallocated block");
 
+        // Drain the looper's transport commands once per block; the per-frame loop
+        // below feeds it the post-trim dry sample and mixes its output into the
+        // monitor path only (post-record, like the metronome and practice player).
+        self.looper.poll_controls(&self.looper_ctl);
+
         // Deinterleave the guitar channel into the mono input block, converting
         // from the device's sample type to the engine's f32 domain. `in_buf` is
         // preallocated to MAX_BLOCK, so this never reallocates.
@@ -1025,13 +1037,15 @@ impl InputState {
                 self.release
             } * (a - self.in_env);
 
-            // Metronome click and the import bus are mixed into the monitor path
-            // only (post-capture), so neither ever lands in a take.
+            // Metronome click, the import bus, and the looper are mixed into the
+            // monitor path only (post-capture), so none ever lands in a take. The
+            // looper captures/replays the post-trim dry `sample`.
             let click = self.metro_voice.next_sample(metro_active, metro_bpm);
             let frame = self.player.next_frame(&transport);
+            let loop_sample = self.looper.process(sample);
             self.take_in[i] = frame.take;
-            let out_left = self.out_l[i] + frame.import_l + click;
-            let out_right = self.out_r[i] + frame.import_r + click;
+            let out_left = self.out_l[i] + frame.import_l + click + loop_sample;
+            let out_right = self.out_r[i] + frame.import_r + click + loop_sample;
             self.out_l[i] = out_left;
             self.out_r[i] = out_right;
 
@@ -1043,6 +1057,10 @@ impl InputState {
                 self.release
             } * (a - self.out_env);
         }
+
+        // Reflect any mid-block transport change (recording grew, or auto-stopped
+        // at max length) to the UI without another atomic per frame.
+        self.looper.publish(&self.looper_ctl);
 
         if capture_active && self.capture_started {
             self.capture.frames.fetch_add(pushed, Relaxed);
@@ -1167,6 +1185,7 @@ fn build_engine(
     metronome: Arc<Metronome>,
     practice: Arc<Practice>,
     calibration: Arc<InputCalibration>,
+    looper: Arc<LooperControl>,
     identity: InputIdentity,
 ) -> Result<AudioEngine> {
     capture.sample_rate.store(sr as u32, Relaxed);
@@ -1191,6 +1210,10 @@ fn build_engine(
     // Practice player: backing track + recorded take, both mixed into the monitor
     // output only (post-record), like the metronome.
     let player = PlayerVoice::new();
+
+    // Phrase looper: buffers are allocated here (before the streams start), and
+    // the loop is mixed into the monitor output only, post-record like the click.
+    let looper_voice = Looper::new(sr, &looper);
 
     // Lock-free handoff for swapping the plugin insert in/out without touching the
     // running stream: commands flow UI → audio, displaced inserts flow back to be
@@ -1282,6 +1305,8 @@ fn build_engine(
         tuner,
         metronome,
         practice,
+        looper: looper_voice,
+        looper_ctl: looper,
         cal: Arc::clone(&calibration),
         cal_tx,
         trim: TrimState::new(sr, calibration.trim_db.load(Relaxed)),

@@ -14,6 +14,9 @@ pub mod export;
 /// feature) and macOS Audio Units as an amp-position override (behind `au`).
 #[cfg(any(feature = "clap", feature = "au"))]
 pub mod host;
+/// Monitor-only phrase looper (dry input captured and replayed after the
+/// recording tap, never in a rendered take).
+pub mod looper;
 pub mod midi;
 pub mod practice;
 pub mod preset;

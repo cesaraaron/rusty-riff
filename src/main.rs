@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::sync::Arc;
 
-use rusty_riff::{audio, dsp, practice, preset, recording, ui};
+use rusty_riff::{audio, dsp, looper, practice, preset, recording, ui};
 
 fn main() -> Result<()> {
     rusty_riff::migrate_legacy_config_dir();
@@ -14,6 +14,7 @@ fn main() -> Result<()> {
     let capture = Arc::new(recording::CaptureState::new());
     let practice = Arc::new(practice::Practice::new());
     let calibration = Arc::new(audio::InputCalibration::new());
+    let looper = Arc::new(looper::LooperControl::new());
 
     // Optional MIDI expression input for the wah; disabled if no controller or
     // `midi.conf` says so. The handle keeps the connection open for the run.
@@ -29,6 +30,7 @@ fn main() -> Result<()> {
         capture,
         practice,
         calibration,
+        looper,
     )?;
 
     Ok(())

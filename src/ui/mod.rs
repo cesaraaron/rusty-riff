@@ -30,6 +30,7 @@ use crossterm::{
 };
 
 use crate::dsp::{ChainStage, Levels, Metronome, Params, Tuner};
+use crate::looper::{LoopState, LooperControl};
 use crate::practice::Practice;
 use crate::preset::Preset;
 use crate::recording::CaptureState;
@@ -214,6 +215,7 @@ pub fn run(
     capture: Arc<CaptureState>,
     practice: Arc<Practice>,
     calibration: Arc<crate::audio::InputCalibration>,
+    looper: Arc<LooperControl>,
 ) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = std::io::stdout();
@@ -323,6 +325,7 @@ pub fn run(
             Arc::clone(&metronome),
             Arc::clone(&practice),
             Arc::clone(&calibration),
+            Arc::clone(&looper),
         ) {
             Ok(engine) => engine,
             Err(err) => {
@@ -422,7 +425,26 @@ pub fn run(
                 save_msg = None;
             }
 
-            let status = save_msg.as_ref().map(|(msg, _)| msg.as_str());
+            // Looper transport readout (footer, since the looper has no panel). It
+            // takes precedence over a transient save message so an active loop is
+            // always visible; an idle, empty looper shows nothing at all.
+            let loop_status = match looper.state() {
+                LoopState::Idle if looper.is_empty() => None,
+                state => {
+                    let secs = looper.len() as f32 / engine.sample_rate().max(1.0);
+                    Some(match state {
+                        LoopState::Recording => format!("◉ LOOP REC {secs:.1}s — Y stop"),
+                        LoopState::Playing if looper.overdub_enabled() => {
+                            format!("▶ LOOP {secs:.1}s + DUB — Y stop · . undo")
+                        }
+                        LoopState::Playing => format!("▶ LOOP {secs:.1}s — Y stop · . undo"),
+                        LoopState::Idle => format!("❙❙ LOOP {secs:.1}s — Y play · F clear"),
+                    })
+                }
+            };
+            let status = loop_status
+                .as_deref()
+                .or_else(|| save_msg.as_ref().map(|(msg, _)| msg.as_str()));
             // The loaded plugin (if any) is shown in the header, not the status line, so
             // the help/status footer stays intact while a plugin is active.
             #[cfg(feature = "clap")]
@@ -1335,6 +1357,18 @@ pub fn run(
                                 ));
                             }
                         }
+                        // Looper (monitor-only). `Y` is the record/pause/resume
+                        // transport; `F` clears, `,` toggles overdub, `.` undoes
+                        // the last overdub layer.
+                        KeyCode::Char('y') | KeyCode::Char('Y') => match looper.state() {
+                            LoopState::Recording | LoopState::Playing => looper.request_stop(),
+                            LoopState::Idle => looper.request_record(),
+                        },
+                        KeyCode::Char('f') | KeyCode::Char('F') => looper.request_clear(),
+                        KeyCode::Char(',') => {
+                            looper.toggle_overdub();
+                        }
+                        KeyCode::Char('.') => looper.request_undo(),
                         #[cfg(feature = "clap")]
                         KeyCode::Char('v') | KeyCode::Char('V') => browser.open(),
                         #[cfg(all(feature = "au", target_os = "macos"))]
