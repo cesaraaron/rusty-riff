@@ -77,7 +77,7 @@ fn every_bundled_preset_parses_renders_and_is_deterministic() {
     let paths = bundled_paths();
     assert_eq!(
         paths.len(),
-        17,
+        20,
         "bundled preset count changed; update the expectation if intentional"
     );
 
