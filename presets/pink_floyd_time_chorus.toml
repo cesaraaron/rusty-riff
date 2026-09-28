@@ -63,11 +63,13 @@ mode    = 0.0   # 0 = chorus, 1 = vibrato
 # ── Amp ───────────────────────────────────────────────────────────────────────
 # Clean Hiwatt DR103 — the amp stays clean and the guitar colours it, exactly as
 # on the record. Gain just high enough for the string bloom, no clipping edge.
+# Phase 7 joint re-voice: lows/mids leaned with the model; master stays high
+# because this is a clean part, not a driven lead.
 [amp]
 model  = "hiwatt"
 gain   = 0.28
-bass   = 0.40
-mid    = 0.54
+bass   = 0.28
+mid    = 0.38
 treble = 0.60
 presence = 0.55
 master = 0.62

@@ -31,15 +31,17 @@ mid  = 0.60
 high = 0.58
 
 # ── Amp ───────────────────────────────────────────────────────────────────────
-# Hiwatt DR103 — clean and bright with plenty of headroom.
+# Hiwatt DR103 — clean and bright with plenty of headroom. Phase 7 joint
+# re-voice: with the model's structural lows leaned, bass/mid return near noon —
+# was 0.42/0.60 over the +4 dB body lift and WEM pile-up.
 [amp]
 model    = "hiwatt"
 gain     = 0.46
-bass     = 0.42
-mid      = 0.60
+bass     = 0.26
+mid      = 0.34
 treble   = 0.62
 presence = 0.58
-master   = 0.55
+master   = 0.38
 
 # ── Cabinet ───────────────────────────────────────────────────────────────────
 # WEM 4×12 with Fane Crescendos.

@@ -778,3 +778,23 @@ routing or schema change: presets only.
   lands directly) — flagged for a possible master bump if it reads quiet live;
   maintainer listened and approved as-is.
 - Baseline regenerated (20 presets), `--check` green.
+
+### Batch 3 — no/disabled-fuzz family (amp-only lean)
+
+No dirt here, so only the amp lows/mids move; the fuzz blocks are already off or
+absent and were left alone.
+
+- `pink_floyd_have_a_cigar_solo`: amp bass 0.42→0.26, mid 0.60→0.34,
+  master 0.55→0.38.
+- `pink_floyd_mother_solo`: amp bass 0.42→0.26, mid 0.60→0.34, master 0.55→0.38.
+- `pink_floyd_time_chorus`: amp bass 0.40→0.28, mid 0.54→0.38; **master kept at
+  0.62** — it is a clean rhythm part, not a driven lead, so it stays level.
+- Baseline moves: `have_a_cigar` LUFS −13.02→−14.35, centroid 3571→3708 Hz;
+  `mother_solo` −13.06→−14.38, centroid 3510→3647 Hz; `time_chorus`
+  −14.05→−14.13, centroid 3711→3760 Hz (largely unchanged, as intended).
+- Baseline regenerated (20 presets), `--check` green. Maintainer listened and
+  approved before commit.
+
+**Follow-up complete:** all 7 remaining Hiwatt+WEM presets now use the same
+leaned model as the Phase 7 anchors. Remaining note from Batch 2: `money` reads
+~3–4 dB below the sibling cluster and may want its `master` nudged back up later.
