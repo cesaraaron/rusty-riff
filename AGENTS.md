@@ -17,23 +17,32 @@ rusty-riff is a real-time guitar amplifier emulator that runs in the terminal. I
 ```text
 Guitar input
   → Noise Gate          (envelope follower + gain ramp)
+  → Whammy              (pitch shift)
+  → Wah                 (manual treadle + envelope auto-wah)
   → Compressor          (peak-follower detector → hard-knee gain computer)
   → Fuzz                (TYPE: Big Muff | Fuzz Face | Tone Bender; GUITAR knob models the guitar-volume cleanup/loading on the Fuzz Face)
-  → TS-808 Tube Screamer (DC block → 340 Hz HP → asymmetric diode soft-clip → variable tone LP)
+  → TS-808 Tube Screamer (input coupling → 720 Hz clipping-stage gain shelf → symmetric diode soft-clip → variable tone LP)
   → DS-1 Distortion     (DC block → 80 Hz HP → silicon diode hard-clip → active tone LP/HP blend)
+  → ML-2 Metal Core     (metal distortion)
   → Pre-amp EQ          (low shelf 100 Hz / mid peak 650 Hz / high shelf 3 kHz — shapes what the amp clips)
+  → Uni-Vibe            (0 = chorus, 1 = vibrato)
   → Clean boost         (linear Power-Boost-style front-end gain; Bass/Treble shelves, no clipping)
   → Amp model           (switchable: Marshall JCM800 | Mesa Dual Rectifier | Randall Warhead | Vox AC30 | Hiwatt DR103 | Marshall Plexi | Fender Twin | Supro Combo | Tweed Deluxe — 8× oversampled)
   → Cabinet sim         (switchable: Mesa 4×12 | Marshall 4×12 | Orange PPC412 | WEM 4×12 | Vox 2×12 | Fender 2×12 | Supro 1×10 | Tweed 1×12 — multi-mic IR)
+  → Graphic EQ          (band sliders)
   → Parametric EQ       (low shelf 120 Hz / mid peak 800 Hz Q 1.5 / high shelf 5 kHz)
   → Flanger             (TYPE: generic stereo LFO-swept comb | Electric Mistress — mono, shorter throw, filter-matrix freeze)
+  → Chorus              (stereo chorus)
+  → Phaser              (TYPE: generic four-stage stereo | Phase 90 — mono, script)
+  → Tremolo / Vibrato   (amplitude modulation)
   → Delay               (three modes: digital ping-pong | tape/EP-3 | Binson Echorec drum echo; 0–500 ms)
-  → Stereo Reverb       (dual decorrelated Freeverb cores: 8 parallel combs → 4 series allpasses each)
+  → Stereo Reverb       (dual decorrelated Freeverb cores + 15 ms predelay and a slow wet LFO)
   → Master-bus widener  (stereo mid/side enhancement)
   → Output limiter      (per-channel soft-clip)
 ```
 
-Every bypassable stage can be toggled independently with `Space`.
+Every bypassable stage can be toggled independently with `Space`; the order can be
+changed at runtime with `[` / `]` (see `ChainStage::default_order`).
 
 **Monitor-only buses.** The practice metronome and the practice player (backing
 track + recorded take) are summed into the output **after** the recording tap (see

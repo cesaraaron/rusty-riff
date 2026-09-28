@@ -8,11 +8,16 @@ Read all three before continuing. Where shipped code differs from this plan,
 `fidelity-implement.md` is authoritative. (Formerly `plan.md` /
 `IMPLEMENTATION-NOTES.md`.)
 
-**Progress at a glance (2026-09-25).** Phase 1 and Phase 2 items 1–4: done.
-Phase 0: scaffold only (no sources logged, no harness). Phases 3–5: not started.
-The next work is [Next increments](#next-increments--workstreams-a-and-b) below — **Workstream A** (routing hardening found in review)
-and **Workstream B** (input calibration + offline reference harness), which are
-prerequisites for credible Phase 3–5 fidelity work.
+**Progress at a glance (2026-09-28).** Phases 0–5 are shipped as-built; see
+[`fidelity-implement.md`](fidelity-implement.md) for the record. Workstreams A
+and B (below) are done. Phase 3 stays partial only where it is measurement-bound
+(measured-IR / cab-capture comparison), which is blocked on re-amp/mic captures.
+Work beyond this plan — the "Phase 6" live-safe tone pass (per-amp power
+oversampling, speaker excursion, reverb predelay, external-IR treatment) and the
+"Phase 7" Hiwatt/WEM low-end lean plus sibling preset re-voice — is recorded in
+`fidelity-implement.md`; those are extensions, not part of the phases below, and
+a few sit against this plan's cautions (external-IR double-processing, synthetic
+speaker/reverb layers).
 
 Status: implementation plan, not a claim that the existing presets reproduce the original recordings. This plan was prepared from a code and bundled-preset review; the proposed historical equipment choices still require source checking and listening comparisons. It is intentionally detailed so changes can be shipped and verified in small increments.
 
