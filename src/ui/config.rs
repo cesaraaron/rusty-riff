@@ -646,11 +646,21 @@ pub(super) struct Panels {
 }
 
 impl Panels {
-    /// Every panel visible — the startup state (session-only; not persisted).
+    /// Every panel visible (used by tests).
     pub(super) const fn all_visible() -> Self {
         Self {
             amp: true,
             rig: true,
+            timeline: true,
+        }
+    }
+
+    /// Startup layout: only the practice timeline is open. The chain ribbon is
+    /// always visible and is not part of `Panels`.
+    pub(super) const fn timeline_only() -> Self {
+        Self {
+            amp: false,
+            rig: false,
             timeline: true,
         }
     }
@@ -780,5 +790,12 @@ mod tests {
         assert_eq!(ChainStage::Amp.pedal_index(), None);
         assert_eq!(ChainStage::Cab.pedal_index(), None);
         assert_eq!(ChainStage::default_order().len(), PEDALS.len() + 2);
+    }
+
+    #[test]
+    fn timeline_only_opens_just_the_timeline() {
+        let p = Panels::timeline_only();
+        assert!(p.timeline, "the timeline must be open at startup");
+        assert!(!p.amp && !p.rig, "amp/pedal panels start closed");
     }
 }

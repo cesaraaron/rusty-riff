@@ -246,9 +246,24 @@ pub(super) fn press_number(
             return (panels, focus);
         }
         set_panel_visible(&mut panels, n, false);
-        return (panels, first_visible_entry(&panels, board, order));
+        return (panels, focus_after_hide(&panels, board, order, n));
     }
     (panels, panel_entry(n, board, order))
+}
+
+/// Where focus lands after hiding panel `hidden`: the practice timeline when it
+/// is open (it is the main workspace), otherwise the first visible panel's
+/// entry. Hiding the timeline itself is not a candidate for its own return.
+fn focus_after_hide(
+    panels: &Panels,
+    board: &[bool],
+    order: &[u8; CHAIN_LEN],
+    hidden: u8,
+) -> Option<usize> {
+    if hidden != 3 && panels.timeline {
+        return Some(PRACTICE_TILE);
+    }
+    first_visible_entry(panels, board, order)
 }
 
 // `Tab` / `Shift-Tab` are panel-local now (see `tab_in_panel`); panels are
@@ -742,10 +757,11 @@ mod tests {
         let (p2, f) = press_number(4, None, &b, &p, &o);
         assert!(p2.rig);
         assert_eq!(f, Some(PEDALS[0].start));
-        // Focused panel 4 → hides it and repairs focus onto the ribbon.
+        // Focused panel 4 → hides it; the open timeline takes focus (not the
+        // ribbon).
         let (p3, f) = press_number(4, f, &b, &p2, &o);
         assert!(!p3.rig);
-        assert_eq!(f, Some(CHAIN_TILE));
+        assert_eq!(f, Some(PRACTICE_TILE));
         // Hidden panel 4 → shows and focuses it again.
         let (p4, f) = press_number(4, f, &b, &p3, &o);
         assert!(p4.rig);
@@ -758,6 +774,25 @@ mod tests {
         let (p6, f) = press_number(9, f, &b, &p5, &o);
         assert!(p6.rig && p6.amp && p6.timeline);
         assert_eq!(f, Some(CHAIN_TILE));
+    }
+
+    /// Without an open timeline, closing a panel keeps the old behavior (ribbon);
+    /// closing the timeline itself also lands on the ribbon.
+    #[test]
+    fn closing_a_panel_falls_back_to_the_ribbon_without_a_timeline() {
+        let b = board(true);
+        let o = order();
+        let no_timeline = Panels {
+            timeline: false,
+            ..Panels::all_visible()
+        };
+        let (panels, f) = press_number(4, Some(PEDALS[0].start), &b, &no_timeline, &o);
+        assert!(!panels.rig);
+        assert_eq!(f, Some(CHAIN_TILE), "no timeline → ribbon");
+
+        let (panels, f) = press_number(3, Some(PRACTICE_TILE), &b, &Panels::all_visible(), &o);
+        assert!(!panels.timeline);
+        assert_eq!(f, Some(CHAIN_TILE), "closing the timeline → ribbon");
     }
 
     #[test]

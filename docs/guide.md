@@ -21,7 +21,10 @@ device**. The processed signal is written to all output channels.
 ## Panels
 
 The UI is split into panels you focus with the number keys; pressing the same
-number again hides the panel:
+number again hides the panel. The app opens with only the **practice timeline**
+(and the always-visible chain ribbon) shown — press `2`/`4` for the amp/pedal
+panels. When a panel closes, focus returns to the **practice timeline** if it is
+open (otherwise the chain ribbon):
 
 | Key | Panel |
 | --- | --- |
@@ -32,7 +35,8 @@ number again hides the panel:
 
 `Tab` / `Shift-Tab` cycle options inside the amp (2) or pedals (4) panel,
 `←`/`→` move within the focused panel, and `Space` bypasses the stage, pedal, or
-transport under focus.
+transport under focus. On the pedalboard, `A` opens the **add-pedal** picker
+(`D` removes the focused pedal); elsewhere `A` opens the amp model browser.
 
 ## Calibrate the input
 

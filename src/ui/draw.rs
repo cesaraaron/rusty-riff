@@ -1295,7 +1295,7 @@ pub(super) fn render_help_modal(f: &mut Frame) {
         head("Panels & chain"),
         row(
             "  1 / 2 / 3 / 4",
-            "  focus chain, amp, timeline, pedals (again: hide)",
+            "  focus chain, amp, timeline, pedals (again: hide → timeline)",
         ),
         row(
             "  Tab / Shift-Tab",
@@ -1311,7 +1311,10 @@ pub(super) fn render_help_modal(f: &mut Frame) {
         head("Play & edit"),
         row("  ↑/↓  +/−", "  knob / adjust value"),
         row("  D", "  remove pedal from the board"),
-        row("  A", "  amp model browser"),
+        row(
+            "  A",
+            "  amp model browser (on the pedalboard: add a pedal)",
+        ),
         row("  C", "  cabinet model browser"),
         row("  I / X", "  IR browser / IR bypass"),
         row("  O", "  change audio devices"),
@@ -2350,6 +2353,25 @@ mod tests {
         assert!(
             !hidden.contains("T I M E L I N E"),
             "practice pane still drawn while hidden"
+        );
+    }
+
+    /// The startup layout opens only the practice timeline (plus the always-on
+    /// ribbon): the amp/cab and pedal panels are not drawn.
+    #[test]
+    fn startup_layout_shows_only_the_timeline() {
+        let text = render_with_practice(Panels::timeline_only(), false);
+        assert!(
+            text.contains("T I M E L I N E"),
+            "the timeline must be shown at startup"
+        );
+        assert!(
+            !text.contains("GUITAR RIG"),
+            "the pedalboard must start closed"
+        );
+        assert!(
+            !text.contains("MESA DUAL RECTIFIER") && !text.contains("MESA V30"),
+            "the amp/cab panel must start closed"
         );
     }
 

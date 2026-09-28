@@ -4,7 +4,7 @@ expression: text
 ---
 ┌─────────────────────────────────────╔ K E Y B I N D I N G S ════════════════════════════════════════════════════════════════════╗──────────────────────────────[ ] move┐
 │  GATE ──▶ TS-808 ──▶ AMP ──▶ CAB ──▶║Panels & chain                                                                             ║░░▌          OUT ▐░░░░░░░░░▌          │
-└─────────────────────────────────────║  1 / 2 / 3 / 4  focus chain, amp, timeline, pedals (again: hide)                          ║──────────────────────────────────────┘
+└─────────────────────────────────────║  1 / 2 / 3 / 4  focus chain, amp, timeline, pedals (again: hide → timeline)               ║──────────────────────────────────────┘
 ┏┤ MESA DUAL RECTIFIER ├━━━━━━━━━━━━━━║  Tab / Shift-Tab  cycle amp/cab (2) or pedals (4) in the panel                            ║━━━━━━━━━━━━━━━━━━━━━━━━┤ 🎙 MESA V30 ├┓
 ┃                                     ║  ←/→  move inside the focused panel                                                       ║                                      ┃
 ┃         ···                ···      ║  [ / ]  move the ribbon's stage earlier / later                                           ║            ···              ···      ┃
@@ -13,7 +13,7 @@ expression: text
 ┃      GAIN 7.5           BASS 10.0   ║Play & edit                                                                                ║0        BLEND 0.0        ROOM 0.0    ┃
 ┃                                     ║  ↑/↓  +/−  knob / adjust value                                                            ║                                      ┃
 ┃                                     ║  D  remove pedal from the board                                                           ║                                      ┃
-┃▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚║  A  amp model browser                                                                     ║▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚┃
+┃▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚║  A  amp model browser (on the pedalboard: add a pedal)                                    ║▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━║  C  cabinet model browser                                                                 ║━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 ┌ GUITAR RIG ─────────────────────────║  I / X  IR browser / IR bypass                                                            ║──────────────────────────────────────┐
 │┌ NOISE GATE ◉ ──────────────────────║  O  change audio devices                                                                  ║ADD ─────────────────────────────────┐│

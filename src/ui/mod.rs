@@ -42,8 +42,9 @@ use draw::{
 };
 use input::{
     NavMemory, add_pedal, amp_choices, cab_choices, ensure_focus_visible, init_amp_cursor,
-    init_cab_cursor, move_chain_cursor, move_selected_stage, nudge, press_number, remove_pedal,
-    select_amp, select_cab, step_knob_in_panel, tab_in_panel, toggle_pedal, toggle_stage,
+    init_cab_cursor, move_chain_cursor, move_selected_stage, nudge, panel_of, press_number,
+    remove_pedal, select_amp, select_cab, step_knob_in_panel, tab_in_panel, toggle_pedal,
+    toggle_stage,
 };
 use practice::{PracticeUi, SaveContext};
 use presets::{
@@ -270,8 +271,9 @@ pub fn run(
     let mut terminal = ratatui::Terminal::new(backend)?;
 
     // ── Session state (persists across a device change) ───────────────────────
-    // Focus starts on the live-order ribbon (panel 1).
-    let mut focus: Option<usize> = Some(CHAIN_TILE);
+    // Focus starts on the practice timeline (the app opens with only that panel
+    // and the ever-visible chain ribbon shown).
+    let mut focus: Option<usize> = Some(PRACTICE_TILE);
     // Selected stage within the ribbon; follows its stage through moves.
     let mut chain_cursor: ChainStage = ChainStage::Amp;
     // Last-focused knob per amp/mic/pedal group, so panel-local `Tab` returns
@@ -320,8 +322,9 @@ pub fn run(
     let mut cal_ui = calibration::CalibrationUi::new();
     // Keybinding cheat-sheet modal, toggled with K.
     let mut help_open = false;
-    // Which top-level panels are shown (session-only; toggled with 1/2/3).
-    let mut panels = Panels::all_visible();
+    // Which top-level panels are shown (session-only; toggled with 1/2/3). The
+    // app opens with only the timeline (plus the always-visible ribbon).
+    let mut panels = Panels::timeline_only();
     // Open on the factory rig.
     apply_factory_defaults(&params, &mut board, &mut focus, &panels);
     // Canonical timeline project, owned by the UI and preserved across device
@@ -1552,6 +1555,12 @@ pub fn run(
                             save_desc.clear();
                             save_field = 0;
                             save_error = None;
+                        }
+                        // Quick-add: on the pedalboard, `a` opens the add-pedal
+                        // modal; elsewhere `a` still opens the amp browser.
+                        KeyCode::Char('a') | KeyCode::Char('A') if panel_of(focus) == 4 => {
+                            add_open = true;
+                            add_cursor = 0;
                         }
                         KeyCode::Char('a') | KeyCode::Char('A') => {
                             amp_open = true;
