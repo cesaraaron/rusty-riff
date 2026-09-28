@@ -26,7 +26,7 @@ use std::sync::mpsc::{self, Receiver};
 
 use anyhow::{Context, Result, bail};
 
-use crate::dsp::cab::{ExternalIrCab, MAX_IR_LEN, load_ir};
+use crate::dsp::cab::{ExternalIrCab, OFFLINE_MAX_IR_LEN, load_ir};
 use crate::dsp::{DspChain, Params, StereoInsert};
 use crate::practice::decode_track;
 use crate::preset::Preset;
@@ -172,7 +172,8 @@ fn run(mut job: ExportJob, progress: &AtomicU32, cancel: &AtomicBool) -> Result<
     };
 
     if let Some(path) = &job.ir_path {
-        match load_ir(path, sr, MAX_IR_LEN) {
+        // Offline render: keep the full room tail (no live 8k truncation).
+        match load_ir(path, sr, OFFLINE_MAX_IR_LEN) {
             Ok(loaded) => {
                 if job.ir_active {
                     params.cab_external_loaded.store(true, Relaxed);

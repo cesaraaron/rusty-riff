@@ -1,5 +1,6 @@
 use super::{
-    AMP_MAX, AmpKnob, Amplifier, Bloom, Cached, FrontEnd, SpeakerLoad, ToneCache, VoiceBalance,
+    AMP_MAX, AmpKnob, Amplifier, Bloom, Cached, FrontEnd, PowerOs, SpeakerLoad, ToneCache,
+    VoiceBalance,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::oversample::Oversampler8;
@@ -53,6 +54,7 @@ pub struct Randall {
     sr: f32,
     front: FrontEnd,
     os: Oversampler8,
+    os_power: PowerOs,
     // Pre-clip HP at 8× rate — the Warhead's tight solid-state input coupling
     pre_clip_hp: Biquad,
     // Inter-stage HPs at 8× rate
@@ -89,6 +91,7 @@ impl Randall {
             // 75 Hz input HP: tighter than tube amps (60 Hz) but doesn't cut 82 Hz low-E
             front: FrontEnd::new(sr, 75.0),
             os: Oversampler8::new(sr),
+            os_power: PowerOs::new(sr),
             // Warhead pre-clip HP: 55 Hz — tighter than Marshall/Mesa but below 82 Hz
             pre_clip_hp: Biquad::highpass(sr8, 55.0, 0.707),
             // After FET stage: 195 Hz. The old 500 Hz corner sat above the
@@ -190,14 +193,22 @@ impl Amplifier for Randall {
         // The solid-state power section uses stiff rails and no sag. The drive is
         // kept slightly below the raw rail-clip level so the stage stays punchy
         // without flattening every pick transient. The HP before the clipper also
-        // keeps the output stage from distorting sub-bass.
+        // keeps the output stage from distorting sub-bass. The rail tanh runs at
+        // 8× like the tube power stages — base-rate clipping here folded
+        // harmonics back as harshness.
         let x = self.power_hp.process(x);
-        let x = (x * 1.85).tanh() * 0.54;
+        let x = self.os_power.shape(x, |u| (u * 1.85).tanh() * 0.54);
         let x = self.speaker.process(x, 0.0);
         // Second subsonic stage after the tanh: the clipper regenerates a low
         // difference-tone "fart" from the chord's intervals; strip it here.
         let x = self.power_hp2.process(x);
 
+        // Output trim: 1.10 holds the Randall ~+4 dB above the tube family on
+        // the amp-only probe — the known exception. Do NOT "fix" it by lowering:
+        // the trim also sets the cab drive operating point (SpeakerDrive
+        // breakup + mic saturation), and starving it buries E2's fundamental
+        // under overtones (`fundamental_is_not_buried_under_overtones`) and
+        // breaks the DS-chain level match. Re-tuning it means re-tuning the cab.
         x * master * 1.10
     }
 }

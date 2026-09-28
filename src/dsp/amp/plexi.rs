@@ -1,6 +1,6 @@
 use super::{
     AMP_MAX, AmpKnob, Amplifier, Bloom, BrightCap, Cached, CathodeBias, DynamicPresence, FrontEnd,
-    GridBlock, OutputTransformer, SpeakerLoad, SupplyRipple, ToneCache, VoiceBalance,
+    GridBlock, OutputTransformer, PowerOs, SpeakerLoad, SupplyRipple, ToneCache, VoiceBalance,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::oversample::Oversampler8;
@@ -71,6 +71,7 @@ pub struct Plexi {
     sr: f32,
     front: FrontEnd,
     os: Oversampler8,
+    os_power: PowerOs,
     pre_clip_hp: Biquad,
     stage_hp: Biquad,
     // Normal-channel input low-pass: the darker of the two jumpered channels.
@@ -101,6 +102,7 @@ impl Plexi {
             sr,
             front: FrontEnd::new(sr, 60.0),
             os: Oversampler8::new(sr),
+            os_power: PowerOs::new(sr),
             // Input coupling → sub-rumble cut below the 82 Hz low-E.
             pre_clip_hp: Biquad::highpass(sr8, 35.0, 0.707),
             // Inter-stage coupling is fuller than the JCM800's (~200 Hz vs 300 Hz):
@@ -167,7 +169,9 @@ impl Plexi {
         self.envelope += coeff * (abs_x - self.envelope);
         let sag = 1.0 / (1.0 + self.envelope * 1.3);
         let supply = self.ripple.gain(sag, self.envelope);
-        tube_clip_asym(x * supply * 2.6) * 0.6
+        // Power clipper at 8× (envelope held per sample).
+        self.os_power
+            .shape(x, |u| tube_clip_asym(u * supply * 2.6) * 0.6)
     }
 }
 

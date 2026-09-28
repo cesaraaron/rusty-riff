@@ -128,15 +128,27 @@ pub struct Reverb {
     right: Channel,
     last_room: f32,
     last_damp: f32,
+    /// Fixed 15 ms predelay keeps pick attack dry before the wash (guitar-plate
+    /// convention); modulation slowly breathes the wet width so long tails don't
+    /// sit metallic-static.
+    pre_buf: Vec<f32>,
+    pre_pos: usize,
+    lfo_phase: f32,
+    sr: f32,
 }
 
 impl Reverb {
     pub fn new(sr: f32) -> Self {
+        let pre_len = ((sr * 0.015) as usize).max(1);
         let mut r = Self {
             left: Channel::new(sr, 0),
             right: Channel::new(sr, STEREO_SPREAD),
             last_room: -1.0,
             last_damp: -1.0,
+            pre_buf: vec![0.0; pre_len],
+            pre_pos: 0,
+            lfo_phase: 0.0,
+            sr,
         };
         r.update_params(0.5, 0.4);
         r
@@ -165,12 +177,28 @@ impl Reverb {
             self.update_params(room, damp);
         }
 
-        let input = (dry_l + dry_r) * 0.5 * FIXED_GAIN;
-        let wet_l = self.left.process(input);
-        let wet_r = self.right.process(input);
+        // Mono-sum through a 15 ms predelay ring so pick attack stays dry.
+        let delayed = self.pre_buf[self.pre_pos];
+        self.pre_buf[self.pre_pos] = (dry_l + dry_r) * 0.5 * FIXED_GAIN;
+        self.pre_pos += 1;
+        if self.pre_pos >= self.pre_buf.len() {
+            self.pre_pos = 0;
+        }
 
-        let out_l = dry_l * (1.0 - mix) + wet_l * SCALE_WET * mix;
-        let out_r = dry_r * (1.0 - mix) + wet_r * SCALE_WET * mix;
+        let wet_l = self.left.process(delayed);
+        let wet_r = self.right.process(delayed);
+
+        // 0.5 Hz opposite-phase breathing (±6%) on the wet for movement.
+        self.lfo_phase += 2.0 * std::f32::consts::PI * 0.5 / self.sr;
+        if self.lfo_phase > 2.0 * std::f32::consts::PI {
+            self.lfo_phase -= 2.0 * std::f32::consts::PI;
+        }
+        let s = self.lfo_phase.sin();
+        let mod_l = 1.0 + 0.06 * s;
+        let mod_r = 1.0 - 0.06 * s;
+
+        let out_l = dry_l * (1.0 - mix) + wet_l * SCALE_WET * mix * mod_l;
+        let out_r = dry_r * (1.0 - mix) + wet_r * SCALE_WET * mix * mod_r;
         (out_l, out_r)
     }
 }

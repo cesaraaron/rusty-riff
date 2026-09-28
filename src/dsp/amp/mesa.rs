@@ -1,6 +1,6 @@
 use super::{
     AMP_MAX, AmpKnob, Amplifier, Bloom, BrightCap, Cached, CathodeBias, DynamicPresence, FrontEnd,
-    GridBlock, OutputTransformer, SpeakerLoad, SupplyRipple, ToneCache, VoiceBalance,
+    GridBlock, OutputTransformer, PowerOs, SpeakerLoad, SupplyRipple, ToneCache, VoiceBalance,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::oversample::Oversampler8;
@@ -55,6 +55,7 @@ pub struct Mesa {
     sr: f32,
     front: FrontEnd,
     os: Oversampler8,
+    os_power: PowerOs,
     // Pre-clip HP at 8× rate — cuts sub-bass before the first gain stage
     pre_clip_hp: Biquad,
     // Two inter-stage coupling HPs at 8× rate
@@ -105,6 +106,7 @@ impl Mesa {
             sr,
             front: FrontEnd::new(sr, 60.0),
             os: Oversampler8::new(sr),
+            os_power: PowerOs::new(sr),
             // Recto input coupling HP at ~70 Hz — keeps sub-bass out of the gain
             // stages so they don't generate difference-tone mud, while preserving
             // the 82 Hz low-E fundamental.
@@ -187,7 +189,9 @@ impl Mesa {
         // The static drive stays around 2.4 so the power stage adds a little
         // sustain without flattening the attack; the gentler curve preserves
         // the Recto's tight, percussive feel while still compressing the note.
-        silicon_clip_asym(x * supply * 2.4) * 0.55
+        // Clipper at 8× (supply held per sample).
+        self.os_power
+            .shape(x, |u| silicon_clip_asym(u * supply * 2.4) * 0.55)
     }
 }
 

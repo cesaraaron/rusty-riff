@@ -563,3 +563,126 @@ covered by the named tests in `src/dsp/mod.rs`, `src/preset.rs`, and
 `src/ui/input.rs`. There is no listening test: Phases 1–2 change routing,
 coherence, and topology, not voicing, and the default-order render is
 bit-identical to before the split.
+
+---
+
+## Phase 6 — live-safe tone (Phase A: IR-first, low-latency-first)
+
+Built on top of Phases 0–5. Constraint from the maintainer: gigging
+low-latency first (128 frames @48 kHz, RTF < 0.5), studio second. Voicing
+changes are intentional; the committed `docs/fidelity/baseline-synth-48k.toml`
+is NOT regenerated until maintainer listening approves. Candidate baseline at
+`target/fidelity/phaseA-candidate-baseline.toml` (gitignored).
+
+### A1 — external IR first-class (`fix(dsp): external IR live trim + offline tails`)
+
+- `src/dsp/cab/external.rs`: added `LIVE_MAX_IR_LEN` (8192 ≈ 170 ms @48 kHz,
+  the direct + early-room window inside the 128-frame gigging budget) and
+  `OFFLINE_MAX_IR_LEN` (32768, full tails for export). `MAX_IR_LEN` kept as the
+  live alias. `load_ir` unchanged otherwise (offline resample + tail fade +
+  DC-remove + unit-energy normalize, all off-audio-thread).
+- `ExternalIrCab` now runs `SpeakerDrive → conv → MicPosition post-EQ →
+  mic_sat × level`. `blend`/`room` stay inert (baked into the capture);
+  `mic_pos` is a live edge↔centre trim instead of a dead knob. Added
+  `set_level` trim.
+- `src/export.rs` loads with `OFFLINE_MAX_IR_LEN`; `src/ui/ir_browser.rs` and
+  `src/ui/practice.rs` load with `LIVE_MAX_IR_LEN`.
+- `irs/README.md`: 4-rig starter set (Marshall Greenback, WEM Fane, Fender
+  Jensen, Mesa V30), live-vs-offline table, open-license guidance.
+- Tests: `offline_cap_exceeds_live_cap`,
+  `cab_is_finite_bounded_blend_room_inert_mic_pos_live` (blend/room inert,
+  mic_pos centre > edge at 6 kHz).
+
+### A2 — power-stage 8× oversampling (`fix(dsp): oversample the power clipper`)
+
+- `src/dsp/amp/mod.rs`: new shared `PowerOs` (independent `Oversampler8`;
+  sag/ripple envelope held per base-rate sample, only the memoryless clip runs
+  hot; series group delay ≈ M base samples, inside budget).
+- Migrated `marshall.rs`, `plexi.rs`, `hiwatt.rs` (14/17 bundled presets):
+  envelope → supply gain at base rate, `tube_clip_asym` at 8×. OT kept at base
+  rate (LF-only tanh, minimal alias — full-OT oversampling deferred to Phase B).
+- Measured: `--bench` RTF 0.06–0.08 @48 kHz (budget 0.5); `--check` drift is
+  expected and directional (e.g. `pink_floyd_time_solo` centroid 3520 → 3372 Hz,
+  less alias fizz; 2.2 kHz pocket −7.2 → −9.5 dB, less harsh).
+- Remaining 6 models keep base-rate power clips; migrate after listening.
+
+### A3 — excursion-aware speaker load (`fix(dsp): displacement bloom in SpeakerLoad`)
+
+- `src/dsp/amp/mod.rs` `SpeakerLoad`: added 100 Hz displacement estimator +
+  8 ms / 90 ms excursion envelope feeding up to +0.35 resonance amount on top
+  of the sag term. Palm-mute lows bloom then recover instead of hanging.
+  Local to the amp (no amp↔cab feedback loop), ~10 lines of state.
+
+### A4 — reverb predelay + breathing (`fix(dsp): 15 ms predelay + 0.5 Hz wet LFO`)
+
+- `src/dsp/effects/reverb.rs`: fixed 15 ms (guitar-plate) predelay ring on the
+  mono-summed input + ±6% opposite-phase 0.5 Hz breathing on wet L/R. No new
+  knobs, no extra latency beyond the musical predelay, existing
+  `fully_dry_is_passthrough` / `produces_decaying_stereo_tail` tests still pass.
+- Note: predelay audibly moves LTAS on wet presets (e.g. `hotel_clean`); this
+  is the intended de-masking of pick attack, confirm by ear.
+
+### Verification
+
+- `cargo test --release --lib`: 400 passed (was 399; +1 new IR test).
+- `cargo clippy --release --lib`: clean.
+- `--bench` (2 presets): RTF ≤ 0.08 @48 kHz, ≤ 0.20 @96 kHz.
+- `--check` vs committed baseline: 54 violations on 3-preset subset — expected
+  voicing drift (documented above), NOT a regression gate until listening.
+- Candidate baseline: `target/fidelity/phaseA-candidate-baseline.toml`
+  (17 presets × 7 DIs @48 kHz). Promote to `docs/fidelity/` only after
+  maintainer A/B on `acdc_back_in_black`, `pink_floyd_time_solo`,
+  `hotel_california_clean`.
+
+### Phase A promoted + A2 completed for all amps (maintainer-approved)
+
+- `docs/fidelity/baseline-synth-48k.toml` regenerated and `--check` green.
+- `PowerOs` migrated to the remaining models: `mesa` (silicon clip), `vox`,
+  `fender`, `supro`, `tweed` (tube clips). The Randall has no tube power clip;
+  its base-rate rail tanh `(x·1.85).tanh()` is now wrapped in `PowerOs` too, so
+  all 9 amps are alias-suppressed end to end.
+- Randall trim stays `1.10`: lowering it to join the amp-only loudness cluster
+  starved the cab drive point (SpeakerDrive breakup + mic saturation) and
+  buried E2's fundamental (`funDom 0.191 < 0.20`) while breaking the DS-chain
+  level match (1.64× > 1.6×). Both failures reverted with the trim. The +4 dB
+  exception is load-bearing — re-tuning it means re-tuning the cab.
+
+### Phase B finding — push-pull deferred to Phase C (needs a re-voice pass)
+
+Tried: long-tail PI + differential push-pull pair at 8× in the power stage.
+Two designs failed the voicing contract, and the failure is instructive:
+
+1. Asymmetric differential (0.90–0.97 second side + bias offsets) *cancels*
+   incoming even harmonics (~10× attenuation measured on the full Marshall
+   rig: hard-drive h2/h1 0.021 → 0.005) and breaks
+   `tube_amps_are_touch_sensitive`.
+2. Odd-symmetric pair (even order cancels in the transformer, as a real
+   class-AB stage does) preserves levels perfectly but still fails Marshall
+   touch for the same reason: at this operating point the test's h2 growth
+   comes from the *power knee*, and a symmetric power stage cannot generate
+   it — physically correct, but the whole rig (drives, trims, tests,
+   presets, baseline) is tuned as a system around single-ended power curves.
+
+Verdict: keep the single-ended power curves (now all 8× oversampled). A real
+PI/push-pull needs per-amp drive/trim re-voicing with listening ears —
+tracked as Phase C, not attempted blind. The `PowerOs` helper stays as the
+landing point for it.
+
+### Phase B shipped — 3 new presets close the rig-coverage gap
+
+The bank was Floyd-heavy (9× hiwatt+wem) with no Mesa, Vox, or JCM800 tones:
+
+- `mesa_modern_metal.toml` — TS tightener → Recto Modern → Mesa 4×12, dry.
+- `vox_chime_clean.toml` — Top Boost edge-of-breakup → Vox 2×12 + room.
+- `marshall_hard_rock_rhythm.toml` — hot JCM800 → Marshall 4×12, dry.
+- `tests/bundled_presets.rs` count 17 → 20; harness levels verified sane
+  (peaks < 0.8, family-consistent LUFS); baseline regenerated for 20 presets,
+  `--check` green.
+- `irs/README.md` maps the 4-rig starter IR set onto these presets.
+
+### Verification (final)
+
+- `cargo test --release --lib`: 400 passed; `bundled_presets`: pass (20).
+- `cargo clippy --release --lib`: clean.
+- `--bench`: RTF ≤ 0.082 @48 kHz, ≤ 0.21 @96 kHz (budget 0.5) — the two extra
+  8× round trips per sample cost ~0.02 RTF total.

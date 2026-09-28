@@ -1,6 +1,6 @@
 use super::{
     AMP_MAX, AmpKnob, Amplifier, Bloom, BrightCap, Cached, CathodeBias, FrontEnd, GridBlock,
-    OutputTransformer, SpeakerLoad, SupplyRipple, VoiceBalance,
+    OutputTransformer, PowerOs, SpeakerLoad, SupplyRipple, VoiceBalance,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::oversample::Oversampler8;
@@ -45,6 +45,7 @@ pub struct Tweed {
     sr: f32,
     front: FrontEnd,
     os: Oversampler8,
+    os_power: PowerOs,
     pre_clip_hp: Biquad,
     stage_hp: Biquad,
     bloom: Bloom,
@@ -70,6 +71,7 @@ impl Tweed {
             sr,
             front: FrontEnd::new(sr, 60.0),
             os: Oversampler8::new(sr),
+            os_power: PowerOs::new(sr),
             pre_clip_hp: Biquad::highpass(sr8, 40.0, 0.707),
             stage_hp: Biquad::highpass(sr8, 110.0, 0.707),
             bloom: Bloom::new(sr, 6.0, 45.0),
@@ -113,7 +115,9 @@ impl Tweed {
         self.envelope += coeff * (abs_x - self.envelope);
         let sag = 1.0 / (1.0 + self.envelope * 1.1);
         let supply = self.ripple.gain(sag, self.envelope);
-        tube_clip_asym(x * supply * 1.8) * 0.66
+        // Power clipper at 8× (supply held per sample).
+        self.os_power
+            .shape(x, |u| tube_clip_asym(u * supply * 1.8) * 0.66)
     }
 }
 

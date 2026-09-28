@@ -12,7 +12,9 @@ pub mod wem;
 use crate::dsp::biquad::Biquad;
 use crate::dsp::conv::FftConvolver;
 
-pub use external::{ExternalIrCab, LoadedIr, MAX_IR_LEN, load_ir};
+pub use external::{
+    ExternalIrCab, LIVE_MAX_IR_LEN, LoadedIr, MAX_IR_LEN, OFFLINE_MAX_IR_LEN, load_ir,
+};
 pub use fender::FenderCab;
 pub use marshall::MarshallCab;
 pub use mesa::MesaCab;
@@ -646,7 +648,11 @@ impl MicChannel {
 /// The mic-position model across both channels: maps the edge↔centre knob to
 /// proximity lows, axis brightness, and an off-axis comb, so the knob feels like
 /// sliding a mic across the cone rather than tilting an EQ.
-struct MicPosition {
+///
+/// Also reused as a gentle post-EQ for external (already-miked) IRs: the capture
+/// already bakes mic/room, but a small position trim stays musical and avoids a
+/// dead knob. See [`ExternalIrCab`](super::external::ExternalIrCab).
+pub(crate) struct MicPosition {
     sr: f32,
     l: MicChannel,
     r: MicChannel,
@@ -656,7 +662,7 @@ struct MicPosition {
 }
 
 impl MicPosition {
-    fn new(sr: f32) -> Self {
+    pub(crate) fn new(sr: f32) -> Self {
         Self {
             sr,
             l: MicChannel::new(sr),
@@ -668,7 +674,7 @@ impl MicPosition {
     }
 
     /// Re-dial the per-channel filters and comb if the position changed.
-    fn set(&mut self, pos: f32) {
+    pub(crate) fn set(&mut self, pos: f32) {
         if (pos - self.last_pos).abs() <= 0.001 {
             return;
         }
@@ -685,7 +691,7 @@ impl MicPosition {
     }
 
     #[inline]
-    fn process(&mut self, l: f32, r: f32) -> (f32, f32) {
+    pub(crate) fn process(&mut self, l: f32, r: f32) -> (f32, f32) {
         (
             self.l.process(l, self.comb_g, self.comb_d),
             self.r.process(r, self.comb_g, self.comb_d),
@@ -702,7 +708,7 @@ impl MicPosition {
 const MIC_SAT_DRIVE: f32 = 0.12;
 
 #[inline]
-fn mic_sat(x: f32) -> f32 {
+pub(crate) fn mic_sat(x: f32) -> f32 {
     (x * MIC_SAT_DRIVE).tanh() / MIC_SAT_DRIVE
 }
 

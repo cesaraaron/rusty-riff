@@ -1,6 +1,6 @@
 use super::{
     AMP_MAX, AmpKnob, Amplifier, Bloom, BrightCap, Cached, CathodeBias, DynamicPresence, FrontEnd,
-    GridBlock, OutputTransformer, SpeakerLoad, SupplyRipple, ToneCache, VoiceBalance,
+    GridBlock, OutputTransformer, PowerOs, SpeakerLoad, SupplyRipple, ToneCache, VoiceBalance,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::oversample::Oversampler8;
@@ -60,6 +60,8 @@ pub struct Marshall {
     front: FrontEnd,
     // 8× oversampling for the nonlinear section
     os: Oversampler8,
+    // 8× oversampling for the power-stage clipper (sag envelope held per sample)
+    os_power: PowerOs,
     // Bass cut before the first gain stage at 8× rate — prevents sub-bass from
     // entering the clipper and generating low-frequency IM products ("fart").
     pre_clip_hp: Biquad,
@@ -106,6 +108,7 @@ impl Marshall {
             sr,
             front: FrontEnd::new(sr, 60.0),
             os: Oversampler8::new(sr),
+            os_power: PowerOs::new(sr),
             // JCM800 input coupling cap → sub-rumble cut at ~35 Hz, kept below the
             // 82 Hz low-E fundamental so the distorted bass string stays intact.
             pre_clip_hp: Biquad::highpass(sr8, 35.0, 0.707),
@@ -173,7 +176,7 @@ impl Marshall {
     }
 
     #[inline]
-    fn power_amp(&mut self, x: f32) -> f32 {
+    fn power_supply(&mut self, x: f32) -> f32 {
         let abs_x = x.abs();
         let coeff = if abs_x > self.envelope {
             1.0 - (-220.0 / self.sr).exp()
@@ -197,12 +200,21 @@ impl Marshall {
         // Mains ripple rides on the loaded supply: the 100 Hz gain modulation
         // intermodulates with the signal (ghost-note sidebands), fading out as
         // the supply unloads at idle.
-        let supply = self.ripple.gain(sag, self.envelope);
+        self.ripple.gain(sag, self.envelope)
+    }
+
+    #[inline]
+    fn power_amp(&mut self, x: f32) -> f32 {
+        let supply = self.power_supply(x);
+        // Power clipper at 8×: the envelope is slow (ms) so `supply` is held
+        // across subsamples; only the memoryless curve runs hot, killing
+        // base-rate fold-back fizz without touching feel.
         // The static drive stays around 2.2 so the decay remains on the tube
         // curve's knee, which adds tail compression without losing the note's
         // touch-sensitive even-harmonic growth. Pushing it much higher would
         // flatten the asymmetry and make the amp feel less responsive.
-        tube_clip_asym(x * supply * 2.2) * 0.62
+        self.os_power
+            .shape(x, |u| tube_clip_asym(u * supply * 2.2) * 0.62)
     }
 }
 

@@ -21,7 +21,7 @@ use ratatui::{
 use super::styles::{ACCENT, AMBER, CHROME, DIM, SAFE, WARN};
 use crate::audio::AudioEngine;
 use crate::dsp::Params;
-use crate::dsp::cab::{ExternalIrCab, MAX_IR_LEN, load_ir};
+use crate::dsp::cab::{ExternalIrCab, LIVE_MAX_IR_LEN, load_ir};
 
 /// Shown when the user tries to load/toggle an IR while an external amp (AU) is active
 /// *and* supplying its own cab — the built-in cab/IR is bypassed, so an IR is inert
@@ -144,7 +144,7 @@ impl IrBrowser {
         };
         let chosen = file.path.clone();
 
-        self.message = match load_ir(&file.path, self.sample_rate, MAX_IR_LEN) {
+        self.message = match load_ir(&file.path, self.sample_rate, LIVE_MAX_IR_LEN) {
             Ok(loaded) => {
                 let name = loaded.name.clone();
                 // A second cab for the take bus so takes re-amp through the same IR.

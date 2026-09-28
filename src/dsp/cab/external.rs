@@ -9,11 +9,17 @@
 //!     breakup + thermal power compression are speaker physics that happen *before*
 //!     any mic and are independent of which IR is convolved, so keeping them makes a
 //!     loaded IR feel as alive as the built-in cabs);
-//!   * then a single L/R convolver pair applies the file's impulse response.
+//!   * then a single L/R convolver pair applies the file's impulse response;
+//!   * then the shared [`MicPosition`](super::MicPosition) post-EQ lets the
+//!     `mic_pos` knob stay musical (a small edge↔centre trim) instead of going dead.
+//!     `blend`/`room` stay inert — re-blending an already-miked capture would
+//!     double up.
 //!
-//! The mic-blend and mic-position stages are intentionally bypassed — re-colouring
-//! an already-miked capture would double up. The `mic_pos`/`blend`/`room` knobs are
-//! therefore inert while an external IR is active.
+//! Live vs offline lengths: the realtime callback runs 128-sample partitions
+//! (`P=128` in [`crate::dsp::conv`], ~2.7 ms @48 kHz). `LIVE_MAX_IR_LEN` (8192
+//! taps ≈ 170 ms @48 kHz) keeps 64 partitions comfortably inside the gigging
+//! budget (RTF < 0.3 measured). Offline export (`src/export.rs`) uses
+//! `OFFLINE_MAX_IR_LEN` so full room tails survive.
 //!
 //! Decoding, resampling and conditioning all happen here, off the audio thread; the
 //! finished [`ExternalIrCab`] is handed to the realtime callback as a single boxed
@@ -25,17 +31,24 @@ use std::path::Path;
 use anyhow::{Context, Result, anyhow};
 
 use super::ir::FADE_START_FRAC;
-use super::{Cabinet, SpeakerDrive};
+use super::{Cabinet, MicPosition, SpeakerDrive, mic_sat};
 use crate::dsp::conv::FftConvolver;
 use crate::dsp::resample::resample;
 
+/// Live (realtime) IR length cap, in taps per channel. 8192 taps ≈ 170 ms @48 kHz:
+/// the 120–180 ms window that carries a guitar cab's direct + early-room energy,
+/// while keeping partitioned convolution inside the 128-frame gigging budget.
+pub const LIVE_MAX_IR_LEN: usize = 8192;
+/// Offline (export/render) IR length cap. Keeps full room tails for studio renders
+/// where CPU/latency don't matter.
+pub const OFFLINE_MAX_IR_LEN: usize = 32768;
 /// Longest IR, in taps per channel, kept after conditioning. Guitar-cab IRs are
 /// typically 512–2048 taps; anything longer is truncated (with a raised-cosine tail
 /// fade so the cut never clicks). Bounding the length keeps the per-sample
 /// convolution well inside the realtime budget — the built-in cabs already run two
 /// ~1024-tap convolutions per sample, and FFT cost grows sub-linearly, so 2048 is
 /// comfortably affordable.
-pub const MAX_IR_LEN: usize = 8192;
+pub const MAX_IR_LEN: usize = LIVE_MAX_IR_LEN;
 
 /// A decoded, rate-matched, length-conditioned stereo impulse response, ready to be
 /// loaded into a convolver. A mono source file is duplicated into both channels; a
@@ -179,12 +192,15 @@ fn normalize_pair(l: &mut [f32], r: &mut [f32]) {
 }
 
 /// A cabinet driven by a loaded `.wav` impulse response: [`SpeakerDrive`] on the
-/// mono input, then a per-channel convolution with the file's IR. The mic-position
-/// knobs are inert (the capture is already miked).
+/// mono input, then a per-channel convolution with the file's IR, then the shared
+/// mic-position post-EQ + mic saturation. `blend`/`room` are ignored — a loaded
+/// capture is already miked — but `mic_pos` stays live as a small trim.
 pub struct ExternalIrCab {
     speaker: SpeakerDrive,
     conv_l: FftConvolver,
     conv_r: FftConvolver,
+    mic: MicPosition,
+    level: f32,
     name: String,
 }
 
@@ -201,8 +217,15 @@ impl ExternalIrCab {
             speaker: SpeakerDrive::new(sr),
             conv_l,
             conv_r,
+            mic: MicPosition::new(sr),
+            level: 1.0,
             name: ir.name,
         }
+    }
+
+    /// Per-IR output trim so swapping captures doesn't jump level.
+    pub fn set_level(&mut self, level: f32) {
+        self.level = level;
     }
 
     /// The loaded IR's display label (its file stem).
@@ -212,12 +235,16 @@ impl ExternalIrCab {
 }
 
 impl Cabinet for ExternalIrCab {
-    /// `mic_pos`, `blend` and `room` are ignored — a loaded capture is already
-    /// miked, so re-colouring it would double up.
+    /// `blend` and `room` are ignored — a loaded capture is already miked, so
+    /// re-blending it would double up. `mic_pos` applies the shared
+    /// edge↔centre post-EQ as a trim.
     #[inline]
-    fn process(&mut self, sample: f32, _mic_pos: f32, _blend: f32, _room: f32) -> (f32, f32) {
+    fn process(&mut self, sample: f32, mic_pos: f32, _blend: f32, _room: f32) -> (f32, f32) {
+        self.mic.set(mic_pos);
         let drive = self.speaker.process(sample);
-        (self.conv_l.process(drive), self.conv_r.process(drive))
+        let (l, r) = (self.conv_l.process(drive), self.conv_r.process(drive));
+        let (l, r) = self.mic.process(l, r);
+        (mic_sat(l) * self.level, mic_sat(r) * self.level)
     }
 }
 
@@ -303,10 +330,16 @@ mod tests {
         let ir = load_ir(&path, 48_000.0, MAX_IR_LEN).unwrap();
         std::fs::remove_file(&path).ok();
         assert_eq!(ir.l.len(), MAX_IR_LEN);
+        assert_eq!(MAX_IR_LEN, LIVE_MAX_IR_LEN);
     }
 
     #[test]
-    fn cab_is_finite_bounded_and_mic_knobs_are_inert() {
+    fn offline_cap_exceeds_live_cap() {
+        const { assert!(OFFLINE_MAX_IR_LEN >= LIVE_MAX_IR_LEN * 2) }
+    }
+
+    #[test]
+    fn cab_is_finite_bounded_blend_room_inert_mic_pos_live() {
         // A decaying noise burst: a broadband (flat-ish) spectrum like a real cab
         // capture, so unit-energy normalisation yields a bounded per-tone gain —
         // unlike a pure exponential, which is a strong low-pass that would boost a
@@ -324,19 +357,36 @@ mod tests {
         std::fs::remove_file(&path).ok();
 
         let sr = 48_000.0;
-        // Two cabs fed identical input but different (ignored) mic params.
+        // `blend`/`room` are baked into the capture and must stay inert; `mic_pos`
+        // is a live post-EQ trim and must audibly move.
         let mk = || ExternalIrCab::new(sr, loaded.duplicate());
         let mut a = mk();
         let mut b = mk();
         let mut max_abs = 0.0f32;
         for i in 0..(sr as usize / 2) {
             let x = (2.0 * std::f32::consts::PI * 110.0 * i as f32 / sr).sin() * 1.2;
-            let (al, ar) = a.process(x, 0.0, 0.0, 0.0);
-            let (bl, br) = b.process(x, 1.0, 1.0, 1.0); // different mic args
+            let (al, ar) = a.process(x, 0.5, 0.0, 0.0);
+            let (bl, br) = b.process(x, 0.5, 1.0, 1.0); // different blend/room
             assert!(al.is_finite() && ar.is_finite(), "non-finite output");
-            assert_eq!((al, ar), (bl, br), "mic knobs must be inert");
+            assert_eq!((al, ar), (bl, br), "blend/room must be inert");
             max_abs = max_abs.max(al.abs()).max(ar.abs());
         }
         assert!(max_abs < 3.0, "external cab runaway: {max_abs}");
+
+        // mic_pos moves the shared edge↔centre trim: centre brighter than edge.
+        let mut centre = ExternalIrCab::new(sr, loaded.duplicate());
+        let mut edge = ExternalIrCab::new(sr, loaded.duplicate());
+        let (mut hi_c, mut hi_e) = (0.0f32, 0.0f32);
+        for i in 0..(sr as usize / 2) {
+            let x = (2.0 * std::f32::consts::PI * 6000.0 * i as f32 / sr).sin() * 0.25;
+            let (cl, cr) = centre.process(x, 0.85, 0.0, 0.0);
+            let (el, er) = edge.process(x, 0.15, 0.0, 0.0);
+            hi_c += cl * cl + cr * cr;
+            hi_e += el * el + er * er;
+        }
+        assert!(
+            hi_c > hi_e * 1.1,
+            "external mic_pos trim dead: centre {hi_c:.5} vs edge {hi_e:.5}"
+        );
     }
 }

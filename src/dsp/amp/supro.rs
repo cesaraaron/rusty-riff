@@ -1,6 +1,6 @@
 use super::{
     AMP_MAX, AmpKnob, Amplifier, Bloom, BrightCap, CathodeBias, FrontEnd, GridBlock,
-    OutputTransformer, SpeakerLoad, SupplyRipple, ToneCache, VoiceBalance,
+    OutputTransformer, PowerOs, SpeakerLoad, SupplyRipple, ToneCache, VoiceBalance,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::oversample::Oversampler8;
@@ -47,6 +47,7 @@ pub struct Supro {
     sr: f32,
     front: FrontEnd,
     os: Oversampler8,
+    os_power: PowerOs,
     pre_clip_hp: Biquad,
     stage_hp: Biquad,
     bloom: Bloom,
@@ -73,6 +74,7 @@ impl Supro {
             // Small amp: a slightly tighter input HP than the big heads.
             front: FrontEnd::new(sr, 70.0),
             os: Oversampler8::new(sr),
+            os_power: PowerOs::new(sr),
             pre_clip_hp: Biquad::highpass(sr8, 35.0, 0.707),
             // Inter-stage coupling trims the deep bass a small combo can't make.
             stage_hp: Biquad::highpass(sr8, 120.0, 0.707),
@@ -120,7 +122,9 @@ impl Supro {
         self.envelope += coeff * (abs_x - self.envelope);
         let sag = 1.0 / (1.0 + self.envelope * 0.9);
         let supply = self.ripple.gain(sag, self.envelope);
-        tube_clip_asym(x * supply * 1.8) * 0.66
+        // Power clipper at 8× (supply held per sample): kills base-rate fizz.
+        self.os_power
+            .shape(x, |u| tube_clip_asym(u * supply * 1.8) * 0.66)
     }
 }
 

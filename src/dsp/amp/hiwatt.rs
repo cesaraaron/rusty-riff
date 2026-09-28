@@ -1,6 +1,6 @@
 use super::{
     AMP_MAX, AmpKnob, Amplifier, Bloom, BrightCap, Cached, CathodeBias, DynamicPresence, FrontEnd,
-    OutputTransformer, SpeakerLoad, ToneCache, VoiceBalance,
+    OutputTransformer, PowerOs, SpeakerLoad, ToneCache, VoiceBalance,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::oversample::Oversampler8;
@@ -75,6 +75,7 @@ pub struct Hiwatt {
     front: FrontEnd,
     // 8× oversampling for the nonlinear section
     os: Oversampler8,
+    os_power: PowerOs,
     // Bass cut before the first gain stage at 8× rate — prevents sub-bass from
     // entering the clipper and generating low-frequency IM products ("fart").
     pre_clip_hp: Biquad,
@@ -118,6 +119,7 @@ impl Hiwatt {
             sr,
             front: FrontEnd::new(sr, 50.0),
             os: Oversampler8::new(sr),
+            os_power: PowerOs::new(sr),
             // DR103 input coupling → sub-rumble cut at ~30 Hz, below the 82 Hz
             // low-E fundamental so the distorted bass string stays intact.
             pre_clip_hp: Biquad::highpass(sr8, 30.0, 0.707),
@@ -188,8 +190,10 @@ impl Hiwatt {
         // compresses, so the amp stays clean and loud.
         let sag = 1.0 / (1.0 + self.envelope * 0.45);
         // Modest drive (1.8) and a healthy output scale keep the amp on the round,
-        // clean part of the curve until it is genuinely pushed.
-        tube_clip_asym(x * sag * 1.8) * 0.7
+        // clean part of the curve until it is genuinely pushed; the clip runs
+        // at 8×.
+        self.os_power
+            .shape(x, |u| tube_clip_asym(u * sag * 1.8) * 0.7)
     }
 }
 

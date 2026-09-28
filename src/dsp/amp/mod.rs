@@ -82,10 +82,16 @@ pub fn standard_knobs(
 ///
 /// We tap a resonant band (a 0 dB band-pass at the resonance) and feed back a
 /// portion that grows with the sag envelope, plus a static high shelf for the
-/// inductive treble rise.
+/// inductive treble rise. A displacement estimator adds excursion-driven bloom:
+/// palm-mute lows physically push the cone, dropping damping and opening the
+/// resonance further for a few tens of ms — the "thump" a static load can't give.
 pub(crate) struct SpeakerLoad {
     resonance: Biquad,
     presence: Biquad,
+    disp_lp: Biquad,
+    exc_env: f32,
+    exc_atk: f32,
+    exc_rel: f32,
     res_base: f32,
     res_dyn: f32,
 }
@@ -95,9 +101,14 @@ impl SpeakerLoad {
     /// resonance amount, `res_dyn` how much more the sag envelope adds, and
     /// `pres_db` the inductive high-shelf lift (at 5 kHz).
     pub fn new(sr: f32, fs: f32, q: f32, res_base: f32, res_dyn: f32, pres_db: f32) -> Self {
+        let coeff = |ms: f32| 1.0 - (-1.0 / (sr * ms / 1000.0)).exp();
         Self {
             resonance: Biquad::bandpass(sr, fs, q),
             presence: Biquad::high_shelf(sr, 5000.0, pres_db),
+            disp_lp: Biquad::lowpass(sr, 100.0, 0.9),
+            exc_env: 0.0,
+            exc_atk: coeff(8.0),
+            exc_rel: coeff(90.0),
             res_base,
             res_dyn,
         }
@@ -105,8 +116,18 @@ impl SpeakerLoad {
 
     #[inline]
     pub fn process(&mut self, x: f32, sag: f32) -> f32 {
+        // Excursion follows bass displacement (fast attack, ~90 ms release so
+        // chugs bloom then recover instead of hanging over the next hit).
+        let d = self.disp_lp.process(x).clamp(-1.5, 1.5).abs();
+        let c = if d > self.exc_env {
+            self.exc_atk
+        } else {
+            self.exc_rel
+        };
+        self.exc_env += c * (d - self.exc_env);
+        let exc = (self.exc_env * 0.35).min(0.35);
         let band = self.resonance.process(x);
-        let amt = self.res_base + self.res_dyn * sag;
+        let amt = self.res_base + self.res_dyn * sag + exc;
         self.presence.process(x + band * amt)
     }
 }
@@ -525,6 +546,38 @@ impl ToneCache {
             self.treble = treble;
         }
         moved
+    }
+}
+
+/// 8× oversampling wrapper for a power-stage memoryless waveshaper.
+///
+/// The preamp already runs at 8×, but the power-amp clipper ran at base rate and
+/// folded harmonics back as fizz. The sag/ripple envelope is slow (ms) so it is
+/// computed once per base-rate sample and held constant across the 8 subsamples —
+/// only the memoryless clip is evaluated at high rate. Owns an independent
+/// [`Oversampler`](crate::dsp::oversample::Oversampler) so preamp history is
+/// untouched; the extra round-trip group delay (~M base samples) is series delay,
+/// well inside the gigging budget.
+pub(crate) struct PowerOs {
+    os: crate::dsp::oversample::Oversampler8,
+}
+
+impl PowerOs {
+    pub fn new(sr: f32) -> Self {
+        Self {
+            os: crate::dsp::oversample::Oversampler8::new(sr),
+        }
+    }
+
+    /// Run memoryless `f` at 8× for one base-rate sample.
+    #[inline]
+    pub fn shape<F: FnMut(f32) -> f32>(&mut self, x: f32, mut f: F) -> f32 {
+        let up = self.os.upsample(x);
+        let mut down = [0.0f32; 8];
+        for (o, &u) in down.iter_mut().zip(up.iter()) {
+            *o = f(u);
+        }
+        self.os.downsample(down)
     }
 }
 

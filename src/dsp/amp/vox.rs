@@ -1,6 +1,6 @@
 use super::{
     AMP_MAX, AmpKnob, Amplifier, Bloom, BrightCap, Cached, CathodeBias, FrontEnd,
-    OutputTransformer, SpeakerLoad, ToneCache, VoiceBalance,
+    OutputTransformer, PowerOs, SpeakerLoad, ToneCache, VoiceBalance,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::oversample::Oversampler8;
@@ -54,6 +54,7 @@ pub struct Vox {
     front: FrontEnd,
     // 8× oversampling for the nonlinear section
     os: Oversampler8,
+    os_power: PowerOs,
     // Bass cut before the first gain stage at 8× rate — prevents sub-bass from
     // entering the clipper and generating low-frequency IM products ("fart").
     pre_clip_hp: Biquad,
@@ -99,6 +100,7 @@ impl Vox {
             sr,
             front: FrontEnd::new(sr, 70.0),
             os: Oversampler8::new(sr),
+            os_power: PowerOs::new(sr),
             // AC30 input coupling cap → sub-rumble cut at ~40 Hz, kept below the
             // 82 Hz low-E fundamental so the distorted bass string stays intact.
             pre_clip_hp: Biquad::highpass(sr8, 40.0, 0.707),
@@ -154,7 +156,9 @@ impl Vox {
         };
         self.envelope += coeff * (abs_x - self.envelope);
         let sag = 1.0 / (1.0 + self.envelope * 0.75);
-        tube_clip_asym(x * sag * 2.5) * 0.4
+        // Power clipper at 8× (sag held per sample).
+        self.os_power
+            .shape(x, |u| tube_clip_asym(u * sag * 2.5) * 0.4)
     }
 }
 

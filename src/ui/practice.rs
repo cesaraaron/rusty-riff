@@ -29,7 +29,7 @@ use super::styles::{ACCENT, AMBER, CHROME, DIM, GRID, HOT, SAFE, WARN};
 use crate::audio::AudioEngine;
 use crate::audio::calibration::{InputCalibration, REFERENCE_VERSION};
 use crate::dsp::Params;
-use crate::dsp::cab::{ExternalIrCab, MAX_IR_LEN, load_ir};
+use crate::dsp::cab::{ExternalIrCab, LIVE_MAX_IR_LEN, load_ir};
 use crate::dsp::metronome::Metronome;
 use crate::dsp::player::{MAX_TRACKS, TrackKind as PlayerKind};
 use crate::practice::{DecodedTrack, Practice, decode_track, peak_buckets, peaks};
@@ -1275,7 +1275,7 @@ impl PracticeUi {
         let mut ir_error = None;
         if let Some(rel) = &manifest.external_ir {
             match project::resolve_asset(dir, rel)
-                .and_then(|p| load_ir(&p, self.sample_rate, MAX_IR_LEN))
+                .and_then(|p| load_ir(&p, self.sample_rate, LIVE_MAX_IR_LEN))
             {
                 Ok(loaded) => {
                     let live = Box::new(ExternalIrCab::new(self.sample_rate, loaded.duplicate()));

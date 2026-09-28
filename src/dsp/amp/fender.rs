@@ -1,6 +1,6 @@
 use super::{
     AMP_MAX, AmpKnob, Amplifier, Bloom, BrightCap, CathodeBias, FrontEnd, GridBlock,
-    OutputTransformer, SpeakerLoad, ToneCache, VoiceBalance,
+    OutputTransformer, PowerOs, SpeakerLoad, ToneCache, VoiceBalance,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::effects::{SpringReverb, Tremolo};
@@ -70,6 +70,7 @@ pub struct Fender {
     sr: f32,
     front: FrontEnd,
     os: Oversampler8,
+    os_power: PowerOs,
     pre_clip_hp: Biquad,
     stage_hp: Biquad,
     bloom: Bloom,
@@ -98,6 +99,7 @@ impl Fender {
             sr,
             front: FrontEnd::new(sr, 50.0),
             os: Oversampler8::new(sr),
+            os_power: PowerOs::new(sr),
             pre_clip_hp: Biquad::highpass(sr8, 30.0, 0.707),
             // Wide-bandwidth coupling: the blackface clean keeps its low-mid body.
             stage_hp: Biquad::highpass(sr8, 120.0, 0.707),
@@ -141,7 +143,9 @@ impl Fender {
         };
         self.envelope += coeff * (abs_x - self.envelope);
         let sag = 1.0 / (1.0 + self.envelope * 0.25);
-        tube_clip_asym(x * sag * 1.5) * 0.72
+        // Power clipper at 8× (sag held per sample).
+        self.os_power
+            .shape(x, |u| tube_clip_asym(u * sag * 1.5) * 0.72)
     }
 }
 
