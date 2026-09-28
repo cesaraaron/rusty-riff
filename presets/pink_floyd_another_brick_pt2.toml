@@ -15,13 +15,15 @@ attack  = 0.36
 level   = 0.52
 
 # ── Big Muff ──────────────────────────────────────────────────────────────────
-# The scooped Muff wall, tone up so the solo cuts.
+# The scooped Muff wall, tone up so the solo cuts. Phase 7 joint re-voice: drive
+# and level brought back from 0.62/0.56 (they stacked with the leaned Hiwatt/WEM
+# lows into mud); the bright tone still cuts.
 [fuzz]
 enabled = true
 type    = 0.0
-fuzz    = 0.62
+fuzz    = 0.39
 tone    = 0.60
-level   = 0.56
+level   = 0.25
 
 [tube_screamer]
 enabled = false
@@ -49,15 +51,17 @@ mix     = 0.0
 mode    = 0.0
 
 # ── Amp ───────────────────────────────────────────────────────────────────────
-# Hiwatt DR103, clean and punchy under the fuzz.
+# Hiwatt DR103, clean and punchy under the fuzz. Phase 7 joint re-voice: the
+# model's structural lows were leaned (body lift +4 → +1.5 dB, WEM lows halved),
+# so bass/mid come back near noon — was 0.42/0.58 over the old pile-up.
 [amp]
 model  = "hiwatt"
 gain   = 0.46
-bass   = 0.42
-treble = 0.60
-mid    = 0.58
+bass   = 0.20
+treble = 0.65
+mid    = 0.28
 presence = 0.58
-master = 0.56
+master = 0.40
 
 # ── Cabinet ───────────────────────────────────────────────────────────────────
 # WEM 4×12 with Fanes — bright and aggressive.

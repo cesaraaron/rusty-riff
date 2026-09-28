@@ -23,12 +23,13 @@ level   = 0.52
 # ── Big Muff (Fuzz) ───────────────────────────────────────────────────────────
 # Barely a wall here — the first solo is mostly clean amp with the Muff adding
 # warmth and sustain under the note. A bright tone keeps it from turning to wool.
+# Phase 7 joint re-voice: level pulled back so the leaned stack stays a voice.
 [fuzz]
 enabled = true
 type    = 0.0   # 0 = Big Muff (the Ram's-Head voice)
 fuzz  = 0.40
 tone  = 0.68
-level = 0.50
+level = 0.30
 
 # TS off — the Muff and the amp do the work.
 [tube_screamer]
@@ -62,15 +63,17 @@ mode    = 0.0
 
 # ── Amp ───────────────────────────────────────────────────────────────────────
 # Hiwatt DR103 at modest gain: enough to bloom and sing, with headroom so the
-# Muff is a voice, not the whole sound. Bass kept low so the low end stays tight.
+# Muff is a voice, not the whole sound. Phase 7 joint re-voice: with the model's
+# structural lows leaned, bass/mid sit near noon — was 0.42/0.60 over the
+# +4 dB body lift and WEM pile-up.
 [amp]
 model  = "hiwatt"
 gain   = 0.34
-bass   = 0.42
-mid    = 0.60
+bass   = 0.20
+mid    = 0.30
 treble = 0.62
 presence = 0.56
-master = 0.58
+master = 0.42
 
 # ── Cabinet ───────────────────────────────────────────────────────────────────
 # WEM 4×12 with Fane Crescendos, near on-axis with a light ribbon blend — bright

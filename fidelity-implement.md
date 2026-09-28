@@ -741,3 +741,27 @@ all in the voicing layers around them.
   callback budget — the lean changes nothing measurable in CPU.
 - Open: maintainer listening on his rig against the isolated tracks; LIMIT
   indicator + hot-DI probe + control-authority test still proposed (not built).
+
+---
+
+## Phase 7 follow-up — re-voice the remaining Hiwatt/WEM presets
+
+Phase 7 leaned the Hiwatt/WEM model and re-voiced only `numb_solo_2` and
+`time_solo`; the other 7 Hiwatt+WEM presets kept their pre-Phase-7 knob banks and
+so render leaner/brighter than the anchors (the Phase 7 table above). This
+follow-up walks each sibling toward the appropriate anchor's *delta pattern* by
+dirt character — not a blind copy — in maintainer-listened batches. No model,
+routing or schema change: presets only.
+
+### Batch 1 — Big Muff family (anchor: `numb_solo_2`)
+
+- `pink_floyd_another_brick_pt2`: fuzz 0.62→0.39, level 0.56→0.25; amp bass
+  0.42→0.20, mid 0.58→0.28, master 0.56→0.40, treble 0.60→0.65.
+- `pink_floyd_comfortably_numb_solo_1`: fuzz level 0.50→0.30 (kept fuzz 0.40 /
+  tone 0.68 — the brighter, lower-gain first solo); amp bass 0.42→0.20, mid
+  0.60→0.30, master 0.58→0.42.
+- Baseline moves: `another_brick` LUFS −12.52→−14.09, centroid 3269→3532 Hz;
+  `numb_solo_1` LUFS −13.64→−14.94, centroid 3182→3474 Hz — both now sit near
+  the anchors' centroid rather than the pre-lean voicing.
+- Baseline regenerated (20 presets), `--check` green. Maintainer listened and
+  approved before commit.
