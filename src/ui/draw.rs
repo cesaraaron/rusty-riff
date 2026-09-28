@@ -434,7 +434,7 @@ fn render_amp_box(
         .split(parts[0]);
     // The tone-stack knobs drive the built-in amp; a loaded AU brings its own gain and
     // tone controls (edited in the AU modal), so they are dimmed while it is active —
-    // exactly as the mic knobs are while an external IR is up.
+    // exactly as the blend/room knobs are while an external IR is up.
     let amp_live = ext_amp.is_none();
     for (i, knob) in controls.iter().enumerate() {
         let ki = AMP_START + i;
@@ -525,18 +525,24 @@ fn render_cab_box(
                 .collect::<Vec<_>>(),
         )
         .split(parts[0]);
-    // The mic knobs only colour the built-in cab's multi-mic blend; they are inert when
-    // a finished IR is the cab, or when an external amp supplies its own cab.
-    let mic_live = ext_cab.is_none() && !cab_bypassed;
+    // Blend/room only colour the built-in cab's multi-mic blend — inert on a
+    // finished IR or when an external amp supplies its own cab. Position stays
+    // live on an external IR as a post-EQ trim.
+    let ext_ir_up = ext_cab.is_some();
     for (i, ki) in (MIC_START..MIC_END).enumerate() {
         let val = (KNOBS[ki].param)(params).load(Relaxed);
+        let live = if i == 0 {
+            !cab_bypassed
+        } else {
+            !ext_ir_up && !cab_bypassed
+        };
         render_compact_knob(
             f,
             mic_cols[i],
             KNOBS[ki].label,
             val,
             focus == Some(ki),
-            mic_live,
+            live,
             CHROME,
             !box_active,
         );
