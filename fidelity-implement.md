@@ -686,3 +686,58 @@ The bank was Floyd-heavy (9× hiwatt+wem) with no Mesa, Vox, or JCM800 tones:
 - `cargo clippy --release --lib`: clean.
 - `--bench`: RTF ≤ 0.082 @48 kHz, ≤ 0.21 @96 kHz (budget 0.5) — the two extra
   8× round trips per sample cost ~0.02 RTF total.
+
+---
+
+## Phase 7 — the preset knobs were compensating model bugs (maintainer-driven)
+
+The maintainer reported two bundled presets running hot/muddy live
+(`comfortably_numb_solo_2`, `time_solo`) and, crucially, doubted that Gilmour
+recorded those solos with bass/mid near zero. He was right: the workaround
+proved a model bug. With his live-matched corrections as ground truth, the
+audit found ~+10–14 dB of *structural* (non-knob) low buildup at 100–150 Hz:
+
+| Stage | Contribution | File |
+|---|---|---|
+| Hiwatt `VoiceBalance` body | hard +4.0 dB @160 Hz, *after* the tone stack — no knob can remove it | `amp/hiwatt.rs:154` |
+| WEM SM57 skeleton | +4 shelf@120, +5 hump@112, +3.6@210, +4.2@500 | `cab/wem.rs:169-173` |
+| WEM ribbon blend | +5 @105 Hz and shelves on top | `cab/wem.rs:193-196` |
+| SpeakerLoad resonance + excursion | dynamic, up to +0.35 on 0.04–0.09 bases | `amp/mod.rs` |
+
+…against docstrings claiming a *flat* Hiwatt and a *lean* Fane. The FMV
+`Components::HIWATT` values themselves are schematic-correct — the pile-up is
+all in the voicing layers around them.
+
+### What shipped
+
+- **Model lean (all documented at the edit sites):** WEM SM57 lows
+  +4/+5/+3.6/+4.2 → +1.5/+2.5/+2/+2.5 dB, ribbon +2.2/+5/+4.5 → +1/+2.5/+2.5
+  with room shelf +2.6 → +1.2; Hiwatt body lift +4.0 → +1.5 dB; excursion cap
+  +0.35 → +0.10 with release 90 → 50 ms (sits after every control, so it must
+  stay feel, not loudness).
+- **Joint re-voice, nulled against the maintainer's live matches.** His
+  `~/.config` saves (outro: fuzz 0.64→0.39, level 0.55→0.25, bass 0.42→0.10,
+  mid 0.60→0.15, treble →0.65, master 0.58→0.40; time: level 0.55→0.40, bass
+  →0.12, mid →0.20, master 0.55→0.30) were baked in, rendered as ground truth
+  (`target/fidelity/phase7-ground-truth`, gitignored), then the model was
+  leaned and knobs walked back toward noon over 3 rounds (R1 overshot +4.5 dB
+  @88 Hz — the FMV bass is potent). Final null on `chugs`: outro LUFS −0.01 dB
+  / centroid −0.4% / residual ±2 dB narrow-shape; time LUFS −0.05 dB /
+  centroid −0.1% / 3 bands marginally >1 dB. Final knobs: outro
+  bass 0.20 / mid 0.28, time bass 0.25 / mid 0.33 — near noon again, as on the
+  real rig. Chasing past ±2 dB on normalized synth DI would overfit; the
+  maintainer's rig is the real gate.
+- **Deliberately unchanged:** fuzz/drive staging (player's choice), Hiwatt
+  pre/stage HPs, OT, NFB presence, FMV components, all other presets' knobs
+  (siblings `shine_on`/`another_brick`/`money`/`whole_lotta`/solo 1 keep their
+  values pending their own live matches — no blind copying).
+- Baseline regenerated (20 presets), `--check` green.
+
+### Verification
+
+- `cargo fmt --check`, `clippy --all-targets --all-features -D warnings`: clean.
+- `cargo test --release --lib`: 400 passed; `bundled_presets` (20): pass.
+- `--bench`: RTF ≤ 0.080 @48 kHz; `bench` example still ~4% of the 10 ms
+  callback budget — the lean changes nothing measurable in CPU.
+- Open: maintainer listening on his rig against the isolated tracks; LIMIT
+  indicator + hot-DI probe + control-authority test still proposed (not built).

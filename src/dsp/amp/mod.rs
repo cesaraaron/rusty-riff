@@ -85,6 +85,11 @@ pub fn standard_knobs(
 /// inductive treble rise. A displacement estimator adds excursion-driven bloom:
 /// palm-mute lows physically push the cone, dropping damping and opening the
 /// resonance further for a few tens of ms — the "thump" a static load can't give.
+///
+/// Phase 7 deliberately keeps this small (≤ +0.10, ~50 ms release): it sits
+/// after every user control, so anything bigger becomes un-removable loudness
+/// rather than feel — the same failure mode as the old +4 dB voice lift and
+/// the WEM low pile-up.
 pub(crate) struct SpeakerLoad {
     resonance: Biquad,
     presence: Biquad,
@@ -108,7 +113,7 @@ impl SpeakerLoad {
             disp_lp: Biquad::lowpass(sr, 100.0, 0.9),
             exc_env: 0.0,
             exc_atk: coeff(8.0),
-            exc_rel: coeff(90.0),
+            exc_rel: coeff(50.0),
             res_base,
             res_dyn,
         }
@@ -116,8 +121,9 @@ impl SpeakerLoad {
 
     #[inline]
     pub fn process(&mut self, x: f32, sag: f32) -> f32 {
-        // Excursion follows bass displacement (fast attack, ~90 ms release so
-        // chugs bloom then recover instead of hanging over the next hit).
+        // Excursion follows bass displacement (fast attack, ~50 ms release so
+        // chugs thump then recover instead of hanging over the next hit or
+        // stacking into loudness).
         let d = self.disp_lp.process(x).clamp(-1.5, 1.5).abs();
         let c = if d > self.exc_env {
             self.exc_atk
@@ -125,7 +131,7 @@ impl SpeakerLoad {
             self.exc_rel
         };
         self.exc_env += c * (d - self.exc_env);
-        let exc = (self.exc_env * 0.35).min(0.35);
+        let exc = (self.exc_env * 0.10).min(0.10);
         let band = self.resonance.process(x);
         let amt = self.res_base + self.res_dyn * sag + exc;
         self.presence.process(x + band * amt)

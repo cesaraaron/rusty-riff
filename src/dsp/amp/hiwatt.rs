@@ -101,7 +101,7 @@ pub struct Hiwatt {
     // Presence — power-amp NFB characteristic, drive-dependent (base rate).
     presence: DynamicPresence,
     presence_cache: Cached,
-    // Structural voicing balance (base rate) — a light body lift and a gentle tilt
+    // Structural voicing balance (base rate): light low-mid body, gentle tilt
     // trim, flatter than the Marshall's, keeping the DR103's even response.
     voice: VoiceBalance,
     // Output DC blocker (the asymmetric power clip leaves a small offset).
@@ -151,7 +151,10 @@ impl Hiwatt {
             presence_cache: Cached::new(),
             // Light body lift and a gentle tilt trim — flatter than the Marshall's,
             // keeping the amp even across the neck rather than thick low-mids.
-            voice: VoiceBalance::new(sr, 160.0, 4.0, 900.0, -3.5),
+            // Phase 7 cut the body lift +4 → +1.5 dB: it sits after the tone
+            // stack, so no bass-knob position could remove it, and it stacked
+            // with the WEM low pile-up into mud.
+            voice: VoiceBalance::new(sr, 160.0, 1.5, 900.0, -3.5),
             out_hp: Biquad::highpass(sr, 12.0, 0.707),
             envelope: 0.0,
             // 4×12 resonance ~90 Hz, fairly well damped (a stiff supply and a big

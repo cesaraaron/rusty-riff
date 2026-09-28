@@ -19,14 +19,15 @@ attack  = 0.34
 level   = 0.52
 
 # ── Big Muff (Fuzz) ───────────────────────────────────────────────────────────
-# The Ram's-Head heart of the outro: thick and singing, but not maxed and with a
-# bright tone, so it stays a violin and not a mud slide.
+# The Ram's-Head heart of the outro: live-matched against the isolated outro
+# guitar (fuzz 0.39, level 0.25 — far back from the old 0.64/0.55, which drove
+# the stack into mud). Bright tone keeps it a violin, not a mud slide.
 [fuzz]
 enabled = true
 type    = 0.0   # 0 = Big Muff (the Ram's-Head voice)
-fuzz  = 0.64
+fuzz  = 0.39
 tone  = 0.60
-level = 0.55
+level = 0.25
 
 # TS off — the Muff is the only dirt.
 [tube_screamer]
@@ -59,16 +60,19 @@ mix     = 0.0
 mode    = 0.0
 
 # ── Amp ───────────────────────────────────────────────────────────────────────
-# A little more gain than the first solo, still a Hiwatt platform. Bass
-# deliberately low: the Muff already brings low end, so the amp must not add more.
+# Phase 7 joint re-voice. Live-matched near-zero bass/mid proved the model
+# stacked ~+12 dB of structural lows (WEM pile-up + Hiwatt +4 dB body lift +
+# excursion); the model was leaned, then bass/mid walked back up until the
+# render nulled vs the matched tone (LUFS −0.01 dB, centroid −0.4%,
+# residual ±2 dB narrow-shape). Knobs near noon again, as on the real rig.
 [amp]
 model  = "hiwatt"
 gain   = 0.40
-bass   = 0.42
-mid    = 0.60
-treble = 0.60
+bass   = 0.20
+mid    = 0.28
+treble = 0.65
 presence = 0.56
-master = 0.58
+master = 0.40
 
 # ── Cabinet ───────────────────────────────────────────────────────────────────
 # WEM 4×12 with Fane Crescendos, near on-axis, light ribbon, a touch of room. No

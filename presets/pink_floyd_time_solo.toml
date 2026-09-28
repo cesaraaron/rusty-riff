@@ -22,13 +22,14 @@ level   = 0.52
 
 # ── Fuzz Face ─────────────────────────────────────────────────────────────────
 # The Time solo is a Fuzz Face, not a Muff: type 0.5 selects the softer, mid-rich
-# voicing. Gritty and vocal with the tone up so it snarls instead of smoothing over.
+# voicing. Live-matched against the isolated solo (level 0.40, down from 0.55).
+# Tone up so it snarls instead of smoothing.
 [fuzz]
 enabled = true
 type    = 0.5   # 0 = Big Muff, 0.5 = Fuzz Face, 1 = Tone Bender
 fuzz    = 0.55
 tone    = 0.62
-level   = 0.55
+level   = 0.40
 
 # TS off — the fuzz into the driven amp is the sound.
 [tube_screamer]
@@ -61,16 +62,18 @@ mix     = 0.45
 mode    = 0.0   # 0 = chorus, 1 = vibrato
 
 # ── Amp ───────────────────────────────────────────────────────────────────────
-# Hiwatt DR103, the real front end for the Dark Side tones: clean, tight and
-# bright, driven by the Fuzz Face rather than by its own gain.
+# Hiwatt DR103, the real front end for the Dark Side tones. Phase 7 joint
+# re-voice (same structural-low fix as numb-outro): bass/mid back toward noon
+# until the render nulled vs the live-matched tone (LUFS −0.05 dB,
+# centroid −0.1%).
 [amp]
 model  = "hiwatt"
 gain   = 0.46
-bass   = 0.42
-mid    = 0.60
+bass   = 0.25
+mid    = 0.33
 treble = 0.62
 presence = 0.58
-master = 0.55
+master = 0.30
 
 # ── Cabinet ───────────────────────────────────────────────────────────────────
 # WEM 4×12 with Fane Crescendos — the bright, aggressive cab Gilmour used with

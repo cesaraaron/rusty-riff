@@ -17,10 +17,12 @@ use crate::dsp::biquad::Biquad;
 /// Voiced against measured commercial 4×12 captures (see the note in the Mesa
 /// `voicing_sm57`):
 ///   • Resonant sub HP at 76 Hz (tight, controlled low end)
-///   • +4 dB low shelf at 120 Hz + a +5 dB resonant hump at 112 Hz (cab depth —
-///     present but leaner than the closed-back Orange's chest thump)
-///   • +3.6 dB wide mound at 210 Hz and +4.2 dB at 500 Hz (low-mid body plateau,
-///     a touch leaner than the Greenback's)
+///   • +1.5 dB low shelf at 120 Hz + a +2.5 dB resonant hump at 112 Hz (cab
+///     depth — deliberately leaner than the closed-back Orange's chest thump;
+///     Phase 7 cut these from +4/+5 dB, which stacked with the amp body lift
+///     into ~+10 dB of mud that no bass knob could remove)
+///   • +2 dB wide mound at 210 Hz and +2.5 dB at 500 Hz (low-mid body plateau,
+///     leaner than the Greenback's)
 ///   • −4.5 dB at 1400 Hz (the mid pocket — shallower than the V30's, so the
 ///     mids stay present)
 ///   • +5 dB at 3000 Hz (the Fane's signature bright, aggressive upper-mid bark,
@@ -164,13 +166,14 @@ impl WemCab {
         let mut bands = [
             // Resonant rise into a ~112 Hz hump, then a broad 120–600 Hz body
             // plateau over a shallow mid pocket (see the Mesa `voicing_sm57`
-            // note). The bottom is present but leaner than the closed-back
-            // Orange's chest thump — a Fane is tighter and brighter.
+            // note). Lean by design (Phase 7): a Fane is tighter and brighter
+            // than a Greenback, and the old +4/+5 dB lows stacked with the amp
+            // body lift into mud no bass knob could cut (all downstream of it).
             Biquad::highpass(sr, 76.0, 1.2),
-            Biquad::low_shelf(sr, 120.0, 4.0),
-            Biquad::peak_eq(sr, 112.0, 1.1, 5.0),
-            Biquad::peak_eq(sr, 210.0, 0.7, 3.6),
-            Biquad::peak_eq(sr, 500.0, 0.65, 4.2),
+            Biquad::low_shelf(sr, 120.0, 1.5),
+            Biquad::peak_eq(sr, 112.0, 1.1, 2.5),
+            Biquad::peak_eq(sr, 210.0, 0.7, 2.0),
+            Biquad::peak_eq(sr, 500.0, 0.65, 2.5),
             // Shallow pocket at 1.4 kHz: less scooped than the V30, so the mids
             // stay present under the Fane's bright top.
             Biquad::peak_eq(sr, 1400.0, 1.2, -4.5),
@@ -191,10 +194,10 @@ impl WemCab {
     fn voicing_ribbon(sr: f32) -> impl FnMut(f32) -> f32 {
         let mut bands = [
             Biquad::highpass(sr, 74.0, 1.2),
-            Biquad::low_shelf(sr, 150.0, 2.2),
-            Biquad::peak_eq(sr, 105.0, 1.1, 5.0), // low resonant hump (cab depth)
-            Biquad::peak_eq(sr, 205.0, 0.7, 4.5), // broad low-mid body mound
-            Biquad::peak_eq(sr, 520.0, 0.9, 2.5),
+            Biquad::low_shelf(sr, 150.0, 1.0),
+            Biquad::peak_eq(sr, 105.0, 1.1, 2.5), // low resonant hump (cab depth)
+            Biquad::peak_eq(sr, 205.0, 0.7, 2.5), // broad low-mid body mound
+            Biquad::peak_eq(sr, 520.0, 0.9, 1.5),
             Biquad::peak_eq(sr, 2400.0, 1.5, 2.5), // softer, lower presence
             Biquad::high_shelf(sr, 4300.0, -13.0), // ribbon HF rolloff
             Biquad::lowpass(sr, 6200.0, 0.707),
@@ -206,7 +209,7 @@ impl WemCab {
     fn voicing_room(sr: f32) -> impl FnMut(f32) -> f32 {
         let mut bands = [
             Biquad::highpass(sr, 76.0, 0.8),
-            Biquad::low_shelf(sr, 150.0, 2.6),
+            Biquad::low_shelf(sr, 150.0, 1.2),
             Biquad::peak_eq(sr, 360.0, 1.2, -1.8),
             Biquad::peak_eq(sr, 900.0, 1.0, 2.0),
             Biquad::high_shelf(sr, 3900.0, -9.5),
