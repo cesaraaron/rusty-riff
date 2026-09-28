@@ -186,6 +186,26 @@ refactor with real regression risk for a cosmetic win, so it is deferred to its
 own dedicated change. Narrow-width layout polish remains available in the
 meantime.
 
+### 3.4 UI quality-of-life (rolling)
+
+**Why.** Small interaction wins that don't fit a single plan item.
+
+**Status — several landed:**
+- **Open on the timeline; close to it.** The app opens with only the practice
+  timeline (plus the always-visible chain ribbon) and focus on the timeline;
+  closing a focused panel returns focus to the timeline when it is open (else the
+  ribbon). `Panels::timeline_only()`.
+- **Quick-add a pedal.** On the pedalboard, `a` opens the add-pedal picker
+  (elsewhere `a` still opens the amp browser); `D` removes the focused pedal.
+- **Timeline ruler polish.** A gutter divider and minor ticks, drawn as a low
+  vertical tick.
+- **Expiring notices.** Status toasts have a lifetime rather than sticking.
+- **Factory defaults, import library, list search.** A reset-to-factory path,
+  an import library browser, and type-to-search in the session/preset lists.
+
+**Open follow-ups.** The remaining items here are the **MIDI learn/bind screen**
+(1.1) and further narrow-width layout work (3.3).
+
 ---
 
 ## Track 4 — Engineering and quality
@@ -246,8 +266,8 @@ site was not re-added.
 ## Recommended order
 
 _Done: 4.1 CI, 4.2 benchmarks, 4.3 guide, 3.1 presets, 3.2 onboarding profiles,
-1.1 MIDI expression + CC→knob config, 1.2 tap-tempo + MIDI clock, 2.1 looper,
-2.2 timeline UX, 2.3 loop-region export. See above._
+3.4 UI QoL, 1.1 MIDI expression + CC→knob config, 1.2 tap-tempo + MIDI clock,
+2.1 looper, 2.2 timeline UX, 2.3 loop-region export. See above._
 
 Remaining, in order:
 
