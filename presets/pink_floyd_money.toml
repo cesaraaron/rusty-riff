@@ -18,13 +18,14 @@ level   = 0.50
 
 # ── Fuzz Face ─────────────────────────────────────────────────────────────────
 # type 0.5 = Fuzz Face: softer and more vocal than the Muff, and it cleans up
-# when you roll the guitar back.
+# when you roll the guitar back. Phase 7 joint re-voice: drive/level pulled back
+# so the leaned Hiwatt/WEM stack stays articulate.
 [fuzz]
 enabled = true
 type    = 0.5   # 0 = Big Muff, 0.5 = Fuzz Face, 1 = Tone Bender
-fuzz    = 0.60
+fuzz    = 0.55
 tone    = 0.58
-level   = 0.55
+level   = 0.40
 
 # ── Wah ───────────────────────────────────────────────────────────────────────
 # The parked-then-sweeping wah that defines the riff, ahead of the fuzz. This is
@@ -63,15 +64,16 @@ mode    = 0.0
 
 # ── Amp ───────────────────────────────────────────────────────────────────────
 # Hiwatt DR103, clean and authoritative, driven by the fuzz and wah rather than
-# by its own gain.
+# by its own gain. Phase 7 joint re-voice: with the model's structural lows
+# leaned, bass/mid return near noon — was 0.42/0.58 over the old pile-up.
 [amp]
 model  = "hiwatt"
 gain   = 0.44
-bass   = 0.42
+bass   = 0.25
 treble = 0.60
-mid    = 0.58
+mid    = 0.33
 presence = 0.56
-master = 0.56
+master = 0.32
 
 # ── Cabinet ───────────────────────────────────────────────────────────────────
 # WEM 4×12 with Fane Crescendos — bright, aggressive and open.

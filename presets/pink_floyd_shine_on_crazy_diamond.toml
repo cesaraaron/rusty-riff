@@ -20,12 +20,13 @@ level   = 0.52
 
 # ── Fuzz ──────────────────────────────────────────────────────────────────────
 # A Fuzz Face — Gilmour's fuzz through 1975 (the Big Muff arrives ~1977).
+# Phase 7 joint re-voice: drive/level pulled back over the leaned stack.
 [fuzz]
 enabled = true
 type    = 0.5   # 0 = Big Muff, 0.5 = Fuzz Face, 1 = Tone Bender
-fuzz    = 0.66
+fuzz    = 0.55
 tone    = 0.54
-level   = 0.58
+level   = 0.42
 
 # TS off — the Tube Screamer is a 1979 pedal; the Shine On lead predates it.
 [tube_screamer]
@@ -45,14 +46,16 @@ bass    = 0.50
 
 # ── Amp ───────────────────────────────────────────────────────────────────────
 # Hiwatt DR103, clean and tight, letting the Fuzz Face and boost carry the voice.
+# Phase 7 joint re-voice: with the model's structural lows leaned, bass/mid sit
+# near noon — was 0.42/0.58 over the +4 dB body lift and WEM pile-up.
 [amp]
 model  = "hiwatt"
 gain   = 0.50
-bass   = 0.42
+bass   = 0.25
 treble = 0.60
-mid    = 0.58
+mid    = 0.33
 presence = 0.56
-master = 0.56
+master = 0.32
 
 # ── Cabinet ───────────────────────────────────────────────────────────────────
 # WEM 4×12 with Fane Crescendos — bright and open under the fuzz.

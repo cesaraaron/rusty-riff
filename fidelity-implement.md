@@ -765,3 +765,16 @@ routing or schema change: presets only.
   the anchors' centroid rather than the pre-lean voicing.
 - Baseline regenerated (20 presets), `--check` green. Maintainer listened and
   approved before commit.
+
+### Batch 2 — Fuzz Face family (anchor: `time_solo`)
+
+- `pink_floyd_money`: fuzz 0.60→0.55, level 0.55→0.40 (tone kept); amp bass
+  0.42→0.25, mid 0.58→0.33, master 0.56→0.32. Wah untouched.
+- `pink_floyd_shine_on_crazy_diamond`: fuzz 0.66→0.55, level 0.58→0.42 (tone
+  kept); amp bass 0.42→0.25, mid 0.58→0.33, master 0.56→0.32. Boost untouched.
+- Baseline moves: `money` LUFS −14.35→−18.16, centroid 1771→1901 Hz;
+  `shine_on` LUFS −12.59→−14.24, centroid 3118→3399 Hz. `money` drops further
+  than the other siblings (no compressor in that preset, so the amp-master cut
+  lands directly) — flagged for a possible master bump if it reads quiet live;
+  maintainer listened and approved as-is.
+- Baseline regenerated (20 presets), `--check` green.
