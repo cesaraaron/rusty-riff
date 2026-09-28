@@ -15,6 +15,10 @@
 //!     `blend`/`room` stay inert — re-blending an already-miked capture would
 //!     double up.
 //!
+//! Level: [`load_ir`] energy-normalises the pair, so loaded captures are
+//! consistent with each other. No attempt is made to match a loaded capture's
+//! loudness to the built-in cab family, which applies its own per-cab trims.
+//!
 //! Live vs offline lengths: the realtime callback runs 128-sample partitions
 //! (`P=128` in [`crate::dsp::conv`], ~2.7 ms @48 kHz). `LIVE_MAX_IR_LEN` (8192
 //! taps ≈ 170 ms @48 kHz) keeps 64 partitions comfortably inside the gigging
@@ -42,12 +46,10 @@ pub const LIVE_MAX_IR_LEN: usize = 8192;
 /// Offline (export/render) IR length cap. Keeps full room tails for studio renders
 /// where CPU/latency don't matter.
 pub const OFFLINE_MAX_IR_LEN: usize = 32768;
-/// Longest IR, in taps per channel, kept after conditioning. Guitar-cab IRs are
-/// typically 512–2048 taps; anything longer is truncated (with a raised-cosine tail
-/// fade so the cut never clicks). Bounding the length keeps the per-sample
-/// convolution well inside the realtime budget — the built-in cabs already run two
-/// ~1024-tap convolutions per sample, and FFT cost grows sub-linearly, so 2048 is
-/// comfortably affordable.
+/// Back-compat alias for [`LIVE_MAX_IR_LEN`] — the cap live loads and the tests
+/// use. Guitar-cab IRs are typically 512–2048 taps; anything longer is trimmed to
+/// the cap with a raised-cosine tail fade so the cut never clicks. Bounding the
+/// length keeps the per-sample convolution well inside the realtime budget.
 pub const MAX_IR_LEN: usize = LIVE_MAX_IR_LEN;
 
 /// A decoded, rate-matched, length-conditioned stereo impulse response, ready to be
@@ -200,7 +202,6 @@ pub struct ExternalIrCab {
     conv_l: FftConvolver,
     conv_r: FftConvolver,
     mic: MicPosition,
-    level: f32,
     name: String,
 }
 
@@ -218,14 +219,8 @@ impl ExternalIrCab {
             conv_l,
             conv_r,
             mic: MicPosition::new(sr),
-            level: 1.0,
             name: ir.name,
         }
-    }
-
-    /// Per-IR output trim so swapping captures doesn't jump level.
-    pub fn set_level(&mut self, level: f32) {
-        self.level = level;
     }
 
     /// The loaded IR's display label (its file stem).
@@ -244,7 +239,7 @@ impl Cabinet for ExternalIrCab {
         let drive = self.speaker.process(sample);
         let (l, r) = (self.conv_l.process(drive), self.conv_r.process(drive));
         let (l, r) = self.mic.process(l, r);
-        (mic_sat(l) * self.level, mic_sat(r) * self.level)
+        (mic_sat(l), mic_sat(r))
     }
 }
 
