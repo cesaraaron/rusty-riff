@@ -1783,15 +1783,15 @@ impl PracticeUi {
             t = next;
         }
 
-        // Minor ticks between the labelled ranges, as dim dots. Never overwrite
-        // a label, and skip when they would crowd.
+        // Minor ticks between the labelled ranges, as dim low ticks (U+02CC).
+        // Never overwrite a label, and skip when they would crowd.
         let minor = tick / 5.0;
         if secs > 0.0 && minor > 0.0 && (minor / secs) * wave_w as f64 >= 2.0 {
             let mut t = minor;
             while t < secs {
                 let col = ((t / secs) * wave_w.saturating_sub(1) as f64).round() as usize;
                 if col < wave_w && cells[col].0 == ' ' {
-                    cells[col] = ('·', false);
+                    cells[col] = ('ˌ', false);
                 }
                 t += minor;
             }
@@ -1814,7 +1814,7 @@ impl PracticeUi {
                 Style::default().fg(HOT).add_modifier(Modifier::BOLD)
             } else if ch == ' ' {
                 Style::default()
-            } else if ch == '·' {
+            } else if ch == 'ˌ' {
                 Style::default().fg(DIM)
             } else {
                 Style::default().fg(GRID)
@@ -3641,7 +3641,7 @@ mod tests {
         // Divider at the gutter plus the playhead at frame 0 sit side by side.
         assert!(text.contains("││"), "gutter divider missing");
         // Minor ruler ticks between the labels.
-        assert!(text.contains('·'), "ruler minor ticks missing");
+        assert!(text.contains('ˌ'), "ruler minor ticks missing");
     }
 
     #[test]
