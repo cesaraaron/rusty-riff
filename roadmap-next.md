@@ -1,7 +1,8 @@
 # rusty-riff — next-roads plan
 
 This is the **off-path roadmap**: work deliberately outside the fidelity plan
-([`fidelity-plan.md`](fidelity-plan.md) / [`fidelity-implement.md`](fidelity-implement.md)).
+([`docs/fidelity-plan.md`](docs/fidelity-plan.md) /
+[`docs/fidelity-implement.md`](docs/fidelity-implement.md)).
 
 The fidelity path stays the primary track. This document captures product and
 engineering directions so they don't get lost, and is the acceptance record for
@@ -111,12 +112,12 @@ integration test (`tests/bundled_presets.rs`) guards preset renders.
 **Why.** The practice timeline needed a readable, navigable waveform while
 writing and recording.
 
-**Scope / acceptance.** See [`timeline-ux-plan.md`](timeline-ux-plan.md) (F1–F11):
-empty-timeline navigation, a time ruler on a fixed gutter, fractional seek steps,
-a live recording waveform, taller rows with `Tab` row-zoom, adaptive + braille
-waveforms, playhead-centred time zoom, and waveform gain modes. **Status — done**;
-as-built as increments D3–D4 in
-[`timeline-sessions-implement.md`](timeline-sessions-implement.md).
+**Scope / acceptance.** F1–F11, all shipped: empty-timeline navigation, a time
+ruler on a fixed gutter, fractional seek steps, a live recording waveform, taller
+rows with `Tab` row-zoom, adaptive + braille waveforms, playhead-centred time
+zoom, and waveform gain modes. **Status — done.** The plan and as-built records
+were folded away; the shipped behaviour is documented in the module docs of
+`src/practice.rs` and the in-app `K` reference.
 
 ### 2.3 Loop-region export
 

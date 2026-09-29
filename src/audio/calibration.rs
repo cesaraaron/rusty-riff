@@ -122,7 +122,7 @@ pub fn condition_block(
 
 /// Bumped when the reference targets change; recorded with each saved entry so
 /// the UI can warn about a stale calibration. Version 2 = targets measured on the
-/// reference rig (see `fidelity-implement.md` → B8).
+/// reference rig (see `docs/fidelity-implement.md` → B8).
 pub const REFERENCE_VERSION: u32 = 2;
 
 /// The pickup class a calibration was measured with.

@@ -1,8 +1,8 @@
 //! Session persistence: the versioned `session.toml` manifest and the atomic
 //! project-folder save/load operations.
 //!
-//! A **session** is a portable project folder (see
-//! [`timeline-sessions-plan.md`](../../timeline-sessions-plan.md) §7):
+//! A **session** is a portable project folder — a project, not a preset and not
+//! an already-rendered WAV:
 //!
 //! ```text
 //! ~/.config/rusty-riff/sessions/<name>/
@@ -10,6 +10,37 @@
 //!   audio/track-<id>.<ext>   # imported originals and dry raw takes
 //!   irs/cabinet.<ext>        # the selected external IR, when applicable
 //! ```
+//!
+//! ## Session storage contract
+//!
+//! **Save.** Snapshot a *coherent* rig/transport/track list, copy the required
+//! original assets into a staging directory, write and validate the versioned
+//! manifest, then commit — without destroying the previous valid session if any
+//! copy or write fails. Asset paths resolve relative to the project folder and
+//! paths that escape it are rejected, so a supposedly portable session never
+//! depends on absolute local imports. Originals and recovery captures are left
+//! untouched until the save completes. Re-saving in place is safe:
+//! [`write_session`] skips copying a file onto itself, without which a
+//! load-then-save would truncate the asset.
+//!
+//! **Load.** Parse and validate the version, project rate, loop/order, IDs, asset
+//! paths and existence; decode/resample assets and prepare plugin and IR
+//! instances off-thread; then replace the active session coherently. A failure
+//! keeps the previous working session. Effect playback state resets at the new
+//! session boundary, the playhead seeks to the saved position, and the session
+//! loads **paused** even if the transport was playing when saved. Track
+//! selection and panel UI may be restored, but appearance is secondary to
+//! audio/project data.
+//!
+//! **Partial loads.** If a required AU/CLAP binary or plugin state is
+//! unavailable, report which one is missing and what was not restored — never
+//! display an external rig as active when its processor is absent. The raw
+//! project audio still loads so the user can resolve it or switch to a built-in
+//! rig deliberately. A session restores the selected IR and whether it was
+//! active, full-rig vs amp-only AU routing, the plugin insert, and all
+//! available control values. A standalone preset load may replace rig settings
+//! within a session but must not delete or move its tracks, and changing audio
+//! devices must not erase the session, including a partly recovered one.
 //!
 //! This module is pure IO plus the serializable view of a [`Session`]. It never
 //! touches the audio thread: the UI builds a [`Manifest`] from its control-thread

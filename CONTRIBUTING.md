@@ -61,9 +61,11 @@ examples/           — standalone DSP analysis utilities
 docs/               — fidelity reference matrix
 ```
 
-Design/investigation notes live at the repository root: `fidelity-plan.md`,
-`fidelity-implement.md`, `timeline-sessions-plan.md`,
-`timeline-sessions-implement.md`.
+Design/investigation notes live in `docs/`: `fidelity-plan.md`,
+`fidelity-implement.md`, `fidelity-references.md`, and the open
+`dsp-findings-2026-09.md` audit. The export and session-storage contracts live in
+the module docs of `src/export.rs` / `src/project.rs`; the session invariants live
+in `src/session.rs`.
 
 ## Code style
 
@@ -347,7 +349,7 @@ There are two different "calibrations" — don't conflate them:
 3. Regenerate the baseline in the same commit:
    `cargo run --release --example fidelity_render -- --presets all --write-baseline docs/fidelity/baseline-synth-48k.toml`,
    then `--check` it.
-4. Record the rig and the measured numbers in `fidelity-implement.md`.
+4. Record the rig and the measured numbers in `docs/fidelity-implement.md`.
 5. Existing saved calibrations with an older `reference_version` will toast
    "input calibration is from an older reference — recalibrate (N)"; re-running
    `N` fixes them.

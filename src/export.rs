@@ -17,7 +17,43 @@
 //! (no state capture), so the UI refuses to export while an AU amp or CLAP insert
 //! is loaded; the external **IR** is supported and re-loaded at the export rate.
 //!
-//! See [`timeline-sessions-plan.md`](../../timeline-sessions-plan.md) §6.
+//! ## Export contract
+//!
+//! **Range.** By default tick zero to the end of the latest **unmuted raw
+//! take**, plus enough silence to render the current rig's delay/reverb tails,
+//! with a capped maximum and a silence threshold so a long feedback tail cannot
+//! extend the render forever. Muted takes and imported tracks never extend the
+//! range. With no takes, the export explains there is nothing to render. The
+//! loop region affects monitoring and recording but does not silently truncate
+//! the export — a region export is a separate, explicitly labelled mode
+//! ([`ExportJob::range_ticks`]).
+//!
+//! **Snapshot.** At export start every source is frozen: raw take IDs and
+//! assets, starts, gains/mutes, the project rate, and the whole rig
+//! (amp/pedal/chain/master values, built-in vs external cab, AU amp mode,
+//! loaded plugins and their settings). Live UI changes afterwards apply only to
+//! **subsequent** exports. A fresh render graph starts from known DSP state,
+//! processes in deterministic blocks, and keeps filter and plugin state across
+//! those blocks. Each source is resampled from its stored original rate
+//! off-thread. Output is a stereo 32-bit float WAV written to a temporary file
+//! beside the destination and renamed on success, so progress and cancellation
+//! never leave a partial final WAV.
+//!
+//! **External-rig parity.** The live `DspChain::process_block` has a post-rack
+//! CLAP insert and an AU amp override with amp-only/full-rig and latency
+//! handling. Reusing a live plugin instance from a worker thread is unsafe, so
+//! the export builds separate instances on the worker. Some plugins cannot be
+//! faithfully reconstructed from exposed parameters alone; when that is the case
+//! the export **refuses** rather than silently producing a built-in-only file,
+//! and the raw sources are left intact.
+//!
+//! **Comparison.** For a single raw take with no backing/click/live input, the
+//! rendered output is compared against an appropriately captured monitored
+//! take-bus segment at matched start, rate and initial effect state. Gain
+//! changes, staggered takes, mute, loop, the output limiter, multiple
+//! callback/block sizes and external-plugin latency are all in scope.
+//! Sample-exact equivalence is not required for nondeterministic plugins; those
+//! are documented exceptions with a stated audible-parity expectation.
 
 use std::path::PathBuf;
 use std::sync::Arc;

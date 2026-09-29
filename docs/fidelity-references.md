@@ -1,6 +1,6 @@
 # Fidelity references (Phase 0)
 
-This document is the Phase 0 reference matrix required by [`fidelity-plan.md`](../fidelity-plan.md)
+This document is the Phase 0 reference matrix required by [`fidelity-plan.md`](fidelity-plan.md)
 before any tone, amp, cabinet, or preset changes. It has two jobs:
 
 1. Record, **from the code and bundled TOML only**, what each preset currently
@@ -25,7 +25,7 @@ before any tone, amp, cabinet, or preset changes. It has two jobs:
   (or add the missing device) — never invent history to justify the code.
 - The firmware/DSP side of each named device (is the Fuzz voice actually a Big
   Muff? is the "spring" a real spring?) is tracked in
-  [`fidelity-implement.md`](../fidelity-implement.md) and `fidelity-plan.md` Phases 3-4.
+  [`fidelity-implement.md`](fidelity-implement.md) and `fidelity-plan.md` Phases 3-4.
 
 ## Confidence legend
 
@@ -93,7 +93,7 @@ everywhere.
 ### Description-vs-path flags
 
 These are contradictions provable from the TOML alone (see commit history in
-[`fidelity-implement.md`](../fidelity-implement.md) for the fixes). The **Claimed** text and **Path** are
+[`fidelity-implement.md`](fidelity-implement.md) for the fixes). The **Claimed** text and **Path** are
 both reproduced so the flag is auditable.
 
 | Preset | Claimed | Actual enabled path | Flag |
@@ -116,7 +116,7 @@ both reproduced so the flag is auditable.
 > where one was found, otherwise `Source: _TBD_`. Sourcing *all* session gear is
 > explicitly **out of scope**, so every preset is *inspired by*, not an exact
 > session rig. Component references for Phase 3 are listed in
-> [`../fidelity-implement.md`](../fidelity-implement.md) → "Phase 3 — component
+> [`fidelity-implement.md`](fidelity-implement.md) → "Phase 3 — component
 > references".
 
 ### `acdc_back_in_black.toml` / `acdc_highway_to_hell.toml`

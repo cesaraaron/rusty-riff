@@ -18,6 +18,30 @@
 //!
 //! This module is pure data: it performs no IO and owns no audio state, so it is
 //! cheap to unit-test.
+//!
+//! ## Invariants — do not break
+//!
+//! - **Realtime safety.** No allocation, blocking, filesystem IO, or
+//!   `Vec`/plugin drop in the audio callback. Displaced tracks and plugins are
+//!   returned via rings and dropped on the control thread. The capture ring is
+//!   fixed-size; overflow is flagged, never silently truncated.
+//! - **Coherence per callback.** All `TrackCommand`s are drained at the top of
+//!   `on_input`, so a block sees a whole track set. Install success/failure is
+//!   reported back via `TrackAck`.
+//! - **Generation guard.** A decode/capture for id `X` at generation `G` must not
+//!   populate a row that has been replaced; `finish_decode` uses the pending
+//!   generation, `poll_capture` rejects mismatched generations.
+//! - **Take alignment uses `CaptureState::start_frame`** — the exact project
+//!   frame of the first sample — **not** the arm-time playhead. (This was buggy:
+//!   the value was read from an always-zero `CaptureResult.start_frame`. That
+//!   field was removed and `poll_capture` reads the shared atomic.)
+//! - **Project ticks, not engine frames, are persisted.** [`ticks_to_frames`]
+//!   (round half away from zero) is the single conversion shared by playback and
+//!   the offline exporter. The project rate is adopted from the first engine and
+//!   kept across device changes.
+//! - **Portable paths only.** `resolve_asset` rejects absolute paths and `..`, so
+//!   a session cannot reference files outside its folder.
+//! - **Re-saving in place is safe.** See [`crate::project`].
 
 use std::path::PathBuf;
 

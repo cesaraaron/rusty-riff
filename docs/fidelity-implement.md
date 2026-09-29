@@ -4,7 +4,7 @@ Companion to [`fidelity-plan.md`](fidelity-plan.md) (formerly `plan.md`). The
 plan is the **design / acceptance** document; this file is the **as-built**
 record: what shipped, review findings, invariants, deviations, and what is still
 missing. Evidence for historical gear claims lives in
-[`docs/fidelity-references.md`](docs/fidelity-references.md). Read all three
+[`docs/fidelity-references.md`](fidelity-references.md). Read all three
 before reviewing or continuing. (This file was formerly
 `IMPLEMENTATION-NOTES.md`.)
 
@@ -194,7 +194,7 @@ Commits: `docs: add the Phase 0 fidelity reference scaffold`,
 `docs(dsp): reconcile the TS-808 input-HP prose…`,
 `docs(presets): make descriptions match the enabled signal path`.
 
-- **Reference scaffold** — new [`docs/fidelity-references.md`](docs/fidelity-references.md):
+- **Reference scaffold** — new [`docs/fidelity-references.md`](fidelity-references.md):
   the code-derived inventory of all 17 presets (amp, cab, enabled effects in
   signal order, delay/fuzz mode), a description-vs-path flag table, the
   per-preset reference checklist, and a source-log template. It makes no
@@ -458,7 +458,7 @@ material that cannot be invented from code:
 ### Phase 0 — reference matrix
 
 **Closed (evidence-as-available).**
-[`docs/fidelity-references.md`](docs/fidelity-references.md) records **recording
+[`docs/fidelity-references.md`](fidelity-references.md) records **recording
 dates, studios, producers and guitar credits** for every preset group (Wikipedia,
 secondary, marked `documented`) **plus verified secondary gear sources where
 found** (gilmourish for Floyd; Guitar World for Eagles/Zeppelin; MusicRadar/

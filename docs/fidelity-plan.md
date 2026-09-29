@@ -3,7 +3,7 @@
 **Companion documents.** This file is the **design / acceptance** document. The
 as-built record (what shipped, review findings, invariants, increment log) is
 [`fidelity-implement.md`](fidelity-implement.md); the evidence matrix for
-historical gear claims is [`docs/fidelity-references.md`](docs/fidelity-references.md).
+historical gear claims is [`docs/fidelity-references.md`](fidelity-references.md).
 Read all three before continuing. Where shipped code differs from this plan,
 `fidelity-implement.md` is authoritative. (Formerly `plan.md` /
 `IMPLEMENTATION-NOTES.md`.)

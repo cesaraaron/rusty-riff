@@ -96,23 +96,29 @@ External impulse responses (IRs) for cabinet simulation are stored in `~/.config
 ## Documentation
 
 The user-facing guide is the in-app help overlay (`K`) plus the README. The
-design/as-built notes live at the repository root (`fidelity-plan.md`,
-`fidelity-implement.md`, `timeline-sessions-plan.md`,
-`timeline-sessions-implement.md`), and the off-path product/engineering roadmap
-is `roadmap-next.md`. For running parallel feature branches/agents, see
+design/as-built notes live in `docs/` (`fidelity-plan.md`,
+`fidelity-implement.md`), and the off-path product/engineering roadmap is
+`roadmap-next.md` at the root. For running parallel feature branches/agents, see
 `docs/parallel-work.md`. There is no separate docs website.
 
 ---
 
 ## Design docs (keep in sync)
 
-- `fidelity-plan.md` is the design/acceptance document; `fidelity-implement.md`
-  is the as-built record. Log every routed/topology commit in its increment log.
+- `docs/fidelity-plan.md` is the design/acceptance document;
+  `docs/fidelity-implement.md` is the as-built record. Log every
+  routed/topology commit in its increment log.
 - `docs/fidelity-references.md` is the evidence matrix for historical gear claims.
+- `docs/dsp-findings-2026-09.md` is the open DSP/tone audit (limiter ceiling,
+  biquad state resets, amp gain staging, cab loading, export parity) that the
+  current rework phases come from.
+- The timeline/session export and storage contracts were folded into the module
+  docs of `src/export.rs` and `src/project.rs`; the session invariants live in
+  `src/session.rs`.
 - Reference input calibration (the `target_peak_dbfs` values, `REFERENCE_VERSION`,
   and the harness baseline) is a maintainer task with its own runbook in
   `CONTRIBUTING.md` → "Reference calibration (maintainers)"; the measured rig is
-  recorded in `fidelity-implement.md`. Don't change those targets without
+  recorded in `docs/fidelity-implement.md`. Don't change those targets without
   following that procedure.
 - There is no docs-parity rule for a website; user-facing behavior is documented in
   the README and the in-app `K` reference.

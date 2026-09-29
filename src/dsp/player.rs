@@ -13,6 +13,18 @@
 //! boxed values and installed lock-free by [`TrackId`]. Everything here is O(1)
 //! per track and allocation-free; the voice never frees a track itself —
 //! displaced tracks are shipped back to the control thread for disposal.
+//!
+//! ## Known limitations
+//!
+//! - **`MAX_TRACKS` is a hard cap** with a UI message; there is no long-track
+//!   streaming. A 10-minute stereo f32 decode is ~230 MB, so eager decoding of
+//!   many long files is bounded by this limit.
+//! - **The take bus loads its own plugin instances.** CPU and plugin count
+//!   roughly double while an external plugin or IR is loaded. That is
+//!   deliberate (see [`crate::audio`]'s `take_chain`), not measured — watch CPU
+//!   in release builds.
+//! - **Take-bus plugin latency is not compensated** between the live and take
+//!   buses. Only the built-in-vs-AU compensation inside a single chain exists.
 
 /// A track identifier. Must match [`crate::session::TrackId`]; kept as a plain
 /// `u64` so this module has no dependency on the session model.
