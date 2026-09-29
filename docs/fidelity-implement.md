@@ -826,3 +826,50 @@ unity, with no treble roll-off as drive rose.
   ~+7–9 dB through 140–706 Hz, centroid 3314→3120 Hz, LUFS −13.88→−14.31. The
   maintainer A/B'd and approved ("so much better"). Baseline regenerated (20
   presets), `--check` green.
+
+---
+
+## Phase 8 — DSP audit remediation (findings A1…, from `dsp-findings-2026-09.md`)
+
+A review of the DSP graph, chain-order machinery and output/export path landed
+as [`docs/dsp-findings-2026-09.md`](dsp-findings-2026-09.md). Every item is
+tagged **DEFECT** (contradicts its own docs, its own test, or arithmetic),
+**GAP** (self-consistent but does not model something that matters) or **RISK**
+(correct today, load-bearing on an unenforced invariant). Remediation runs
+phase A–F; each phase re-blesses the baseline in its own commit and records the
+directional drift here.
+
+**Baseline state on entry.** `--check` was already failing with **164 tolerance
+violations** before this phase began: commit `2527c61` re-voiced amps and
+presets without re-blessing. That drift is inherited, not introduced here.
+
+### A1 — the output limiter was not a limiter
+
+`soft_limit` was `0.95 + e / (1 + 5e)` with `e = |x| - 0.95`. That fraction
+tends to `1/5 = 0.2`, so the asymptote was `0.95 + 0.2 = **1.15**` — the
+"limiter" *raised* the ceiling by **+1.21 dBFS**. Computed on the old curve:
+`|x| = 2.0 → 1.118` (+0.97 dBFS), `|x| = 100 → 1.1496` (+1.21 dBFS).
+
+It survived because the only ceiling test asserted `max_abs < 1.2` **and fed a
+0.8-amplitude sine**, which never reaches the 0.95 knee. The bound permitted
+exactly the overshoot the function was supposed to prevent.
+
+Fix: `KNEE_SHAPE = 20.0`, putting the asymptote at `0.95 + 0.05 = 1.0`. The
+curve is C1 at the knee (the derivative of `e/(1+ke)` is 1 at `e = 0`, matching
+the unity region), so there is no slope discontinuity where the knee opens.
+
+- **Tests:** `soft_limit_holds_a_hard_ceiling_of_unity` (new) pins sub-knee
+  passthrough, the ceiling at inputs up to `1e9`, odd symmetry, monotonicity,
+  and that the knee actually compresses rather than merely touching unity. The
+  existing `master_bus_...` bound is tightened from `< 1.2` to `<= 1.0`. Verified
+  the new test *fails* against the old `5.0` shape (`ceiling exceeded at 1.5:
+  1.0966667`).
+- **Measured:** no preset reaches the knee at these levels, so the re-bless is
+  driven entirely by the inherited `2527c61` drift, not by this change. LUFS,
+  crest, correlation and centroid are unchanged by A1. The gain-limit
+  (F1) side — stereo-linked gain reduction, release time, oversampling of the
+  limiter itself — is **not** in this increment; the master bus is documented
+  stateless and `process_block_matches_per_sample` asserts bit-exact parity
+  between the per-sample and per-block paths, so that restructuring lands with
+  F3.
+- **Baseline regenerated** (20 presets), `--check` green.

@@ -2037,16 +2037,31 @@ fn widen(l: f32, r: f32, width: f32) -> (f32, f32) {
     (mid + side, mid - side)
 }
 
-/// Transparent soft limiter: unity for |x| < 0.95, gentle knee above.
-/// Replaces the old x.tanh() which colored the signal even at normal levels.
+/// Output soft limiter: unity for |x| < `KNEE`, a gentle rational knee above,
+/// and a hard ceiling at exactly 1.0.
+///
+/// The knee is `KNEE + e / (1 + KNEE_SHAPE * e)` where `e = |x| - KNEE`. Its
+/// asymptote is `KNEE + 1 / KNEE_SHAPE`, so `KNEE_SHAPE` is what sets the
+/// ceiling — at the old value of `5.0` that was `0.95 + 0.2 = 1.15`, i.e. the
+/// "limiter" *raised* the ceiling by +1.2 dBFS. `KNEE_SHAPE = 20.0` puts the
+/// asymptote at `0.95 + 0.05 = 1.0`.
+///
+/// The curve is C1 at the knee (the derivative of `e/(1+ke)` is 1 at `e = 0`,
+/// matching the unity region below it), so there is no slope discontinuity
+/// where the knee opens. Replaces the old `x.tanh()`, which coloured the
+/// signal at normal levels.
 #[inline]
 fn soft_limit(x: f32) -> f32 {
+    const KNEE: f32 = 0.95;
+    /// Sets the ceiling: asymptote = `KNEE + 1 / KNEE_SHAPE`.
+    const KNEE_SHAPE: f32 = 20.0;
+
     let a = x.abs();
-    if a < 0.95 {
+    if a < KNEE {
         x
     } else {
-        let excess = a - 0.95;
-        x.signum() * (0.95 + excess / (1.0 + excess * 5.0))
+        let excess = a - KNEE;
+        x.signum() * (KNEE + excess / (1.0 + excess * KNEE_SHAPE))
     }
 }
 
@@ -2339,10 +2354,57 @@ mod tests {
         for width in [0.0, 1.0, 1.3, 2.0] {
             let (l, r) = master_bus(4.0, -4.0, width);
             assert!(
-                l.abs() < 1.2 && r.abs() < 1.2,
-                "limiter failed to bound output at width {width}"
+                l.abs() <= 1.0 && r.abs() <= 1.0,
+                "limiter failed to bound output at width {width}: ({l}, {r})"
             );
         }
+    }
+
+    /// The limiter is a *ceiling*, not a soft clipper that happens to stop near
+    /// unity. The old knee shape (`0.95 + e/(1 + 5e)`) asymptoted to
+    /// `0.95 + 1/5 = 1.15`, so it raised the ceiling by +1.2 dBFS — and the
+    /// old test passed because it asserted `< 1.2`. This pins the true
+    /// asymptote, the unity region, the sign symmetry, and monotonicity.
+    #[test]
+    fn soft_limit_holds_a_hard_ceiling_of_unity() {
+        // Well below the knee: bit-exact passthrough (no coloration, no gain).
+        for v in [0.0, 0.1, 0.5, 0.9, 0.949_999] {
+            assert_eq!(soft_limit(v), v, "limiter moved a sub-knee sample {v}");
+            assert_eq!(
+                soft_limit(-v),
+                -v,
+                "limiter moved a negative sub-knee sample"
+            );
+        }
+
+        // Above the knee: bounded by 1.0 for any input magnitude, including the
+        // absurd. This is the assertion the previous shape failed.
+        for v in [1.0, 1.5, 2.0, 4.0, 10.0, 100.0, 1.0e4, 1.0e9] {
+            let y = soft_limit(v);
+            assert!(y <= 1.0, "ceiling exceeded at {v}: {y}");
+            assert!(y.is_finite(), "limiter blew up at {v}: {y}");
+            // Odd symmetry: the limiter must not shift the zero crossing.
+            assert_eq!(y, -soft_limit(-v), "limiter is not odd-symmetric at {v}");
+        }
+
+        // Monotonic and always compressing above the knee: more input, less
+        // or equal gain, never a gain > 1 once the knee is engaged.
+        let mut prev = 0.0;
+        for i in 0..2000 {
+            let v = 0.95 + i as f32 * 0.05; // 0.95 .. 100.9
+            let y = soft_limit(v);
+            assert!(y >= prev, "limiter is not monotonic at {v}");
+            assert!(y / v <= 1.0, "limiter amplified at {v}");
+            prev = y;
+        }
+
+        // The knee should actually do something visible: a 2.0 input has to
+        // come back meaningfully below unity, not merely touch it.
+        assert!(
+            soft_limit(2.0) < 0.999,
+            "knee is too soft to be a limiter: 2.0 -> {}",
+            soft_limit(2.0)
+        );
     }
 
     /// A different master width changes the rendered output (the cab decorrelates
