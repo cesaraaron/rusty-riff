@@ -87,7 +87,7 @@ impl Tweed {
             out_hp: Biquad::highpass(sr, 12.0, 0.707),
             envelope: 0.0,
             ripple: SupplyRipple::new(sr, 100.0, 0.045),
-            speaker: SpeakerLoad::new(sr, 95.0, 1.0, 0.06, 0.30, 0.85),
+            speaker: SpeakerLoad::new(sr, 95.0, 1.0, 0.06, 0.30, 0.85, 0.35),
         };
         t.update_tone(0.6);
         t

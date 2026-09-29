@@ -116,7 +116,7 @@ impl Randall {
             presence_cache: Cached::new(),
             voice: VoiceBalance::new(sr, 260.0, 8.5, 800.0, -4.0),
             // Tight 8×12 resonance ~90 Hz, modest and static (no rectifier sag).
-            speaker: SpeakerLoad::new(sr, 90.0, 1.0, 0.05, 0.0, 0.8),
+            speaker: SpeakerLoad::new(sr, 90.0, 1.0, 0.05, 0.0, 0.8, 0.35),
         };
         r.update_tone_stack(0.5, 0.3, 0.75);
         r.update_presence(0.5);

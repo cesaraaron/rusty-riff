@@ -1122,10 +1122,17 @@ mod tests {
         ("boost", 1972),         // Colorsound Power Boost (approx.)
     ];
 
-    /// Known anachronisms accepted for now. Empty — Phase 5 Batch 1 removed the
-    /// last cases (the TS-808 in Shine On and Hotel California, replaced by the
-    /// Power Boost and the tweed Deluxe respectively).
-    const KNOWN_ANACHRONISMS: &[(&str, &str)] = &[];
+    /// Known anachronisms accepted for now. These four are deliberate *taste*
+    /// additions the maintainer asked for — a low-drive TS-808 "bite" boost on
+    /// tones that predate the pedal — not fidelity claims; each preset's comments
+    /// say so. (Phase 5 Batch 1 had removed the TS from Shine On and Hotel
+    /// California for fidelity; this re-adds it by request.)
+    const KNOWN_ANACHRONISMS: &[(&str, &str)] = &[
+        ("led_zeppelin_stairway_solo", "tube_screamer"),
+        ("led_zeppelin_whole_lotta_love", "tube_screamer"),
+        ("eagles_hotel_california_solo", "tube_screamer"),
+        ("eagles_hotel_california_clean", "tube_screamer"),
+    ];
 
     /// A bundled preset must not enable a device that did not exist when the tone
     /// was recorded, except for the documented known cases above.

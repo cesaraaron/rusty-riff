@@ -120,7 +120,7 @@ impl Fender {
             out_hp: Biquad::highpass(sr, 12.0, 0.707),
             envelope: 0.0,
             // Open-back 2×12 (Jensen-style) resonance ~80 Hz, lightly damped.
-            speaker: SpeakerLoad::new(sr, 80.0, 0.9, 0.04, 0.18, 0.9),
+            speaker: SpeakerLoad::new(sr, 80.0, 0.9, 0.04, 0.18, 0.9, 0.35),
             spring: SpringReverb::new(sr),
             trem: Tremolo::new(sr),
         };

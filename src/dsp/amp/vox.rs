@@ -133,7 +133,7 @@ impl Vox {
             // sags more readily, so both the static and dynamic bloom amounts are
             // higher than the Marshall's — and the Alnico's extended top end gives
             // more inductive lift.
-            speaker: SpeakerLoad::new(sr, 85.0, 1.3, 0.09, 0.45, 1.1),
+            speaker: SpeakerLoad::new(sr, 85.0, 1.3, 0.09, 0.45, 1.1, 0.35),
         };
         v.update_tone_stack(0.5, 0.45, 0.65);
         v

@@ -29,12 +29,12 @@ fuzz    = 0.72
 tone    = 0.60
 level   = 0.52
 
-# TS off — the fuzz straight into the Plexi is the sound.
+# TS as a low-drive bite boost after the Tone Bender, before the Plexi.
 [tube_screamer]
-enabled = false
-drive = 0.30
-tone  = 0.55
-level = 0.70
+enabled = true
+drive = 0.15
+tone  = 0.60
+level = 0.60
 
 [distortion]
 enabled = false

@@ -12,12 +12,13 @@ enabled   = true
 threshold = 0.14
 release   = 0.42
 
-# No drive pedals — the lead is guitar straight into the amp.
+# TS as a low-drive bite boost — a taste addition on top of the tweed's own
+# breakup, not part of the reported session rig.
 [tube_screamer]
-enabled = false
-drive = 0.30
+enabled = true
+drive = 0.18
 tone  = 0.56
-level = 0.78
+level = 0.70
 
 # ── Amp ───────────────────────────────────────────────────────────────────────
 # Tweed Deluxe, Volume up: the cathode-biased 6V6 power section supplies the warm,

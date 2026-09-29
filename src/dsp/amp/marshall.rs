@@ -155,7 +155,7 @@ impl Marshall {
             // 8×12 resonance ~95 Hz; tube amp has moderate damping. The bloom is
             // kept light so the low resonance supports the note without hanging
             // over the next palm-muted chug, preserving a percussive, muted feel.
-            speaker: SpeakerLoad::new(sr, 95.0, 1.0, 0.06, 0.30, 0.8),
+            speaker: SpeakerLoad::new(sr, 95.0, 1.0, 0.06, 0.30, 0.8, 0.35),
         };
         m.update_tone_stack(0.5, 0.45, 0.65);
         m.update_presence(0.5);

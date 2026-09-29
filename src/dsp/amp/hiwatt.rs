@@ -159,7 +159,7 @@ impl Hiwatt {
             envelope: 0.0,
             // 4×12 resonance ~90 Hz, fairly well damped (a stiff supply and a big
             // transformer keep the bottom tight); a little dynamic bloom under load.
-            speaker: SpeakerLoad::new(sr, 90.0, 0.9, 0.05, 0.22, 0.7),
+            speaker: SpeakerLoad::new(sr, 90.0, 0.9, 0.05, 0.22, 0.7, 0.10),
         };
         h.update_tone_stack(0.5, 0.45, 0.65);
         h.update_presence(0.5);

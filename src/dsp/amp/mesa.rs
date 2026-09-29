@@ -152,7 +152,7 @@ impl Mesa {
             ripple: SupplyRipple::new(sr, 120.0, 0.035),
             // Recto 4×12 resonance ~100 Hz; the speaker load is kept fairly tight
             // so palm-muted chugs stay percussive instead of blooming after the attack.
-            speaker: SpeakerLoad::new(sr, 100.0, 1.0, 0.06, 0.22, 0.8),
+            speaker: SpeakerLoad::new(sr, 100.0, 1.0, 0.06, 0.22, 0.8, 0.35),
         };
         m.update_tone_stack(0.5, 0.45, 0.65);
         m.update_presence(0.5);

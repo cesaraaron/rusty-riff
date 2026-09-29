@@ -10,11 +10,11 @@ enabled   = true
 threshold = 0.12
 release   = 0.36
 
-# TS off — the Tube Screamer is a 1979 pedal; the Stairway solo predates it. The
-# amp's own breakup carries the lead.
+# TS as a low-drive bite boost. The pedal postdates the 1971 solo, so this is a
+# deliberate taste addition (more mid bite into the Supro), not rig fidelity.
 [tube_screamer]
-enabled = false
-drive = 0.22
+enabled = true
+drive = 0.18
 tone  = 0.58
 level = 0.66
 

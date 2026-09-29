@@ -26,11 +26,12 @@ fuzz    = 0.50
 tone    = 0.50
 level   = 0.60
 
+# TS as a very low-drive bite boost under the clean arpeggios — a taste addition.
 [tube_screamer]
-enabled = false
-drive = 0.30
-tone  = 0.55
-level = 0.70
+enabled = true
+drive = 0.10
+tone  = 0.60
+level = 0.55
 
 [distortion]
 enabled = false

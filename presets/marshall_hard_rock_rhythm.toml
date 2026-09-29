@@ -9,12 +9,12 @@ enabled   = true
 threshold = 0.12
 release   = 0.35
 
-# No drive pedals: the 800's own cascade carries the gain.
+# TS as a low-drive tightener/bite boost in front of the 800 — the classic move.
 [tube_screamer]
-enabled = false
-drive = 0.30
+enabled = true
+drive = 0.18
 tone  = 0.55
-level = 0.70
+level = 0.65
 
 # ── Amp ───────────────────────────────────────────────────────────────────────
 # JCM800 with the gain high and the master up: preamp snarl plus power-amp

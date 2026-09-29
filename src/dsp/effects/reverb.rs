@@ -188,14 +188,16 @@ impl Reverb {
         let wet_l = self.left.process(delayed);
         let wet_r = self.right.process(delayed);
 
-        // 0.5 Hz opposite-phase breathing (±6%) on the wet for movement.
+        // 0.5 Hz opposite-phase breathing on the wet, kept subtle (±2%) so a long
+        // tail gains some width movement without an audible wobble. (Was ±6%,
+        // which read as too much on already-good presets.)
         self.lfo_phase += 2.0 * std::f32::consts::PI * 0.5 / self.sr;
         if self.lfo_phase > 2.0 * std::f32::consts::PI {
             self.lfo_phase -= 2.0 * std::f32::consts::PI;
         }
         let s = self.lfo_phase.sin();
-        let mod_l = 1.0 + 0.06 * s;
-        let mod_r = 1.0 - 0.06 * s;
+        let mod_l = 1.0 + 0.02 * s;
+        let mod_r = 1.0 - 0.02 * s;
 
         let out_l = dry_l * (1.0 - mix) + wet_l * SCALE_WET * mix * mod_l;
         let out_r = dry_r * (1.0 - mix) + wet_r * SCALE_WET * mix * mod_r;

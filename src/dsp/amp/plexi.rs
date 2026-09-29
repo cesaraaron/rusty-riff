@@ -138,7 +138,7 @@ impl Plexi {
             // Greenback 4×12 resonance ~95 Hz; dynamic bloom comes from the output
             // transformer and speaker interaction, not rectifier sag (the 1959 is
             // solid-state rectified).
-            speaker: SpeakerLoad::new(sr, 95.0, 1.1, 0.07, 0.35, 0.9),
+            speaker: SpeakerLoad::new(sr, 95.0, 1.1, 0.07, 0.35, 0.9, 0.35),
         };
         p.update_tone_stack(0.5, 0.45, 0.65);
         p.update_presence(0.5);

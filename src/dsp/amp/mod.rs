@@ -86,10 +86,11 @@ pub fn standard_knobs(
 /// palm-mute lows physically push the cone, dropping damping and opening the
 /// resonance further for a few tens of ms — the "thump" a static load can't give.
 ///
-/// Phase 7 deliberately keeps this small (≤ +0.10, ~50 ms release): it sits
-/// after every user control, so anything bigger becomes un-removable loudness
-/// rather than feel — the same failure mode as the old +4 dB voice lift and
-/// the WEM low pile-up.
+/// `exc_amt` bounds that bloom per amp. Phase 7 cut it to 0.10 on the Hiwatt,
+/// whose WEM cab already piled on structural lows; the other amps keep the larger
+/// A3 value, because the pile-up was Hiwatt/WEM-specific and the global cut
+/// removed their low-end bloom for no reason. Even at 0.35 the stage sits after
+/// every user control, so it must stay feel, not loudness.
 pub(crate) struct SpeakerLoad {
     resonance: Biquad,
     presence: Biquad,
@@ -99,13 +100,23 @@ pub(crate) struct SpeakerLoad {
     exc_rel: f32,
     res_base: f32,
     res_dyn: f32,
+    exc_amt: f32,
 }
 
 impl SpeakerLoad {
     /// `fs` resonance frequency, `q` its sharpness, `res_base` the static
-    /// resonance amount, `res_dyn` how much more the sag envelope adds, and
-    /// `pres_db` the inductive high-shelf lift (at 5 kHz).
-    pub fn new(sr: f32, fs: f32, q: f32, res_base: f32, res_dyn: f32, pres_db: f32) -> Self {
+    /// resonance amount, `res_dyn` how much more the sag envelope adds, `pres_db`
+    /// the inductive high-shelf lift (at 5 kHz), and `exc_amt` the max
+    /// excursion-driven resonance bloom.
+    pub fn new(
+        sr: f32,
+        fs: f32,
+        q: f32,
+        res_base: f32,
+        res_dyn: f32,
+        pres_db: f32,
+        exc_amt: f32,
+    ) -> Self {
         let coeff = |ms: f32| 1.0 - (-1.0 / (sr * ms / 1000.0)).exp();
         Self {
             resonance: Biquad::bandpass(sr, fs, q),
@@ -116,6 +127,7 @@ impl SpeakerLoad {
             exc_rel: coeff(50.0),
             res_base,
             res_dyn,
+            exc_amt,
         }
     }
 
@@ -131,7 +143,7 @@ impl SpeakerLoad {
             self.exc_rel
         };
         self.exc_env += c * (d - self.exc_env);
-        let exc = (self.exc_env * 0.10).min(0.10);
+        let exc = (self.exc_env * self.exc_amt).min(self.exc_amt);
         let band = self.resonance.process(x);
         let amt = self.res_base + self.res_dyn * sag + exc;
         self.presence.process(x + band * amt)

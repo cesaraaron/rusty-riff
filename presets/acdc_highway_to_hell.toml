@@ -1,5 +1,5 @@
 name        = "AC/DC — Highway to Hell"
-description = "Inspired by the cleaner end of the Young tone (Highway to Hell, 1979): a Plexi at edge-of-breakup with Greenbacks — no pedals, no reverb. Not a verified session rig."
+description = "Inspired by the cleaner end of the Young tone (Highway to Hell, 1979): a Plexi at edge-of-breakup with Greenbacks and a touch of TS bite — no reverb. Not a verified session rig."
 tags        = ["ac/dc", "rhythm", "hard rock"]
 year        = 1979
 
@@ -9,12 +9,13 @@ enabled   = true
 threshold = 0.09
 release   = 0.46
 
-# No drive pedals: the Plexi alone carries the gain.
+# TS as a very low-drive bite boost at edge-of-breakup (a deliberate break from
+# the strict "no pedals" claim).
 [tube_screamer]
-enabled = false
-drive = 0.30
+enabled = true
+drive = 0.12
 tone  = 0.55
-level = 0.70
+level = 0.58
 
 # ── Amp ───────────────────────────────────────────────────────────────────────
 # Plexi at edge of breakup: chords ring clean until you dig in, then the power

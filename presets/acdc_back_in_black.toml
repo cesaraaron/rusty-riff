@@ -1,5 +1,5 @@
 name        = "AC/DC — Back in Black"
-description = "Inspired by Angus Young's rhythm crunch (Back in Black, 1980): guitar straight into a cranked Plexi and Greenbacks — no pedals, no reverb. Not a verified session rig."
+description = "Inspired by Angus Young's rhythm crunch (Back in Black, 1980): a cranked Plexi and Greenbacks with a low-drive TS-style boost for bite — dry, no reverb. Not a verified session rig."
 tags        = ["ac/dc", "rhythm", "hard rock"]
 year        = 1980
 
@@ -10,12 +10,13 @@ enabled   = true
 threshold = 0.10
 release   = 0.44
 
-# No drive pedals: the Plexi alone carries the gain.
+# TS as a low-drive bite boost into the Plexi (a deliberate break from the
+# strict "no pedals" claim — subtle, so the power-amp grind still leads).
 [tube_screamer]
-enabled = false
-drive = 0.30
+enabled = true
+drive = 0.15
 tone  = 0.55
-level = 0.70
+level = 0.60
 
 # ── Amp ───────────────────────────────────────────────────────────────────────
 # Marshall Super Lead "Plexi" pushed hard on the channel volume: the power amp's
