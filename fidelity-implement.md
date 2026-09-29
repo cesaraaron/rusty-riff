@@ -798,3 +798,31 @@ absent and were left alone.
 **Follow-up complete:** all 7 remaining Hiwatt+WEM presets now use the same
 leaned model as the Phase 7 anchors. Remaining note from Batch 2: `money` reads
 ~3–4 dB below the sibling cluster and may want its `master` nudged back up later.
+
+---
+
+## TS-808 — first-order RC shelf and 51 pF feedback pole (maintainer-driven)
+
+The Phase 4 TS correction modelled the clipping-stage gain shape as a 2nd-order
+RBJ **high-shelf** and omitted the feedback capacitor, which made the pedal read
+thin: everything above 720 Hz was boosted by up to +41 dB while the bass passed at
+unity, with no treble roll-off as drive rose.
+
+- **First-order RC shelf (`src/dsp/effects/tube_screamer.rs`).** The clipping
+  stage is `1 + Zf/Zi` with `Zi = 4.7 kΩ + 1/(s·0.047 µF)`, i.e. unity at DC
+  rising 6 dB/oct toward `1 + Zf/R`. It is now applied exactly as
+  `x + (Zf/R)·HP₇₂₀(x)`, so the low end and low-mids are lifted (the pedal is no
+  longer thin) instead of staying at unity under a clipped mid hump. The old
+  2nd-order shelf over-emphasised the region just above the corner.
+- **51 pF feedback pole.** `Zf`'s parallel cap puts a pole at
+  `1/(2π·Zf·51 pF)` — ~61 kHz at minimum drive falling to ~5.7 kHz at maximum —
+  restored as a drive-dependent one-pole LP after the clipper. The pedal now
+  loses treble as gain rises, as the circuit does.
+- **Tests:** `feedback_pole_falls_with_drive`,
+  `feedback_pole_reduces_the_high_drive_treble_ratio`, and
+  `shelf_rises_from_unity_toward_the_drive_gain` (replaces the old
+  `bass_passes_at_unity...`, whose premise was the 2nd-order approximation).
+- **Measured (`mesa_modern_metal`, the only bundled TS user):** low-mids lift
+  ~+7–9 dB through 140–706 Hz, centroid 3314→3120 Hz, LUFS −13.88→−14.31. The
+  maintainer A/B'd and approved ("so much better"). Baseline regenerated (20
+  presets), `--check` green.

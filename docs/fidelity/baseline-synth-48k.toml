@@ -731,94 +731,94 @@ db = -30.655746
 
 [[render]]
 preset = "mesa_modern_metal"
-lufs_i = -13.878914
-crest_db = 11.90936
-correlation = 0.88847685
-centroid_hz = 3314.1836
+lufs_i = -14.306083
+crest_db = 12.820607
+correlation = 0.8308702
+centroid_hz = 3120.1287
 
 [[render.ltas]]
 hz = 70.0
-db = 21.05571
+db = 19.39619
 
 [[render.ltas]]
 hz = 88.19447
-db = -0.5138855
+db = 4.83197
 
 [[render.ltas]]
 hz = 111.11807
-db = -1.1160278
+db = -3.271988
 
 [[render.ltas]]
 hz = 140.0
-db = 8.630745
+db = 16.545109
 
 [[render.ltas]]
 hz = 176.38895
-db = -1.6125717
+db = -2.2168121
 
 [[render.ltas]]
 hz = 222.23615
-db = 6.335808
+db = 15.364914
 
 [[render.ltas]]
 hz = 280.0
-db = 7.586876
+db = 3.4888
 
 [[render.ltas]]
 hz = 352.7779
-db = -1.0340118
+db = -2.721138
 
 [[render.ltas]]
 hz = 444.4723
-db = -4.2633896
+db = 1.7073364
 
 [[render.ltas]]
 hz = 560.0
-db = -5.057129
+db = -6.9816513
 
 [[render.ltas]]
 hz = 705.5558
-db = -0.046424866
+db = 6.986004
 
 [[render.ltas]]
 hz = 888.9446
-db = -1.674736
+db = 1.1827698
 
 [[render.ltas]]
 hz = 1120.0
-db = -2.0426636
+db = -10.281296
 
 [[render.ltas]]
 hz = 1411.1116
-db = -0.5685425
+db = -3.9912033
 
 [[render.ltas]]
 hz = 1777.8892
-db = 1.8470154
+db = 0.88246155
 
 [[render.ltas]]
 hz = 2240.0
-db = -0.5854187
+db = -7.1969147
 
 [[render.ltas]]
 hz = 2822.2231
-db = 5.0664597
+db = 1.2766876
 
 [[render.ltas]]
 hz = 3555.7783
-db = -3.6115265
+db = -3.4761353
 
 [[render.ltas]]
 hz = 4480.0
-db = 11.346951
+db = 12.102737
 
 [[render.ltas]]
 hz = 5644.4463
-db = -14.706345
+db = -16.327019
 
 [[render.ltas]]
 hz = 7111.5566
-db = -25.036896
+db = -27.300934
 
 [[render]]
 preset = "pink_floyd_another_brick_pt2"

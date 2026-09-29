@@ -18,26 +18,30 @@ use crate::dsp::oversample::Oversampler4;
 ///
 /// **The 720 Hz shape is a *gain* shelf, not a filter.** The clipping stage is a
 /// non-inverting amp whose inverting leg is `4.7 kΩ + 0.047 µF` to AC ground:
-/// `gain = 1 + Zf/Zi`. At DC `Zi → ∞` so the stage passes at **unity**; the gain
-/// rises with frequency from the `1/(2π·4.7 kΩ·0.047 µF) ≈ 720 Hz` corner up to
-/// `1 + (51 kΩ + Drive)/4.7 kΩ`. So the bass passes *clean and unity* and the
-/// mids/highs are boosted and clipped — the TS's low-end "tightness" is that the
-/// bass is *not* boosted, not that it is cut. We model exactly that: a 720 Hz
-/// **high-shelf** from unity up to the drive gain, before a soft clipper.
+/// `gain = 1 + Zf/Zi`, with `Zi = 4.7 kΩ + 1/(s·0.047 µF)`. At DC `Zi → ∞` so the
+/// stage passes at **unity**; the gain rises on a first-order (6 dB/oct) curve
+/// from the `1/(2π·4.7 kΩ·0.047 µF) ≈ 720 Hz` corner toward
+/// `1 + (51 kΩ + Drive)/4.7 kΩ`. So the fundamental and low harmonics get a
+/// partial lift and the mids/highs the full drive gain — the TS's mid-forward
+/// "tightness" is that the bass is boosted *least*, not cut. We model exactly
+/// that: a first-order 720 Hz high-shelf from unity up to the drive gain, before
+/// a soft clipper.
 ///
 /// **Clipping.** The stock TS-808 uses two anti-parallel silicon diodes: the
 /// clip is **symmetric** and produces predominantly odd harmonics. (An earlier
 /// revision modelled an asymmetric pair for "warmth"; that is the SD-1-style
 /// mod, not the stock pedal, and is not used here.)
 ///
-/// The absolute gain staging (pickup level → diode threshold) and the `51 pF`
-/// feedback rolloff are approximations; the topology and the 720 Hz bass/treble
-/// split follow the source above.
+/// The absolute gain staging (pickup level → diode threshold) is an
+/// approximation; the topology, the 720 Hz bass/treble split and the
+/// drive-dependent `51 pF` feedback rolloff follow the source above.
 pub struct TubeScreamer {
     sr: f32,
     dc_block: Biquad,     // input coupling (1 µF × 10 kΩ ≈ 16 Hz)
-    shelf: Biquad,        // 720 Hz clipping-stage gain shelf: unity bass → drive gain
+    shelf_hp: OnePoleLp,  // HP leg of the first-order RC gain shelf (corner 720 Hz)
+    shelf_gain: f32,      // Zf / Zi: the extra high-frequency gain (drive-dependent)
     os: Oversampler4,     // 4× oversample the soft-clip stage to suppress aliasing
+    fb_lp: OnePoleLp,     // 51 pF feedback pole: clipping-stage treble loss, drive-dependent
     out_dc_block: Biquad, // output coupling cap (10 µF × 100 Ω ≈ 16 Hz)
     tone: OnePoleLp,      // variable 1-pole LP tone control (1 kΩ / 0.22 µF network)
     last_tone: f32,
@@ -51,14 +55,27 @@ const ZF_FIXED_OHMS: f32 = 51_000.0;
 const DRIVE_POT_OHMS: f32 = 500_000.0;
 /// `Zi` network corner: `1/(2π · 4.7 kΩ · 0.047 µF)`.
 const CORNER_720_HZ: f32 = 720.0;
+/// Feedback capacitor (`51 pF`) across `Zf`; its pole rolls the clipping stage
+/// off earlier as the drive pot raises `Zf`.
+const FB_CAP_FARADS: f32 = 51e-12;
+
+/// Feedback-network pole `1/(2π · Zf · 51 pF)` with `Zf = 51 kΩ + Drive·500 kΩ`:
+/// ~61 kHz at minimum drive (inaudible, so the pedal is bright at low gain) down
+/// to ~5.7 kHz at maximum — the TS's characteristic treble loss under gain.
+fn feedback_corner_hz(drive: f32) -> f32 {
+    let rf = ZF_FIXED_OHMS + drive.clamp(0.0, 1.0) * DRIVE_POT_OHMS;
+    1.0 / (2.0 * std::f32::consts::PI * rf * FB_CAP_FARADS)
+}
 
 impl TubeScreamer {
     pub fn new(sr: f32) -> Self {
         let mut ts = Self {
             sr,
             dc_block: Biquad::highpass(sr, 16.0, 0.707),
-            shelf: Biquad::high_shelf(sr, CORNER_720_HZ, 0.0),
+            shelf_hp: OnePoleLp::new(),
+            shelf_gain: 0.0,
             os: Oversampler4::new(sr),
+            fb_lp: OnePoleLp::new(),
             out_dc_block: Biquad::highpass(sr, 16.0, 0.707),
             tone: OnePoleLp::new(),
             last_tone: -1.0, // force first update
@@ -76,12 +93,13 @@ impl TubeScreamer {
         self.last_tone = tone;
     }
 
-    /// The clipping stage's high-frequency gain `1 + Zf/Zi` at the current drive,
-    /// applied as a 720 Hz high-shelf so the bass stays at unity.
+    /// Recompute the clipping-stage gain shelf at the current drive. The stage is
+    /// `1 + Zf/(R + 1/sC)`, i.e. a first-order 720 Hz high-shelf from unity (DC) up
+    /// to `1 + Zf/R`; we apply `x + (Zf/R)·HP₇₂₀(x)` exactly.
     fn set_drive(&mut self, drive: f32) {
-        let hf_gain = 1.0 + (ZF_FIXED_OHMS + drive * DRIVE_POT_OHMS) / ZI_OHMS;
-        let gain_db = 20.0 * hf_gain.log10();
-        self.shelf.set_high_shelf(self.sr, CORNER_720_HZ, gain_db);
+        self.shelf_hp.set_cutoff(CORNER_720_HZ, self.sr);
+        self.shelf_gain = (ZF_FIXED_OHMS + drive * DRIVE_POT_OHMS) / ZI_OHMS;
+        self.fb_lp.set_cutoff(feedback_corner_hz(drive), self.sr);
         self.last_drive = drive;
     }
 
@@ -95,13 +113,18 @@ impl TubeScreamer {
             self.set_drive(drive);
         }
 
-        // Input coupling (≈ unity in the guitar band) then the 720 Hz gain shelf:
-        // bass passes at unity, mids/highs get the drive gain before clipping.
+        // Input coupling (≈ unity in the guitar band) then the 720 Hz first-order
+        // RC gain shelf: unity at DC, rising toward the drive gain above 720 Hz.
         let x = self.dc_block.process(x);
-        let x = self.shelf.process(x);
+        let hp = x - self.shelf_hp.process(x);
+        let x = x + self.shelf_gain * hp;
 
         // 4× oversampled symmetric diode soft-clip.
         let x = self.os.process(x, soft_clip);
+
+        // Feedback-network pole: the clipping stage's own treble loss, moving down
+        // from ~61 kHz to ~5.7 kHz as drive raises Zf.
+        let x = self.fb_lp.process(x);
 
         // The real pedal's output coupling cap; strips any residual offset.
         let x = self.out_dc_block.process(x);
@@ -327,24 +350,68 @@ mod tests {
         );
     }
 
-    /// The clipping-stage gain is frequency-dependent: the 720 Hz shelf leaves the
-    /// bass at unity while boosting (and clipping) the treble. Pins the correct
-    /// topology — the bass must **not** be cut below the dry level (the old 340 Hz
-    /// input-HP bug), while the treble is clearly lifted.
+    /// The clipping-stage gain is the circuit's first-order RC shelf: unity at DC,
+    /// rising monotonically with frequency toward `1 + Zf/Zi`. The 120 Hz low end is
+    /// lifted (so the pedal is not thin) but less than the mid/top — and it is
+    /// **not** cut, which was the old 340 Hz input-HP bug.
     #[test]
-    fn bass_passes_at_unity_while_treble_is_boosted() {
-        let amp = 0.05;
+    fn shelf_rises_from_unity_toward_the_drive_gain() {
+        // Tiny amplitude: stay on the clipper's linear region so this measures the
+        // shelf shape rather than the clipping harmonics.
+        let amp = 0.0005;
         let low = goertzel(&render(120.0, amp, 0.8, 1.0, 1.0), 120.0, SR);
+        let mid = goertzel(&render(720.0, amp, 0.8, 1.0, 1.0), 720.0, SR);
         let high = goertzel(&render(3000.0, amp, 0.8, 1.0, 1.0), 3000.0, SR);
-        // Bass is passed, not cut: within a few dB of the dry level (×level×0.5).
+        // Passed/boosted, not cut below the dry reference (×level×0.5).
         assert!(
-            low > amp * 0.2,
-            "bass was cut (the old input-HP bug): low {low:.4} vs dry {amp:.4}"
+            low > amp * 0.5,
+            "low end was cut: low {low:.6} vs dry {amp:.6}"
         );
-        // Treble is boosted into the clipper and dominates the bass.
+        // A first-order shelf's magnitude rises monotonically with frequency.
         assert!(
-            high > low * 3.0,
-            "720 Hz shelf not boosting treble: low {low:.4} vs high {high:.4}"
+            low < mid && mid < high,
+            "shelf not rising: low {low:.6} mid {mid:.6} high {high:.6}"
+        );
+        // Lifted at the top, but only modestly over the bass (6 dB/oct RC shape,
+        // not the old steep 2nd-order biquad that left the low end at unity).
+        assert!(
+            high > low * 1.3,
+            "top not lifted over the low end: low {low:.6} high {high:.6}"
+        );
+    }
+
+    /// The 51 pF feedback cap puts the clipping stage's treble pole at
+    /// `1/(2π · Zf · 51 pF)`, with `Zf = 51 kΩ + Drive·500 kΩ` — ~61 kHz at min
+    /// drive (bright) falling to ~5.7 kHz at max (the TS's treble loss under
+    /// gain). Pins the sourced feedback pole against a drifting constant.
+    #[test]
+    fn feedback_pole_falls_with_drive() {
+        let min = feedback_corner_hz(0.0);
+        let max = feedback_corner_hz(1.0);
+        assert!(
+            (min - 61_200.0).abs() / 61_200.0 < 0.05,
+            "min-drive feedback corner off: {min:.0} Hz"
+        );
+        assert!(
+            (max - 5_660.0).abs() / 5_660.0 < 0.05,
+            "max-drive feedback corner off: {max:.0} Hz"
+        );
+        assert!(max < min, "feedback pole must fall as drive rises");
+    }
+
+    /// The feedback pole must actually engage the stage: at max drive the 8 kHz
+    /// gain ratio (high ÷ low drive) is cut below the shelf's own ratio. The 720 Hz
+    /// shelf alone would lift 8 kHz by ~9.8×; the 5.7 kHz pole brings it to ~5.8×.
+    /// Probed at a tiny amplitude so the clipper stays linear and only the filter
+    /// (not clipping) is measured.
+    #[test]
+    fn feedback_pole_reduces_the_high_drive_treble_ratio() {
+        let amp = 0.001;
+        let gain = |drive: f32| goertzel(&render(8000.0, amp, drive, 1.0, 1.0), 8000.0, SR) / amp;
+        let ratio = gain(1.0) / gain(0.0).max(1e-9);
+        assert!(
+            (3.0..7.5).contains(&ratio),
+            "feedback pole missing or wrong: 8 kHz drive ratio {ratio:.2} (shelf-alone ≈9.8, with-pole ≈5.8)"
         );
     }
 }
