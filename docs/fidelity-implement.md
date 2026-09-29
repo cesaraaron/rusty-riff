@@ -1132,3 +1132,62 @@ now records why.
   generates its own alias products. Replacing it changes the level of every
   preset, so it belongs in the output-gain discussion rather than in a bug fix.
   What shipped here is the ceiling guarantee, which is what the A2 defect was.
+
+---
+
+## Preset cull and a vanilla boot rig (2026-09-29)
+
+Twelve of the twenty bundled presets were retired, and the factory default
+became a neutral starting rig. Recorded here because the increment log above
+still names the retired presets in its Phase 5/6/7 entries — those are
+historical and deliberately left as written.
+
+**What shipped.**
+
+- **Retired (12):** `acdc_back_in_black`, `acdc_highway_to_hell`,
+  `guns_n_roses_november_rain_solo`, `led_zeppelin_whole_lotta_love`,
+  `marshall_hard_rock_rhythm`, `mesa_modern_metal`,
+  `pink_floyd_another_brick_pt2`, `pink_floyd_have_a_cigar_solo`,
+  `pink_floyd_money`, `pink_floyd_shine_on_crazy_diamond`,
+  `van_halen_beat_it_solo`, `vox_chime_clean`.
+- **Survivors (8):** the two Eagles presets, the Stairway solo, the two
+  Comfortably Numb solos, Mother, and the Time chorus and solo.
+- **Reason:** the tone models changed underneath them — A1/A3/A5/A6/A8 above,
+  and the amp architecture rework is still ahead. Their knob values were tuned
+  against models that no longer exist. [`retired-presets.md`](retired-presets.md)
+  indexes each one with its last-touching commit and the recovery command.
+- **Vanilla default:** `DEFAULT_AMP_MODEL`/`DEFAULT_CAB_MODEL` are now
+  Plexi + Marshall (Greenback) instead of Mesa + Mesa, the noise gate, TS-808
+  and reverb all start off, and `DEFAULT_MASTER_WIDTH` drops `1.3 → 1.0`. The
+  board boots empty. `1.3` was kept for back-compat under review finding R8, but
+  every bundled preset already set `width = 1.0`, so nothing depended on it.
+- **Baseline regenerated** for 8 presets, `--check` green.
+
+**The cost, stated plainly.** The survivors use only **4 of 9 amp models**
+(Hiwatt, Fender, Supro, Tweed) and **4 of 8 cabs**. Marshall, Mesa, Randall,
+Vox and Plexi — and the Marshall/Mesa/Orange/Vox cabs — have no bundled preset,
+so they are no longer exercised *end-to-end through a preset* by the harness.
+Their unit tests in `dsp/amp` and `dsp/cab` still cover them directly. The
+harness went from 20 independent tone checks to 8, which is its thinnest point,
+and the upcoming Phase C amp rework is the change most likely to disturb the
+rigs it can no longer see. The three retired generic rig showcases
+(`marshall_hard_rock_rhythm`, `mesa_modern_metal`, `vox_chime_clean`) are the
+cheapest way back if that matters.
+
+**Test fallout from the new default.** Four tests encoded the old boot state and
+were corrected rather than deleted:
+
+| Test | Problem |
+| --- | --- |
+| `ui::input::nudge_moves_only_the_targeted_knob` | Nudged amp slot 2 assuming the Mesa's defaults; the Plexi's BASS sits at `1.0`, so `+0.05` clamped and the test measured the clamp. Now parks the knob mid-scale first. |
+| `ui::input::select_amp_external_row_activates_the_loaded_au` | Asserted the boot model was `Mesa` after a garbage pick. Now asserts the model is *unchanged* by the garbage pick, which is the actual intent. |
+| `ui::draw::snapshot_default_screen` | `expect("a default pedal")` — the board is now empty by design. Mirrors the app's own focus fallback (land on the amp tile). |
+| `tests/bundled_presets` + `preset::RENDER_SUBSET` | Count 20 → 8; two subset entries and two hardcoded `acdc_back_in_black` paths in `analysis/render.rs` and `tests/fidelity_harness.rs` repointed to survivors. |
+
+Ten UI goldens were re-blessed; the diffs are the rig and the now-empty ribbon
+(`AMP ──▶ CAB ──▶ OUTPUT`), nothing else.
+
+**Also fixed here:** `src/analysis/render.rs` and `docs/fidelity-references.md`
+carried a stale inventory — `led_zeppelin_stairway_solo` was listed as
+`plexi | marshall` after Phase 5 had already rebuilt it onto the Supro. Corrected
+against the TOML.

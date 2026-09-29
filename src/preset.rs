@@ -1122,14 +1122,17 @@ mod tests {
         ("boost", 1972),         // Colorsound Power Boost (approx.)
     ];
 
-    /// Known anachronisms accepted for now. These four are deliberate *taste*
+    /// Known anachronisms accepted for now. These are deliberate *taste*
     /// additions the maintainer asked for — a low-drive TS-808 "bite" boost on
     /// tones that predate the pedal — not fidelity claims; each preset's comments
     /// say so. (Phase 5 Batch 1 had removed the TS from Shine On and Hotel
     /// California for fidelity; this re-adds it by request.)
+    ///
+    /// `led_zeppelin_whole_lotta_love` was listed here until 2026-09-29, when it
+    /// was retired; a stale entry is harmless (the test only looks presets up)
+    /// but it is dead data. If you restore the preset, put the entry back.
     const KNOWN_ANACHRONISMS: &[(&str, &str)] = &[
         ("led_zeppelin_stairway_solo", "tube_screamer"),
-        ("led_zeppelin_whole_lotta_love", "tube_screamer"),
         ("eagles_hotel_california_solo", "tube_screamer"),
         ("eagles_hotel_california_clean", "tube_screamer"),
     ];
@@ -1444,10 +1447,10 @@ mod tests {
         // bundled presets chosen to span the effect types the bundles actually
         // enable; the fingerprint test above covers the full set cheaply.
         const RENDER_SUBSET: &[&str] = &[
-            // comp, fuzz, TS, pre-EQ, vibe, EQ, delay, reverb
-            "pink_floyd_shine_on_crazy_diamond.toml",
-            // comp, fuzz, pre-EQ, EQ, phaser, delay, reverb
-            "pink_floyd_another_brick_pt2.toml",
+            // comp, fuzz, TS, DS-1, pre-EQ, Uni-Vibe, EQ, chorus, flanger, delay, reverb
+            "pink_floyd_time_solo.toml",
+            // comp, fuzz, pre-EQ, EQ, delay, reverb
+            "pink_floyd_mother_solo.toml",
             // comp, EQ, chorus, delay, reverb
             "eagles_hotel_california_clean.toml",
         ];

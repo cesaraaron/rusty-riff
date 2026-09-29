@@ -117,7 +117,17 @@ Work in order of impact on verified preset rigs; do not add a new circuit just b
 
 **Gate:** each explicitly named pedal mode is sufficiently different in measured and audible behavior to justify its hardware label; legacy sound and serialized type values change only through documented migrations.
 
-### Phase 5 — rebuild and document the 17 bundled presets
+### Phase 5 — rebuild and document the bundled presets
+
+> **Superseded in part (2026-09-29).** Twelve of the twenty bundled presets were
+> retired because the tone models changed underneath them — see
+> [`retired-presets.md`](retired-presets.md) for the full inventory and the git
+> recovery recipe. The eight that remain are the two Eagles presets, the Stairway
+> solo, the two Comfortably Numb solos, Mother, and the Time chorus and solo. The
+> audit questions below are kept as written for the ones that still exist; the
+> rows for retired presets are retained because they are the worklist for anyone
+> who restores one.
+
 
 Use the Phase 0 evidence matrix to decide what is on each recording, *including what is unknown*. Start with a sparse period-correct chain and the best-matching amp/cab; then make small, level-matched changes one at a time. Put known tape/room/mix effects on the appropriate side of the mic or in a true loop, and do not add a second EQ to compensate for an uncorrected first EQ/cab. Keep optional "record mix" processing in a clearly identified variant only if it audibly improves a controlled comparison and the product needs that variant; do not silently blend the two goals.
 

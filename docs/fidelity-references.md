@@ -63,32 +63,27 @@ the drum period (the furthest head).
 
 ## 1. Code-derived inventory
 
-All 17 bundled presets use the **shipped default chain order** (none set
+The 8 bundled presets use the **shipped default chain order** (none set
 `[chain]`): gate → whammy → wah → comp → fuzz → ts → ds → metal → preeq → vibe →
 **amp** → **cab** → geq → eq → flanger → chorus → phaser → trem → delay →
 reverb. Only the enabled devices are listed below. Noise gate and cabinet are
-always explicit (deterministic loading); `master` width defaults to `1.3`
-everywhere.
+always explicit (deterministic loading); every bundled preset sets `master`
+`width = 1.0`.
+
+> Twelve presets were retired on 2026-09-29 because the tone models changed
+> under them. Their rows are gone from this table; the full inventory and the
+> git-recovery recipe are in [`retired-presets.md`](retired-presets.md).
 
 | Preset | Amp | Cab | Enabled effects (in signal order) | Delay | Fuzz |
 | ------ | --- | --- | --------------------------------- | ----- | ---- |
-| `acdc_back_in_black` | plexi | marshall | gate | off | off |
-| `acdc_highway_to_hell` | plexi | marshall | gate | off | off |
 | `eagles_hotel_california_clean` | fender | fender | gate, comp, eq, chorus, delay, reverb | digital, 0.42 | off |
 | `eagles_hotel_california_solo` | tweed | tweed | gate, delay, reverb | digital, 0.40 | off |
-| `guns_n_roses_november_rain_solo` | marshall | marshall | gate, delay, reverb | tape, 0.40 | off |
-| `led_zeppelin_stairway_solo` | plexi | marshall | gate, comp, ts, preeq, eq, delay, reverb | digital (default), 0.26 | off |
-| `led_zeppelin_whole_lotta_love` | plexi | marshall | gate, fuzz, preeq, eq, delay, reverb | tape, 0.30 | Tone Bender MkII |
-| `pink_floyd_another_brick_pt2` | hiwatt | wem | gate, comp, fuzz, phaser, delay, reverb | tape, 0.60 | Big Muff |
+| `led_zeppelin_stairway_solo` | supro | supro | gate, comp, ts, preeq, eq, delay, reverb | digital (default), 0.26 | off |
 | `pink_floyd_comfortably_numb_solo_1` | hiwatt | wem | gate, comp, fuzz, flanger, delay, reverb | tape, 0.88 | Big Muff |
 | `pink_floyd_comfortably_numb_solo_2` | hiwatt | wem | gate, comp, fuzz, flanger, delay, reverb | tape, 0.90 | Big Muff |
-| `pink_floyd_have_a_cigar_solo` | hiwatt | wem | gate, comp, delay, reverb | tape, 0.50 | off |
-| `pink_floyd_money` | hiwatt | wem | gate, wah, fuzz, delay, reverb | tape, 0.58 | Fuzz Face |
 | `pink_floyd_mother_solo` | hiwatt | wem | gate, comp, delay, reverb | tape, 0.55 | off |
-| `pink_floyd_shine_on_crazy_diamond` | hiwatt | wem | gate, comp, fuzz, boost, delay, reverb | tape, 0.66 | Fuzz Face |
 | `pink_floyd_time_chorus` | hiwatt | wem | gate, vibe, delay, reverb | tape, 0.75 | off |
 | `pink_floyd_time_solo` | hiwatt | wem | gate, comp, fuzz, vibe, delay, reverb | tape, 0.62 | Fuzz Face |
-| `van_halen_beat_it_solo` | plexi | marshall | gate, phaser, delay, reverb | tape, 0.22 | off |
 
 ### Description-vs-path flags
 
@@ -98,12 +93,8 @@ both reproduced so the flag is auditable.
 
 | Preset | Claimed | Actual enabled path | Flag |
 | ------ | ------- | ------------------- | ---- |
-| `acdc_back_in_black` | "no pedals" | pre-EQ + parametric EQ + reverb (+ gate) | **Resolved (Phase 5):** EQs/reverb removed — guitar → Plexi → Greenbacks, gate only; description now matches. |
-| `acdc_highway_to_hell` | "no pedals in the way" | pre-EQ + parametric EQ + reverb (+ gate) | **Resolved (Phase 5):** same as above. |
 | `led_zeppelin_stairway_solo` | "cranked small-amp crunch"; site "Echoplex slap" | Plexi + Greenback 4×12; tape-echo field **absent** so the delay resolves to **digital ping-pong** | **Resolved (Phase 5):** rebuilt on the Supro 1×10 combo, TS-808 removed. |
-| `pink_floyd_shine_on_crazy_diamond` | "Big Muff + TS + Uni-Vibe" | Fuzz Face + Power Boost into Hiwatt/WEM (Phase 5) | **Resolved (Phase 5):** fuzz type, TS removed, EQs/Vibe dropped, echo labelled an Echorec stand-in. |
 | `pink_floyd_*` (Echorec) | "Echorec repeat/delay" | dedicated **Binson Echorec** delay mode (`type = 0.5`) since Phase 4 | **Resolved (Phase 4):** the multi-head drum-echo mode replaces the tape stand-in. |
-| `pink_floyd_another_brick_pt2` | "slow Phase 90 sweep" | dedicated **Phase 90** mode (`phaser type = 1.0`, mono + script) since Phase 4 | **Resolved (Phase 4).** |
 | `pink_floyd_comfortably_numb_*` | "Electric Mistress" | dedicated **Electric Mistress** mode (`flanger type = 1.0`, mono + filter matrix) since Phase 4 | **Resolved (Phase 4).** |
 
 ---
@@ -119,7 +110,14 @@ both reproduced so the flag is auditable.
 > [`fidelity-implement.md`](fidelity-implement.md) → "Phase 3 — component
 > references".
 
-### `acdc_back_in_black.toml` / `acdc_highway_to_hell.toml`
+> **Scope note (2026-09-29).** This section is *evidence*, not an inventory: it
+> records what is known about each recording so a preset can be (re)voiced from
+> it. Several of the presets it covers have since been retired — see
+> [`retired-presets.md`](retired-presets.md) — and their entries are kept here
+> deliberately, because restoring one should not mean redoing the research. Only
+> the table in §1 describes the presets that actually ship.
+
+### `acdc_back_in_black.toml` / `acdc_highway_to_hell.toml` *(retired)*
 
 - *Back in Black* (1980): recorded Apr–May 1980 at Compass Point (Nassau), mixed
   at Electric Lady (NYC); produced by Mutt Lange; Angus Young lead / Malcolm
@@ -149,7 +147,7 @@ both reproduced so the flag is auditable.
   preset still maps to the Twin rather than a 12-string intro, and one mono preset
   cannot represent two separately recorded, harmonized lead players.
 
-### `led_zeppelin_stairway_solo.toml` / `_whole_lotta_love.toml`
+### `led_zeppelin_stairway_solo.toml` / `_whole_lotta_love.toml` *(whole_lotta retired)*
 
 - *Stairway to Heaven* (1971): recorded Dec 1970–Feb 1971 at Island Studios
   (London), Rolling Stones Mobile (Stargroves) and Ronnie Lane's Mobile (Headley
@@ -172,7 +170,7 @@ both reproduced so the flag is auditable.
   MkII (`fuzz type = 1.0`) matching the Page quote. Its Plexi/Greenback amp+cab
   remains a labelled approximation (the cited Vox Super Beatle isn't modelled).
 
-### `pink_floyd_*` (9 files)
+### `pink_floyd_*` *(5 of 9 retired)*
 
 - *The Dark Side of the Moon* (1973): recorded 31 May 1972–9 Feb 1973 at Abbey
   Road; produced by Pink Floyd; Gilmour on guitars. · Supports: `documented` ·
@@ -199,7 +197,7 @@ both reproduced so the flag is auditable.
   now has a dedicated Echorec drum-echo mode (Phase 4); double-tracking and
   studio EQ remain outside a single preset.
 
-### `guns_n_roses_november_rain_solo.toml`
+### `guns_n_roses_november_rain_solo.toml` *(retired)*
 
 - From *Use Your Illusion I* (1991), single Feb 1992; written by Axl Rose;
   produced by Mike Clink and Guns N' Roses; recorded at A&M, Record Plant, Studio
@@ -214,7 +212,7 @@ both reproduced so the flag is auditable.
 - **Alignment:** our preset already uses the `marshall` (JCM800) model + Marshall
   cab, which matches the cited recording amp; refine knobs/mic in Phase 5.
 
-### `van_halen_beat_it_solo.toml`
+### `van_halen_beat_it_solo.toml` *(retired)*
 
 - Michael Jackson, "Beat It" (1982, *Thriller*): recorded Oct 1982 at Westlake
   (LA) and Hayvenhurst (Encino); produced by Quincy Jones; **Eddie Van Halen –

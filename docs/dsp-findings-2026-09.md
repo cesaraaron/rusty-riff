@@ -793,7 +793,9 @@ doing them together makes a regression impossible to attribute.
 
 # Open questions for the maintainer
 
-1. **C1 changes the meaning of every `gain` knob in all 20 bundled presets.**
+1. **C1 changes the meaning of every `gain` knob in all 8 bundled presets.**
+   (Eight, not the twenty this audit was written against: twelve were retired on
+   2026-09-29 — see [`retired-presets.md`](retired-presets.md).)
    Do you want the knobs re-voiced to preserve each preset's *audible* character
    (mechanical and safe, numbers change a lot), or the gain semantics fixed and
    then each preset re-tuned by ear toward the reference (slower, and what
@@ -802,7 +804,7 @@ doing them together makes a regression impossible to attribute.
 2. **C2 will make the `VoiceBalance` shelves wrong** — they were tuned to
    compensate for the missing gain staging and the `atan` insertion loss, i.e.
    for exactly what C1 and C2 add. Plan is to shrink them toward zero and let
-   the tone stack do the work, as a second listening pass over all 20 presets.
+   the tone stack do the work, as a second listening pass over all 8 presets.
    Confirm that is the intent.
 
 3. **Phase 0 is re-blessing a broken baseline.** `HEAD` has 164 violations from

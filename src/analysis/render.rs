@@ -158,7 +158,7 @@ mod tests {
 
     #[test]
     fn render_preset_is_bit_deterministic() {
-        let preset = bundled("acdc_back_in_black.toml");
+        let preset = bundled("pink_floyd_time_solo.toml");
         let di = phrase(Phrase::Chugs, 48_000.0);
         let opts = RenderOpts {
             max_tail_s: 0.0,
@@ -213,7 +213,7 @@ mod tests {
 
     #[test]
     fn width_override_changes_the_render() {
-        let preset = bundled("acdc_back_in_black.toml");
+        let preset = bundled("pink_floyd_time_solo.toml");
         let di = phrase(Phrase::Chugs, 48_000.0);
         let mono = render_preset(
             &preset,

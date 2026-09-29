@@ -59,7 +59,7 @@ disposed of on the control thread.
 | Amp models | Three distinct DSP paths (tube soft-clip, silicon clip, solid-state rail-clip) with per-model tone stacks and rectifier sag simulation |
 | Cabinet sim | Multi-stage biquad EQ chains that model close-mic'd 4×12 responses |
 | TUI | ratatui-based UI: selector row (amp + cabinet), pedals row, amp/FX row, VU meters, practice timeline pane, preset browser overlay; the pedalboard, amp panel, and timeline can be shown/hidden with `1`/`2`/`3` |
-| Preset system | TOML files loaded from `./presets/` and `~/.config/rusty-riff/presets/` |
+| Preset system | TOML files loaded from `./presets/` and `~/.config/rusty-riff/presets/`. The boot rig is a **vanilla** clean Plexi + Greenback with every pedal off and neutral stereo width (`DEFAULT_*` in `src/dsp/mod.rs`) — deliberately not a sound in its own right. Twelve bundled presets were retired on 2026-09-29 because the tone models changed under them; they are recoverable from git and indexed in [`docs/retired-presets.md`](docs/retired-presets.md). |
 | Practice / jam-along | `src/practice.rs` (shared transport + offline decode via symphonia), `src/dsp/player.rs` (audio-thread `PlayerVoice`), `src/ui/practice.rs` (timeline pane + track browser), `src/dsp/resample.rs` (shared windowed-sinc resampler) |
 | Sessions / export | `src/session.rs` (runtime session/track state), `src/project.rs` (portable project folders), `src/export.rs` (offline take render) |
 | Plugin hosting | `src/host/` — CLAP effect insert (`clap` feature) and macOS Audio Unit amp override (`au` feature) |
@@ -109,6 +109,8 @@ design/as-built notes live in `docs/` (`fidelity-plan.md`,
   `docs/fidelity-implement.md` is the as-built record. Log every
   routed/topology commit in its increment log.
 - `docs/fidelity-references.md` is the evidence matrix for historical gear claims.
+- `docs/retired-presets.md` indexes the twelve retired bundled presets, why they
+  were retired, and the one-line git recipe to restore any of them.
 - `docs/dsp-findings-2026-09.md` is the open DSP/tone audit (limiter ceiling,
   biquad state resets, amp gain staging, cab loading, export parity) that the
   current rework phases come from.

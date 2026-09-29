@@ -5,14 +5,24 @@ Drop third-party / self-recorded `.wav` cabinet IRs here for auditioning, or int
 browser (`I`) scans the config dir; project saves copy the chosen file into
 `<project>/irs/`.
 
-## Recommended 4-rig starter set (covers 15/17 bundled presets + metal gap)
+## Recommended starter set
+
+Rewritten 2026-09-29: twelve bundled presets were retired (see
+[`../docs/retired-presets.md`](../docs/retired-presets.md)), so this table
+previously aimed at rigs that no longer have a preset. What survives is
+almost entirely Hiwatt/WEM, plus a clean Fender and a Tweed.
 
 | Rig | What to load | Presets it serves |
 |-----|--------------|-------------------|
-| Marshall 4x12 Greenback (SM57 + R121) | `marshall-412-greenback-57.wav`, `marshall-412-greenback-r121.wav` | `acdc_*`, `whole_lotta_love`, `beat_it`, `november_rain` |
-| WEM 4x12 Fane (SM57) | `wem-412-fane-57.wav` | all 9 `pink_floyd_*` (hiwatt+wem) |
+| WEM 4x12 Fane (SM57) | `wem-412-fane-57.wav` | all 6 `pink_floyd_*` (hiwatt + wem) |
 | Fender Twin 2x12 Jensen (SM57 + room) | `fender-twin-212-57.wav` | `hotel_california_clean` |
-| Mesa 4x12 V30 (SM57 + R121) | `mesa-412-v30-57.wav` | new metal presets (Phase B) |
+| Marshall 4x12 Greenback (SM57 + R121) | `marshall-412-greenback-57.wav`, `marshall-412-greenback-r121.wav` | the new vanilla default (Plexi + Greenback) |
+| Tweed 1x12 | *(none shipped)* | `hotel_california_solo` |
+| Mesa 4x12 V30 (SM57 + R121) | `mesa-412-v30-57.wav` | no bundled preset — auditioning only |
+
+The Marshall and Mesa entries used to serve `acdc_*`, `whole_lotta_love`,
+`beat_it` and `november_rain`. Keep the files; they still audition the rigs
+directly and are the obvious thing to load if those presets come back.
 
 Mono files are duplicated to L/R; stereo files keep their image. Any sample rate
 works — loading resamples offline to the engine rate.

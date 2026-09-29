@@ -9,7 +9,7 @@ use rusty_riff::preset::{Preset, PresetSource};
 
 #[test]
 fn harness_render_is_deterministic_finite_and_loud() {
-    let path = std::path::PathBuf::from("presets/van_halen_beat_it_solo.toml");
+    let path = std::path::PathBuf::from("presets/pink_floyd_time_solo.toml");
     let preset = Preset::load(&path, PresetSource::System).expect("load bundled preset");
     let di = phrase(Phrase::Chugs, 48_000.0);
     let opts = RenderOpts {

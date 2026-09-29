@@ -47,10 +47,17 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// A representative pair — a high-gain lead and a crunch rhythm — falling back
-/// to the first two bundled presets if the named ones are absent.
+/// A representative pair from the surviving bundled set — a lead and a
+/// rhythm/chorus part — falling back to the first two bundled presets if the
+/// named ones are absent.
+///
+/// These were "November Rain" and "Back in Black" until 2026-09-29, when twelve
+/// bundled presets were retired (see `docs/retired-presets.md`). The comment
+/// above used to say "a high-gain lead and a crunch rhythm"; no surviving preset
+/// is a high-gain lead any more, so the pair is a Hiwatt lead and a Tweed
+/// rhythm instead.
 fn pick_presets() -> Result<Vec<(String, Preset)>> {
-    const WANTED: [&str; 2] = ["November Rain", "Back in Black"];
+    const WANTED: [&str; 2] = ["Time (Solo)", "Stairway"];
 
     let mut bundled: Vec<Preset> = preset::load_all()
         .into_iter()
