@@ -9,7 +9,7 @@ use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
     layout::{Alignment, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
 };
@@ -23,7 +23,7 @@ use crate::audio::calibration::{
     PickupClass, REFERENCE_VERSION, WindowStat, compute_calibration,
 };
 
-use super::styles::{ACCENT, AMBER, CHROME, DIM, HOT, SAFE, WARN};
+use super::styles::{ACCENT, AMBER, CHROME, DIM, HOT, SAFE, WARN, panel_style};
 
 /// Seconds the noise-floor capture runs.
 const NOISE_SECS: f32 = 2.0;
@@ -227,7 +227,7 @@ impl CalibrationUi {
                 " I N P U T   C A L I B R A T I O N ",
                 Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
             ))
-            .style(Style::default().bg(Color::Black));
+            .style(panel_style());
         let inner = block.inner(area);
         f.render_widget(block, area);
         f.render_widget(

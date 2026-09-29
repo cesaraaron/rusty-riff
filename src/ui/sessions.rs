@@ -13,7 +13,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
 
-use super::styles::{ACCENT, AMBER, CHROME, DIM, HOT, SAFE, WARN};
+use super::styles::{ACCENT, AMBER, CHROME, DIM, HOT, SAFE, WARN, panel_style};
 use crate::project::{self, RecoveryTake, SessionEntry};
 
 /// Which page is showing.
@@ -269,7 +269,7 @@ impl SessionBrowser {
                 title,
                 Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
             ))
-            .style(Style::default().bg(Color::Black));
+            .style(panel_style());
         let inner = block.inner(area);
         f.render_widget(block, area);
 

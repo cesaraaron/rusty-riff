@@ -139,7 +139,7 @@ fn render_header(
         .border_type(BorderType::Plain)
         .border_style(border_style(focused))
         .title(Line::from(Span::styled("[ ] move", Style::default().fg(DIM))).right_aligned())
-        .style(Style::default().bg(Color::Black));
+        .style(panel_style());
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -406,7 +406,7 @@ fn render_amp_box(
             ),
             Span::styled(" ├", Style::default().fg(border_color)),
         ]))
-        .style(Style::default().bg(Color::Black));
+        .style(panel_style());
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -501,7 +501,7 @@ fn render_cab_box(
             ])
             .right_aligned(),
         )
-        .style(Style::default().bg(Color::Black));
+        .style(panel_style());
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -610,7 +610,7 @@ fn render_rig(f: &mut Frame, area: Rect, params: &Params, board: &[bool], focus:
                 .fg(border_glyph(rig_active))
                 .add_modifier(Modifier::BOLD),
         )))
-        .style(Style::default().bg(Color::Black));
+        .style(panel_style());
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -699,7 +699,7 @@ fn render_add_tile(f: &mut Frame, area: Rect, focused: bool) {
                 .add_modifier(Modifier::BOLD)
                 .add_modifier(dim),
         )))
-        .style(Style::default().bg(Color::Black));
+        .style(panel_style());
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -797,7 +797,7 @@ fn render_pedal_tile(
         .border_type(BorderType::Plain)
         .border_style(Style::default().fg(body).add_modifier(dim))
         .title(title)
-        .style(Style::default().bg(Color::Black));
+        .style(panel_style());
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -902,7 +902,7 @@ fn render_pedal_detail(
         .borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
         .border_type(BorderType::Plain)
         .border_style(Style::default().fg(border_color))
-        .style(Style::default().bg(Color::Black));
+        .style(panel_style());
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -999,7 +999,7 @@ fn knob_cell(f: &mut Frame, area: Rect, focused: bool) -> Rect {
             .borders(Borders::ALL)
             .border_type(BorderType::Plain)
             .border_style(Style::default().fg(ACCENT).add_modifier(Modifier::BOLD))
-            .style(Style::default().bg(Color::Black));
+            .style(panel_style());
         let inner = block.inner(area);
         f.render_widget(block, area);
         inner
@@ -1212,7 +1212,7 @@ fn render_help(f: &mut Frame, area: Rect, status: Option<&str>, midi_bpm: Option
             Style::default().fg(SAFE).add_modifier(Modifier::BOLD),
         )]))
         .alignment(Alignment::Center)
-        .style(Style::default().bg(Color::Black));
+        .style(panel_style());
         f.render_widget(help, area);
         return;
     }
@@ -1224,7 +1224,7 @@ fn render_help(f: &mut Frame, area: Rect, status: Option<&str>, midi_bpm: Option
         Span::styled(" quit", Style::default().fg(DIM)),
     ]))
     .alignment(Alignment::Center)
-    .style(Style::default().bg(Color::Black));
+    .style(panel_style());
     f.render_widget(help, area);
 
     if let Some(bpm) = midi_bpm {
@@ -1234,7 +1234,7 @@ fn render_help(f: &mut Frame, area: Rect, status: Option<&str>, midi_bpm: Option
             Span::styled(" ", Style::default().fg(DIM)),
         ]))
         .alignment(Alignment::Right)
-        .style(Style::default().bg(Color::Black));
+        .style(panel_style());
         f.render_widget(clock, area);
     }
 }
@@ -1264,7 +1264,7 @@ pub(super) fn render_export_progress(f: &mut Frame, percent: u32) {
             " E X P O R T I N G ",
             Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
         ))
-        .style(Style::default().bg(Color::Black));
+        .style(panel_style());
     let inner = block.inner(rect);
     f.render_widget(block, rect);
 
@@ -1407,7 +1407,7 @@ pub(super) fn render_help_modal(f: &mut Frame) {
             " K E Y B I N D I N G S ",
             Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
         ))
-        .style(Style::default().bg(Color::Black));
+        .style(panel_style());
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -1450,7 +1450,7 @@ pub(super) fn render_add_pedal_modal(f: &mut Frame, available: &[usize], cursor:
             " A D D   P E D A L ",
             Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
         ))
-        .style(Style::default().bg(Color::Black));
+        .style(panel_style());
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -1534,7 +1534,7 @@ fn picker_shell(f: &mut Frame, title: &str, rows: usize) -> Rect {
             title.to_owned(),
             Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
         ))
-        .style(Style::default().bg(Color::Black));
+        .style(panel_style());
     let inner = block.inner(area);
     f.render_widget(block, area);
 

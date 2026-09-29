@@ -23,6 +23,13 @@ cargo run --release
 Use `--release`: a debug build can underrun the audio callback. On first launch
 the app asks for your input device, input channel, and output device.
 
+Panels are transparent by default, so terminal transparency (e.g. Ghostty)
+shows through. Pass `--opaque` for solid black panel backgrounds:
+
+```bash
+cargo run --release -- --opaque
+```
+
 ## Essential keys
 
 | Key | Action |

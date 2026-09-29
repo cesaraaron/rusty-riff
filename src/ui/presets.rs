@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
 
-use super::styles::{ACCENT, AMBER, CHROME, DIM};
+use super::styles::{ACCENT, AMBER, CHROME, DIM, panel_style};
 use std::collections::HashSet;
 
 use crate::preset::{Preset, PresetSource};
@@ -41,7 +41,7 @@ pub(super) fn render_preset_modal(
             },
             Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
         ))
-        .style(Style::default().bg(ratatui::style::Color::Black));
+        .style(panel_style());
 
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -255,7 +255,7 @@ pub(super) fn render_save_dialog(
             " S A V E   P R E S E T ",
             Style::default().fg(GREEN).add_modifier(Modifier::BOLD),
         ))
-        .style(Style::default().bg(ratatui::style::Color::Black));
+        .style(panel_style());
 
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -406,7 +406,7 @@ pub(super) fn render_path_dialog(
             title,
             Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
         ))
-        .style(Style::default().bg(ratatui::style::Color::Black));
+        .style(panel_style());
 
     let inner = block.inner(area);
     f.render_widget(block, area);

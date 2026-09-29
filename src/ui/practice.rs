@@ -25,7 +25,7 @@ use ratatui::{
 };
 use std::sync::atomic::Ordering::Relaxed;
 
-use super::styles::{ACCENT, AMBER, CHROME, DIM, GRID, HOT, SAFE, WARN};
+use super::styles::{ACCENT, AMBER, CHROME, DIM, GRID, HOT, SAFE, WARN, panel_style};
 use crate::audio::AudioEngine;
 use crate::audio::calibration::{InputCalibration, REFERENCE_VERSION};
 use crate::dsp::Params;
@@ -1691,7 +1691,7 @@ impl PracticeUi {
                     .fg(focused_glyph)
                     .add_modifier(Modifier::BOLD),
             )))
-            .style(Style::default().bg(Color::Black));
+            .style(panel_style());
         let inner = block.inner(area);
         f.render_widget(block, area);
 
@@ -2316,7 +2316,7 @@ impl PracticeUi {
                 title,
                 Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
             ))
-            .style(Style::default().bg(Color::Black));
+            .style(panel_style());
         let inner = block.inner(area);
         f.render_widget(block, area);
 
@@ -2544,7 +2544,7 @@ impl PracticeUi {
                 " T R A C K   G A I N ",
                 Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
             ))
-            .style(Style::default().bg(Color::Black));
+            .style(panel_style());
         let inner = block.inner(area);
         f.render_widget(block, area);
 
@@ -2599,7 +2599,7 @@ impl PracticeUi {
                 " M O V E   C L I P ",
                 Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
             ))
-            .style(Style::default().bg(Color::Black));
+            .style(panel_style());
         let inner = block.inner(area);
         f.render_widget(block, area);
 

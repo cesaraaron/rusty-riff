@@ -9,7 +9,7 @@ use std::sync::atomic::Ordering::Relaxed;
 
 use crate::dsp::tuner::{SPECTRUM_BINS, Tuner, note_of, spectrum_bin_freq};
 
-use super::styles::{ACCENT, AMBER, CHROME, DIM, HOT, SAFE, WARN};
+use super::styles::{ACCENT, AMBER, CHROME, DIM, HOT, SAFE, WARN, panel_style};
 
 /// Cents window (±) treated as "in tune".
 const IN_TUNE_CENTS: f32 = 5.0;
@@ -47,7 +47,7 @@ pub(super) fn render_tuner(f: &mut Frame, tuner: &Tuner) {
             ))
             .right_aligned(),
         )
-        .style(Style::default().bg(Color::Black));
+        .style(panel_style());
     let inner = block.inner(area);
     f.render_widget(block, area);
 

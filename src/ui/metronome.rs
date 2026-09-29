@@ -1,14 +1,14 @@
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
 
 use crate::dsp::metronome::{MAX_BPM, MIN_BPM, Metronome};
 
-use super::styles::{ACCENT, AMBER, CHROME, DIM, HOT, SAFE};
+use super::styles::{ACCENT, AMBER, CHROME, DIM, HOT, SAFE, panel_style};
 
 pub(super) fn render_metronome(f: &mut Frame, metronome: &Metronome, blink: bool) {
     let area = centered_rect(60, 45, f.area());
@@ -32,7 +32,7 @@ pub(super) fn render_metronome(f: &mut Frame, metronome: &Metronome, blink: bool
             Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
         ))
         .title(Line::from(status_span).right_aligned())
-        .style(Style::default().bg(Color::Black));
+        .style(panel_style());
     let inner = block.inner(area);
     f.render_widget(block, area);
 

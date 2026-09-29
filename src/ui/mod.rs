@@ -263,7 +263,11 @@ pub fn run(
     practice: Arc<Practice>,
     calibration: Arc<crate::audio::InputCalibration>,
     looper: Arc<LooperControl>,
+    opaque: bool,
 ) -> Result<()> {
+    // Panel background: transparent (terminal default) unless `--opaque` was
+    // passed. Set once here; every panel/modal reads it via `styles::panel_style`.
+    styles::set_opaque(opaque);
     enable_raw_mode()?;
     let mut stdout = std::io::stdout();
     execute!(stdout, EnterAlternateScreen)?;

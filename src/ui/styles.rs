@@ -1,4 +1,5 @@
-use ratatui::style::Color;
+use ratatui::style::{Color, Style};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub(super) const AMBER: Color = Color::Rgb(255, 200, 60);
 // Primary structural/focus accent (teal). Panels, frames and modal borders use
@@ -12,6 +13,26 @@ pub(super) const HOT: Color = Color::Rgb(220, 30, 30);
 pub(super) const SAFE: Color = Color::Rgb(40, 180, 40);
 pub(super) const WARN: Color = Color::Rgb(220, 180, 0);
 pub(super) const OFF: Color = Color::Rgb(50, 50, 50);
+
+// ── Panel background ──────────────────────────────────────────────────────────
+// Transparent by default so terminal transparency (e.g. Ghostty) shows through:
+// panels use the terminal's own background. `--opaque` restores the legacy solid
+// black panels. Set once from `ui::run` before the event loop; only read while
+// rendering (never on the audio thread).
+static OPAQUE_BACKGROUND: AtomicBool = AtomicBool::new(false);
+
+pub(super) fn set_opaque(opaque: bool) {
+    OPAQUE_BACKGROUND.store(opaque, Ordering::Relaxed);
+}
+
+/// Background style for panels and modal shells.
+pub(super) fn panel_style() -> Style {
+    if OPAQUE_BACKGROUND.load(Ordering::Relaxed) {
+        Style::default().bg(Color::Black)
+    } else {
+        Style::default()
+    }
+}
 
 // ── Pedal body colors (real-world stompbox liveries) ──────────────────────────
 pub(super) const PEDAL_GREEN: Color = Color::Rgb(60, 170, 80); // TS-808 Tube Screamer
@@ -33,3 +54,20 @@ pub(super) const PEDAL_SAND: Color = Color::Rgb(206, 188, 140); // Graphic EQ (w
 pub(super) const PEDAL_ROSE: Color = Color::Rgb(232, 128, 128); // Tremolo / Vibrato (soft rose)
 pub(super) const PEDAL_VIBE: Color = Color::Rgb(225, 70, 150); // Uni-Vibe (deep magenta)
 pub(super) const PEDAL_MINT: Color = Color::Rgb(120, 225, 170); // Clean boost (mint)
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The background switch is the only thing `--opaque` changes: transparent
+    /// (terminal default) unless explicitly requested. Resets the flag so no
+    /// state leaks into other tests.
+    #[test]
+    fn panel_background_follows_opaque_flag() {
+        set_opaque(false);
+        assert_eq!(panel_style(), Style::default());
+        set_opaque(true);
+        assert_eq!(panel_style(), Style::default().bg(Color::Black));
+        set_opaque(false);
+    }
+}

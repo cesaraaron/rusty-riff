@@ -13,12 +13,12 @@ use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
 
-use super::styles::{ACCENT, AMBER, CHROME, DIM, SAFE, WARN};
+use super::styles::{ACCENT, AMBER, CHROME, DIM, SAFE, WARN, panel_style};
 use crate::audio::AudioEngine;
 use crate::dsp::Params;
 use crate::dsp::cab::{ExternalIrCab, LIVE_MAX_IR_LEN, load_ir};
@@ -185,7 +185,7 @@ impl IrBrowser {
                 " C A B I N E T   I R s ",
                 Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
             ))
-            .style(Style::default().bg(Color::Black));
+            .style(panel_style());
 
         let inner = block.inner(area);
         f.render_widget(block, area);

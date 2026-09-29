@@ -16,7 +16,7 @@ use crate::audio::DeviceInfo;
 use crate::dsp::{Levels, Params};
 
 use super::draw::draw;
-use super::styles::{ACCENT, AMBER, CHROME, DIM};
+use super::styles::{ACCENT, AMBER, CHROME, DIM, panel_style};
 
 pub struct Selection {
     pub input_idx: usize,
@@ -210,7 +210,7 @@ fn render_list_modal(
             title,
             Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
         ))
-        .style(Style::default().bg(ratatui::style::Color::Black));
+        .style(panel_style());
 
     let inner = block.inner(area);
     f.render_widget(block, area);
