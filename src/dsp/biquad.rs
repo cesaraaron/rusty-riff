@@ -393,7 +393,14 @@ mod tests {
             let mut out: Vec<f32> = Vec::with_capacity(STEP_SAMPLES * STEPS + 1);
             for i in 0..WARMUP + STEP_SAMPLES * STEPS {
                 let x = tone(i);
-                let step = (i - WARMUP) / STEP_SAMPLES;
+                // Only meaningful past the warm-up. Computing it unconditionally
+                // underflows `usize` for the first WARMUP samples, which is a
+                // silent wrap in release and a panic under `cargo test` (debug).
+                let step = if i >= WARMUP {
+                    (i - WARMUP) / STEP_SAMPLES
+                } else {
+                    0
+                };
                 if i >= WARMUP && (i - WARMUP).is_multiple_of(STEP_SAMPLES) {
                     let g = (step as f32) * STEP_DB;
                     if preserved {
