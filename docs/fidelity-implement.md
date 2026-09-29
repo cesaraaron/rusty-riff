@@ -973,3 +973,53 @@ the pedal's mono signal. At `mix = 0` both pedals are wire-transparent; at
   bigger the fall, so `numb_solo_1` (mix 0.20, most dry) moves most. The other
   17 presets are byte-identical: the generic stereo phaser and flanger were
   never folding anything. Baseline regenerated (20 presets), `--check` green.
+
+### A5 — the tremolo added 4 ms of latency, and the Fender Twin inherited it
+
+`Tremolo` had **no dry path**. The output was always a read of the delay line:
+
+```rust
+let del_ms = CENTER_MS + pitch_depth * SWING_MS * sine;   // CENTER_MS = 4.0
+let wet_l = Self::read(&self.buf_l, self.write, del);
+...
+(wet_l * gain, wet_r * gain)
+```
+
+At `pitch_depth == 0` — pure tremolo, which is the **default**
+(`DEFAULT_TREM_MODE = 0.0`) — the tap length is *constant*, so it contributes no
+pitch movement at all. It only added `CENTER_MS` = **4 ms = 192 samples @48 kHz**
+to the whole rig, unconditionally, with nothing to bypass it back out.
+
+It leaked out of the pedal entirely: `fender.rs:202` runs the Twin's onboard
+bias tremolo through this module with `mode = 0.0`, so **the Fender Twin model
+was permanently 4 ms behind the other eight amps**. Switching amp models on
+stage produced a 4 ms time jump — audible as a slapback against a reverb or the
+take bus.
+
+Fix: with `pitch_depth == 0` the input is taken directly and only the gain is
+applied. Vibrato still uses the tap, and its 4 ms is a real vibrato pedal's
+behaviour, not an artifact. The buffer is written either way so the tap is warm
+when the user reaches for MODE.
+
+- **Tests:** `tremolo_mode_adds_no_latency` (impulse response peaks at the
+  input sample, at depth 0/0.5/1.0), `zero_depth_tremolo_is_wire_transparent`
+  (bit-exact), `vibrato_mode_does_delay` (pins the tap's intended latency
+  *band*, `CENTER_MS ± pitch_depth·SWING_MS`, so a future "optimisation" cannot
+  quietly drop it).
+- **New amp-level test:** `all_amp_models_are_latency_aligned`, across all nine
+  models.
+- **On that test's metric**, since two earlier attempts were wrong. These amps
+  are non-linear (sag, bias offsets, saturators), so transfer-function group
+  delay is undefined, and an **energy centroid measures the response's tail, not
+  its arrival** — measured that way the spread is 27–118 samples and says
+  nothing about alignment. The test uses the first sample crossing 1% of the
+  impulse response's own peak, with an 8-sample (0.17 ms) tolerance: that absorbs
+  the filter-shape differences between models (the Tweed's treble-cut lowpass
+  rises ~4 samples slower than the others' shelves) while being 24× tighter than
+  the defect. Verified it fails against the old code:
+  **onset spread 15..208, Fender at 208 against 15 for every other model.**
+- **Measured (1 of 20 presets):** `eagles_hotel_california_clean` is the only
+  Fender user, and it is the only preset that moves — LTAS 2822 Hz +0.30 dB,
+  5644 Hz +0.35 dB, 7112 Hz −0.98 dB. The shift is the removed 4 ms changing how
+  the amp's bias-tremolo envelope lines up with the signal content. Baseline
+  regenerated (20 presets), `--check` green.

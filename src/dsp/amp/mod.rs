@@ -930,6 +930,85 @@ mod tests {
         );
     }
 
+    /// Every amp model must be **time-aligned**, so switching models on stage
+    /// does not jump the signal in time.
+    ///
+    /// The Fender Twin runs an onboard bias tremolo (`fender.rs`) through the
+    /// shared rack `Tremolo` module, using the tremolo end — no pitch
+    /// modulation. That path used to route through the vibrato delay tap with no
+    /// dry path, so the Twin sat `CENTER_MS` (4 ms, 192 samples @48 kHz) behind
+    /// the other eight models. Against a reverb or the take bus that reads as a
+    /// slapback on every model switch.
+    ///
+    /// **On the metric.** These models are non-linear (sag, bias offsets,
+    /// saturators), so a transfer-function group delay is not well defined, and
+    /// an energy centroid measures the response's long tail rather than its
+    /// arrival — measured that way the spread is 27–118 samples and says nothing
+    /// about alignment. What matters is when a *transient arrives*, so this uses
+    /// the first sample crossing 1% of the impulse response's own peak. The
+    /// tolerance is 8 samples (0.17 ms @48 kHz): that absorbs the differences in
+    /// filter shape between the models (the Tweed's treble-cut lowpass rises
+    /// more slowly than the others' shelves, worth ~4 samples) while being
+    /// **24x** tighter than the 192-sample defect it guards against.
+    #[test]
+    fn all_amp_models_are_latency_aligned() {
+        const IMPULSE: f32 = 0.9;
+        const ONSET_FRACTION: f32 = 0.01;
+        const MAX_SPREAD: usize = 8;
+
+        let onset = |model: crate::dsp::AmpModel| -> usize {
+            let (_name, _m, mut amp) = each_amp()
+                .into_iter()
+                .find(|(_, m, _)| *m == model)
+                .expect("model missing from each_amp()");
+            let knobs = standard_knobs(model, 0.6, 0.5, 0.5, 0.5, 0.5, 0.5);
+            // Settle on silence first so the DC blocks and sag envelopes are in
+            // steady state before the impulse.
+            for _ in 0..(SR as usize / 4) {
+                amp.process(0.0, &knobs);
+            }
+            let n = SR as usize;
+            let mut h = vec![0.0f32; n];
+            for (i, w) in h.iter_mut().enumerate() {
+                let x = if i == 0 { IMPULSE } else { 0.0 };
+                *w = amp.process(x, &knobs);
+            }
+            let peak = h.iter().fold(0.0f32, |a, &b| a.max(b.abs()));
+            assert!(peak > 1e-3, "{model:?} produced no impulse response");
+            let threshold = peak * ONSET_FRACTION;
+            h.iter()
+                .position(|&v| v.abs() >= threshold)
+                .unwrap_or(usize::MAX)
+        };
+
+        let all = [
+            crate::dsp::AmpModel::Marshall,
+            crate::dsp::AmpModel::Mesa,
+            crate::dsp::AmpModel::Randall,
+            crate::dsp::AmpModel::Vox,
+            crate::dsp::AmpModel::Hiwatt,
+            crate::dsp::AmpModel::Plexi,
+            crate::dsp::AmpModel::Fender,
+            crate::dsp::AmpModel::Supro,
+            crate::dsp::AmpModel::Tweed,
+        ];
+        let onsets: Vec<(crate::dsp::AmpModel, usize)> =
+            all.iter().map(|&m| (m, onset(m))).collect();
+
+        let lo = onsets.iter().map(|(_, o)| *o).min().unwrap();
+        let hi = onsets.iter().map(|(_, o)| *o).max().unwrap();
+        assert!(
+            hi - lo <= MAX_SPREAD,
+            "amp models are not time-aligned: onset spread {lo}..{hi} \
+             ({} samples) across {:?}",
+            hi - lo,
+            onsets
+                .iter()
+                .map(|(m, o)| format!("{}:{o}", m.name()))
+                .collect::<Vec<_>>()
+        );
+    }
+
     // ── New dynamic-realism features ──────────────────────────────────────────
     //
     // The three additions below — dynamic cathode-bias, output-transformer

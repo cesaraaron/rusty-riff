@@ -83,13 +83,31 @@ impl Tremolo {
         let amp_depth = depth * (1.0 - mode);
         let pitch_depth = depth * mode;
 
-        // Vibrato: read a delay tap whose length wobbles with the LFO. When
-        // `pitch_depth` is 0 (pure tremolo) the tap is a fixed short delay — an
-        // inaudible latency, no pitch movement.
+        // Vibrato: read a delay tap whose length wobbles with the LFO.
         let del_ms = CENTER_MS + pitch_depth * SWING_MS * sine;
         let del = del_ms * self.sr / 1000.0;
-        let wet_l = Self::read(&self.buf_l, self.write, del);
-        let wet_r = Self::read(&self.buf_r, self.write, del);
+
+        // **Only vibrato needs the tap.** With `pitch_depth == 0` the tap is a
+        // *fixed* delay, so it contributes no pitch movement — it only adds
+        // `CENTER_MS` of latency. That latency used to be unconditional, with no
+        // dry path, so the pedal delayed the whole rig by 4 ms even fully
+        // "off", and bypassing it dropped those 4 ms. It also leaked outward:
+        // `fender.rs` uses this module for the Twin's bias tremolo in tremolo
+        // mode, which left the Fender model permanently 4 ms behind the other
+        // eight amps and made an amp switch jump in time.
+        //
+        // So the pure-tremolo path reads the input directly. Turning MODE up
+        // engages the tap and its intrinsic 4 ms — which is a real vibrato
+        // pedal's behaviour, not an artifact. The buffer is written either way
+        // so the tap is warm when the user reaches for MODE.
+        let (wet_l, wet_r) = if pitch_depth > 0.0 {
+            (
+                Self::read(&self.buf_l, self.write, del),
+                Self::read(&self.buf_r, self.write, del),
+            )
+        } else {
+            (l, r)
+        };
 
         self.buf_l[self.write] = l;
         self.buf_r[self.write] = r;
@@ -177,6 +195,73 @@ mod tests {
             .sqrt()
             .max(1e-9);
         (goertzel(&out, f0, SR) as f64 / (rms * std::f64::consts::SQRT_2)) as f32
+    }
+
+    /// The sample index of the first non-negligible output sample after feeding
+    /// an impulse — i.e. the effect's latency, in samples.
+    fn latency_samples(mode: f32, depth: f32) -> usize {
+        let mut t = Tremolo::new(SR);
+        let mut peak_idx = 0usize;
+        let mut peak = 0.0f32;
+        for n in 0..(SR as usize) {
+            let x = if n == 1 { 1.0 } else { 0.0 };
+            let (l, _r) = t.process(x, x, 0.5, depth, 0.0, mode);
+            if l.abs() > peak {
+                peak = l.abs();
+                peak_idx = n;
+            }
+        }
+        assert!(peak > 0.1, "no output at all for mode {mode} depth {depth}");
+        peak_idx
+    }
+
+    /// Tremolo (MODE 0) must add **no latency**. With `pitch_depth == 0` there
+    /// is no pitch modulation to compute, so routing through the tap only added
+    /// `CENTER_MS` (192 samples @48 kHz). The pedal used to delay the rig by
+    /// that much with no dry path, and bypassing it dropped the delay.
+    #[test]
+    fn tremolo_mode_adds_no_latency() {
+        for depth in [0.0f32, 0.5, 1.0] {
+            // The impulse is fed at sample 1, so a zero-latency path responds
+            // there and nothing later.
+            assert_eq!(
+                latency_samples(0.0, depth),
+                1,
+                "tremolo at depth {depth} delayed the signal"
+            );
+        }
+    }
+
+    /// A tremolo with DEPTH at zero is fully transparent: the pedal is engaged
+    /// but doing nothing, so the output must be bit-identical to the input.
+    #[test]
+    fn zero_depth_tremolo_is_wire_transparent() {
+        let mut t = Tremolo::new(SR);
+        for n in 0..2000 {
+            let l_in = (n as f32 * 0.031).sin() * 0.6;
+            let r_in = (n as f32 * 0.047).cos() * 0.4;
+            let (l, r) = t.process(l_in, r_in, 0.5, 0.0, 0.0, 0.0);
+            assert_eq!(l, l_in, "L changed at zero depth, sample {n}");
+            assert_eq!(r, r_in, "R changed at zero depth, sample {n}");
+        }
+    }
+
+    /// Vibrato (MODE 1) *does* have latency, and it should: a vibrato pedal
+    /// delays the signal, that is the mechanism. This pins the intent so a
+    /// future "optimisation" does not silently drop the tap.
+    #[test]
+    fn vibrato_mode_does_delay() {
+        // The tap length wobbles by +/- pitch_depth * SWING_MS, so the measured
+        // peak lands somewhere in that band rather than exactly at CENTER_MS.
+        let depth = 0.5f32;
+        let centre = CENTER_MS * SR / 1000.0;
+        let lo = centre - depth * SWING_MS * SR / 1000.0;
+        let hi = centre + depth * SWING_MS * SR / 1000.0;
+        let lag = latency_samples(1.0, depth) as f32;
+        assert!(
+            lag >= lo - 2.0 && lag <= hi + 2.0,
+            "vibrato lag {lag} is outside the tap band [{lo:.0}, {hi:.0}]"
+        );
     }
 
     /// Extreme settings must stay finite and bounded — the amplitude gain never
