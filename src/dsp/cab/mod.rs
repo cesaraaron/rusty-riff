@@ -12,9 +12,7 @@ pub mod wem;
 use crate::dsp::biquad::Biquad;
 use crate::dsp::conv::FftConvolver;
 
-pub use external::{
-    ExternalIrCab, LIVE_MAX_IR_LEN, LoadedIr, MAX_IR_LEN, OFFLINE_MAX_IR_LEN, load_ir,
-};
+pub use external::{ExternalIrCab, LIVE_MAX_IR_LEN, LoadedIr, MAX_IR_LEN, load_ir};
 pub use fender::FenderCab;
 pub use marshall::MarshallCab;
 pub use mesa::MesaCab;

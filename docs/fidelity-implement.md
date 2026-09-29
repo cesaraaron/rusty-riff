@@ -1191,3 +1191,50 @@ Ten UI goldens were re-blessed; the diffs are the rig and the now-empty ribbon
 carried a stale inventory — `led_zeppelin_stairway_solo` was listed as
 `plexi | marshall` after Phase 5 had already rebuilt it onto the Supro. Corrected
 against the TOML.
+
+### A7 — the export did not render what you monitored
+
+Two independent causes, both silent, both "my export doesn't sound like what I
+heard".
+
+**The external IR differed between live and offline.** The realtime path capped a
+loaded IR at `LIVE_MAX_IR_LEN` (8192 taps ≈ 170 ms) and the exporter at
+`OFFLINE_MAX_IR_LEN` (32768 ≈ 683 ms). `load_ir` ends with `normalize_pair`,
+which **unit-energy-normalises**, so the two caps produced genuinely *different
+impulse responses* for any IR longer than 170 ms: the export normalised over more
+energy (so it was quieter) and was missing the tail (so it was duller). You
+monitored one cab and rendered a different one, with nothing surfacing it until
+after the render.
+
+Fix: the caps converged. `OFFLINE_MAX_IR_LEN` is gone; both paths use
+`LIVE_MAX_IR_LEN`. This **removes** a capability — the exporter no longer keeps
+full room tails past 170 ms — and that is the intended trade. An export has to
+reproduce what you monitored, and a longer tail you cannot hear in monitoring is
+not worth an output you cannot trust. For the common case (cab IRs of 512–2048
+taps) nothing changed at all; only IRs between 170 ms and 683 ms were ever
+affected.
+
+- **Test:** `a_long_ir_loads_identically_for_live_and_offline` drives an IR three
+  times the cap through both paths and asserts they agree sample-for-sample, and
+  that the normalisation really is unit energy (the mechanism the old split
+  exploited). Replaces `offline_cap_exceeds_live_cap`.
+
+**The export started from a cold chain.** `render_with_chain` began writing at
+frame 0 with every stateful stage at rest: the amps' rectifier-sag and
+dynamic-bias envelopes at zero, the cab convolver's delay line empty, the reverb
+and delay buffers silent. The first pluck of a take was rendered into a rig that
+had not yet found its operating point. The offline harness *did* preroll
+(`analysis/render.rs`, `preroll_s = 0.5`), so the harness and the exporter were
+measuring different things.
+
+Fix: `PREROLL_SECS = 0.5` of silence through the chain before the first written
+frame, matching the harness.
+
+- **Test:** `preroll_warms_the_chain_without_offsetting_the_render`. The
+  *dangerous* half of a preroll is that it leaks into the output and shifts every
+  take 24 000 samples later than it was recorded, so the test measures the onset
+  of a pluck placed at a known input offset and asserts it lands at that offset
+  plus only the cab convolver's 128-sample latency — with a second assertion that
+  the shift is under a tenth of a preroll.
+- Baseline unchanged: `--check` green, 8 presets. The harness already prerolled
+  and the export path is not what the bundled-preset renders go through.

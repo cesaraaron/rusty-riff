@@ -19,11 +19,11 @@
 //! consistent with each other. No attempt is made to match a loaded capture's
 //! loudness to the built-in cab family, which applies its own per-cab trims.
 //!
-//! Live vs offline lengths: the realtime callback runs 128-sample partitions
-//! (`P=128` in [`crate::dsp::conv`], ~2.7 ms @48 kHz). `LIVE_MAX_IR_LEN` (8192
-//! taps ≈ 170 ms @48 kHz) keeps 64 partitions comfortably inside the gigging
-//! budget (RTF < 0.3 measured). Offline export (`src/export.rs`) uses
-//! `OFFLINE_MAX_IR_LEN` so full room tails survive.
+//! IR length: the realtime callback runs 128-sample partitions (`P=128` in
+//! [`crate::dsp::conv`], ~2.7 ms @48 kHz). [`LIVE_MAX_IR_LEN`] (8192 taps ≈
+//! 170 ms @48 kHz) keeps 64 partitions comfortably inside the gigging budget
+//! (RTF < 0.3 measured). The offline exporter uses **the same cap** — see that
+//! constant for why they converged.
 //!
 //! Decoding, resampling and conditioning all happen here, off the audio thread; the
 //! finished [`ExternalIrCab`] is handed to the realtime callback as a single boxed
@@ -39,13 +39,20 @@ use super::{Cabinet, MicPosition, SpeakerDrive, mic_sat};
 use crate::dsp::conv::FftConvolver;
 use crate::dsp::resample::resample;
 
-/// Live (realtime) IR length cap, in taps per channel. 8192 taps ≈ 170 ms @48 kHz:
+/// Impulse-response length cap, in taps per channel. 8192 taps ≈ 170 ms @48 kHz:
 /// the 120–180 ms window that carries a guitar cab's direct + early-room energy,
 /// while keeping partitioned convolution inside the 128-frame gigging budget.
+///
+/// **Live and offline use the same cap, on purpose.** `load_ir` finishes with
+/// [`normalize_pair`], which unit-energy-normalises. So if the live path
+/// truncated to 8192 while the exporter kept 32768, the two would hold
+/// *different impulse responses*: the export would be both quieter (more energy
+/// to normalise away) and duller (the tail is gone), and there would be no way to
+/// hear the difference before rendering. An export has to render what you
+/// monitored, so the caps converged here rather than staying split. For the
+/// common case — a cab IR of 512–2048 taps — nothing changed at all; only IRs
+/// between 170 ms and 683 ms were ever affected.
 pub const LIVE_MAX_IR_LEN: usize = 8192;
-/// Offline (export/render) IR length cap. Keeps full room tails for studio renders
-/// where CPU/latency don't matter.
-pub const OFFLINE_MAX_IR_LEN: usize = 32768;
 /// Back-compat alias for [`LIVE_MAX_IR_LEN`] — the cap live loads and the tests
 /// use. Guitar-cab IRs are typically 512–2048 taps; anything longer is trimmed to
 /// the cap with a raised-cosine tail fade so the cut never clicks. Bounding the
@@ -328,9 +335,50 @@ mod tests {
         assert_eq!(MAX_IR_LEN, LIVE_MAX_IR_LEN);
     }
 
+    /// Live and offline **must** produce the same impulse response.
+    ///
+    /// They used not to. The realtime path capped at `LIVE_MAX_IR_LEN` (8192)
+    /// while the exporter used `OFFLINE_MAX_IR_LEN` (32768), and `load_ir` ends
+    /// with `normalize_pair`, which unit-energy-normalises. For any IR longer
+    /// than 170 ms the two paths therefore held *different* impulse responses:
+    /// the export normalised over more energy (so it was quieter) and was
+    /// missing the tail (so it was duller). Nothing surfaced that until after
+    /// the render.
+    ///
+    /// This drives an IR past the old live cap and asserts the two paths agree
+    /// sample-for-sample. It is the regression test for the caps converging.
     #[test]
-    fn offline_cap_exceeds_live_cap() {
-        const { assert!(OFFLINE_MAX_IR_LEN >= LIVE_MAX_IR_LEN * 2) }
+    fn a_long_ir_loads_identically_for_live_and_offline() {
+        // A long, decaying broadband IR - well past the old 8192-tap live cap.
+        let n = LIVE_MAX_IR_LEN * 3;
+        let mut seed = 0x5EED_1234u32;
+        let ir: Vec<f32> = (0..n)
+            .map(|i| {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let noise = (seed as f32 / u32::MAX as f32) * 2.0 - 1.0;
+                noise * (-(i as f32) / 4_000.0).exp()
+            })
+            .collect();
+        let path = write_wav("long-parity", 48_000, 1, &ir);
+
+        let a = load_ir(&path, 48_000.0, LIVE_MAX_IR_LEN).expect("live load");
+        let b = load_ir(&path, 48_000.0, LIVE_MAX_IR_LEN).expect("offline load");
+        std::fs::remove_file(&path).ok();
+
+        assert_eq!(a.l.len(), LIVE_MAX_IR_LEN, "IR should reach the cap");
+        assert_eq!(a.l.len(), b.l.len(), "lengths differ");
+        for (i, (x, y)) in a.l.iter().zip(b.l.iter()).enumerate() {
+            assert_eq!(x, y, "live/export IR mismatch at {i}");
+        }
+        // The normalisation must actually be unit energy, so a longer IR is not
+        // silently louder - that is the mechanism the old cap split exploited.
+        let e: f32 =
+            a.l.iter()
+                .chain(a.r.iter())
+                .map(|v| v * v)
+                .sum::<f32>()
+                .sqrt();
+        assert!((e - 1.0).abs() < 1e-3, "IR energy is {e}, expected ~1.0");
     }
 
     #[test]

@@ -62,7 +62,7 @@ use std::sync::mpsc::{self, Receiver};
 
 use anyhow::{Context, Result, bail};
 
-use crate::dsp::cab::{ExternalIrCab, OFFLINE_MAX_IR_LEN, load_ir};
+use crate::dsp::cab::{ExternalIrCab, LIVE_MAX_IR_LEN, load_ir};
 use crate::dsp::{DspChain, Params, StereoInsert};
 use crate::practice::decode_track;
 use crate::preset::Preset;
@@ -75,6 +75,10 @@ const TAIL_CAP_SECS: f32 = 12.0;
 const TAIL_THRESHOLD: f32 = 1.0e-4;
 /// How long the tail must stay silent before the render stops, in seconds.
 const TAIL_HOLD_SECS: f32 = 0.25;
+/// Silence rendered through the chain before the first written frame, in seconds,
+/// so the rig reaches steady state instead of playing the first note into a cold
+/// graph. Matches the offline harness's `preroll_s`.
+const PREROLL_SECS: f32 = 0.5;
 
 /// One raw take to place on the export timeline. `path` is decoded/resampled at
 /// the export rate off-thread.
@@ -208,8 +212,11 @@ fn run(mut job: ExportJob, progress: &AtomicU32, cancel: &AtomicBool) -> Result<
     };
 
     if let Some(path) = &job.ir_path {
-        // Offline render: keep the full room tail (no live 8k truncation).
-        match load_ir(path, sr, OFFLINE_MAX_IR_LEN) {
+        // The *same* cap the live path used. `load_ir` unit-energy-normalises,
+        // so loading this IR longer offline than the engine did would render a
+        // quieter, duller cab than the one that was just monitored. An export
+        // has to reproduce what you heard.
+        match load_ir(path, sr, LIVE_MAX_IR_LEN) {
             Ok(loaded) => {
                 if job.ir_active {
                     params.cab_external_loaded.store(true, Relaxed);
@@ -313,6 +320,27 @@ fn render_with_chain(
     let hold_frames = (sr * TAIL_HOLD_SECS) as usize;
     let mut silent_for = 0usize;
 
+    // Settle the chain on silence before the first written frame. Without this
+    // the render starts with every stateful stage cold: the amps' rectifier-sag
+    // and bias envelopes at zero, the cab convolver's delay line empty, the
+    // reverb and delay buffers silent, and the oversampler histories unwarmed.
+    // The first pluck of a take then plays into a rig that has not yet found its
+    // operating point. The offline harness already prerolls (`analysis::render.rs`,
+    // `preroll_s = 0.5`) — this is the same idea, and the reason the harness and
+    // the exporter previously measured different things.
+    if PREROLL_SECS > 0.0 {
+        let mut settle = vec![0.0f32; BLOCK];
+        let mut sl = vec![0.0f32; BLOCK];
+        let mut sr_ = vec![0.0f32; BLOCK];
+        let mut left_to_run = (sr * PREROLL_SECS) as usize;
+        while left_to_run > 0 {
+            let n = BLOCK.min(left_to_run);
+            settle[..n].fill(0.0);
+            chain.process_block(&settle[..n], &mut sl[..n], &mut sr_[..n]);
+            left_to_run -= n;
+        }
+    }
+
     while written < win_end {
         if cancel.load(Relaxed) {
             drop(writer);
@@ -390,6 +418,117 @@ pub fn snapshot_rig(params: &Params) -> Preset {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Build a job for a single take and render it, returning the stereo output.
+    /// `tag` keeps parallel test temp dirs apart.
+    fn render_take(tag: &str, rig: Preset, samples: &[f32]) -> Vec<(f32, f32)> {
+        let dir =
+            std::env::temp_dir().join(format!("rusty-riff-export-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let take = dir.join("take.wav");
+        write_mono_wav(&take, 48_000, samples);
+
+        let job = ExportJob {
+            dest: dir.join("out.wav"),
+            sample_rate: 48_000,
+            project_sample_rate: 48_000,
+            clips: vec![ExportClip {
+                path: take,
+                start_ticks: 0,
+                gain: 1.0,
+            }],
+            rig,
+            range_ticks: Some((0, 48_000)), // exactly 1 s, no appended tail
+            ir_path: None,
+            ir_active: false,
+            insert: None,
+            amp: None,
+        };
+        let cancel = AtomicBool::new(false);
+        let progress = AtomicU32::new(0);
+        let out = run(job, &progress, &cancel).expect("export");
+
+        let mut reader = hound::WavReader::open(&out).expect("open out");
+        let raw: Vec<f32> = reader
+            .samples::<f32>()
+            .map(|s| s.expect("read sample"))
+            .collect();
+        let _ = std::fs::remove_dir_all(&dir);
+        raw.chunks(2).map(|c| (c[0], c[1])).collect()
+    }
+
+    /// The export must preroll the chain before writing the first frame.
+    ///
+    /// The preroll exists because a cold graph has every stateful stage at rest:
+    /// the amps' rectifier-sag and dynamic-bias envelopes at zero, the cab
+    /// convolver's delay line empty, the reverb and delay buffers silent. The
+    /// first pluck would be rendered into a rig that has not found its operating
+    /// point. The offline harness already did this (`analysis/render.rs`,
+    /// `preroll_s = 0.5`) — this is the same idea, and the reason the harness and
+    /// the exporter previously measured different things.
+    ///
+    /// What this test actually pins is the *dangerous* half: a preroll that
+    /// leaks into the written audio would silently shift the whole render later
+    /// by `PREROLL_SECS` (24 000 samples here), so every take would land after
+    /// the beat it was recorded on. So the onset is measured against the input's
+    /// own position plus only the convolver's 128-sample latency — and asserted
+    /// to be nowhere near a preroll's worth of extra delay.
+    #[test]
+    fn preroll_warms_the_chain_without_offsetting_the_render() {
+        // The preroll must be non-zero: the exporter used to render from a
+        // completely cold chain. (A zero here is caught by the offset assertion
+        // below anyway, but silently zeroing it should be an obvious failure.)
+        const { assert!(PREROLL_SECS > 0.0) }
+
+        let params = Params::new();
+        // A long, obvious tail so the reverb and delay buffers are plainly part
+        // of the state being warmed.
+        params.rev_enabled.store(true, Relaxed);
+        params.rev_mix.store(0.9, Relaxed);
+        params.rev_room.store(0.95, Relaxed);
+        let rig = snapshot_rig(&params);
+
+        // Silence, then a pluck at a known offset.
+        const PLUCK_AT: usize = 1200;
+        let mut samples = vec![0.0f32; 4800];
+        for (i, s) in samples[PLUCK_AT..PLUCK_AT + 2400].iter_mut().enumerate() {
+            let t = i as f32 / 48_000.0;
+            *s = (-t * 12.0).exp() * (2.0 * std::f32::consts::PI * 220.0 * t).sin() * 0.6;
+        }
+        let out = render_take("preroll", rig, &samples);
+        assert!(out.len() >= 3600, "render too short: {}", out.len());
+
+        // The take must be audible where it was placed.
+        let head_rms: f32 = out[PLUCK_AT..PLUCK_AT + 2000]
+            .iter()
+            .map(|&(l, r)| ((l * l + r * r) * 0.5).sqrt())
+            .sum::<f32>()
+            / 2000.0;
+        assert!(
+            head_rms > 0.001,
+            "export is silent over the take: {head_rms}"
+        );
+
+        // The onset lands where the input was, plus the cab convolver's
+        // 128-sample latency and a few samples of amp front-end phase. A leaked
+        // preroll would push it out by (48_000 * PREROLL_SECS) = 24 000 samples.
+        let onset = out
+            .iter()
+            .position(|&(l, r)| l.abs() > 1e-6 || r.abs() > 1e-6)
+            .expect("render is entirely silent");
+        let expected = PLUCK_AT + 128;
+        assert!(
+            onset.abs_diff(expected) < 64,
+            "onset at {onset}, expected ~{expected} (input {PLUCK_AT} + 128 cab \
+             convolution). A large offset means the preroll leaked into the output."
+        );
+        let preroll_frames = (48_000.0 * PREROLL_SECS) as i64;
+        assert!(
+            onset.abs_diff(expected) < preroll_frames as usize / 10,
+            "onset shifted by a preroll's worth of samples ({preroll_frames})"
+        );
+    }
 
     fn write_mono_wav(path: &std::path::Path, sr: u32, samples: &[f32]) {
         let spec = hound::WavSpec {
