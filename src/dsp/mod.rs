@@ -1444,6 +1444,8 @@ pub struct DspChain {
     declick_target: f32,
     /// Per-sample ramp increment for the declick.
     declick_step: f32,
+    /// Master-bus DC blockers, one per channel.
+    master_dc: MasterDc,
 }
 
 impl DspChain {
@@ -1482,6 +1484,7 @@ impl DspChain {
             declick_gain: 1.0,
             declick_target: 1.0,
             declick_step: 1.0 / (DECLICK_SECS * sr).max(1.0),
+            master_dc: MasterDc::new(sr),
         }
     }
 
@@ -1891,7 +1894,7 @@ impl DspChain {
     pub fn process(&mut self, sample: f32) -> (f32, f32) {
         let route = self.route_for_block(false);
         let (l, r) = self.process_core(sample, &route);
-        master_bus(l, r, route.width)
+        master_bus(l, r, route.width, &mut self.master_dc)
     }
 
     /// Process a block of mono input samples into stereo output buffers.
@@ -1994,7 +1997,7 @@ impl DspChain {
 
         // Master bus, per sample (width read once per block, in the route).
         for (l, r) in out_l.iter_mut().zip(out_r.iter_mut()) {
-            let (wl, wr) = master_bus(*l, *r, route.width);
+            let (wl, wr) = master_bus(*l, *r, route.width, &mut self.master_dc);
             if amp_loaded {
                 // Advance the built-in↔AU declick ramp (identity when steady).
                 if self.declick_gain < self.declick_target {
@@ -2018,12 +2021,22 @@ impl DspChain {
 /// decorrelation out for a wider, deeper image without losing mono punch (the
 /// mid is untouched); `1.0` is the neutral reference (wire-transparent sides).
 /// The output soft limiter is independent of the coloration and always runs, so
-/// protection never depends on the width setting. Stateless, so it can run
-/// per-sample inside the core loop or as a separate pass over a block with
-/// identical results.
+/// protection never depends on the width setting.
+///
+/// The two DC blockers are the only state in the bus. They are needed because
+/// the built-in amps each end with a ~12 Hz high-pass, but that is *not*
+/// unconditional: when a **full-rig AU** supplies its own cab/mic the built-in
+/// amp is skipped entirely (`skip_cab`), so a plugin's DC offset would reach the
+/// output with nothing removing it. It also gives the offline export the same
+/// guarantee as the live path.
+///
+/// The state is per-[`DspChain`], so [`process`](DspChain::process) and
+/// [`process_block`](DspChain::process_block) remain bit-identical for a given
+/// input: each drives its own blockers deterministically, one sample at a time.
 #[inline]
-fn master_bus(l: f32, r: f32, width: f32) -> (f32, f32) {
+fn master_bus(l: f32, r: f32, width: f32, dc: &mut MasterDc) -> (f32, f32) {
     let (l, r) = widen(l, r, width);
+    let (l, r) = (dc.l.process(l), dc.r.process(r));
     (soft_limit(l), soft_limit(r))
 }
 
@@ -2035,6 +2048,61 @@ fn widen(l: f32, r: f32, width: f32) -> (f32, f32) {
     let mid = (l + r) * 0.5;
     let side = (l - r) * 0.5 * width;
     (mid + side, mid - side)
+}
+
+/// The master bus's pair of first-order DC blockers.
+#[derive(Clone, Copy)]
+struct MasterDc {
+    l: DcBlocker,
+    r: DcBlocker,
+}
+
+impl MasterDc {
+    #[inline]
+    fn new(sr: f32) -> Self {
+        Self {
+            l: DcBlocker::new(sr),
+            r: DcBlocker::new(sr),
+        }
+    }
+}
+
+/// A one-pole DC blocker: `y[n] = x[n] - x[n-1] + R·y[n-1]`, with
+/// `R = exp(-2π·fc/sr)`. Unity gain at DC above the corner, so it removes the
+/// offset without colouring the spectrum.
+///
+/// Public so paths that bypass the rig — the tuner in `audio::InputState` —
+/// can apply the same conditioning the master bus does.
+#[derive(Clone, Copy)]
+pub struct DcBlocker {
+    x1: f32,
+    y1: f32,
+    r: f32,
+}
+
+impl DcBlocker {
+    /// Corner frequency. Low enough to catch every realistic offset, high
+    /// enough to leave the lowest guitar fundamental (≈82 Hz for a low-B open
+    /// string) untouched.
+    const FC: f32 = 8.0;
+
+    #[inline]
+    pub fn new(sr: f32) -> Self {
+        use std::f32::consts::PI;
+        Self {
+            x1: 0.0,
+            y1: 0.0,
+            r: (-2.0 * PI * Self::FC / sr).exp(),
+        }
+    }
+
+    #[inline]
+    pub fn process(&mut self, x: f32) -> f32 {
+        let y = x - self.x1 + self.r * self.y1;
+        self.x1 = x;
+        self.y1 = y;
+        y
+    }
 }
 
 /// Output soft limiter: unity for |x| < `KNEE`, a gentle rational knee above,
@@ -2050,8 +2118,12 @@ fn widen(l: f32, r: f32, width: f32) -> (f32, f32) {
 /// matching the unity region below it), so there is no slope discontinuity
 /// where the knee opens. Replaces the old `x.tanh()`, which coloured the
 /// signal at normal levels.
+///
+/// **Public** so the audio engine's final output stage applies the *same*
+/// ceiling after the monitor-bus sums, where two independently-limited buses are
+/// added together (see `audio::InputState::on_input`).
 #[inline]
-fn soft_limit(x: f32) -> f32 {
+pub fn soft_limit(x: f32) -> f32 {
     const KNEE: f32 = 0.95;
     /// Sets the ceiling: asymptote = `KNEE + 1 / KNEE_SHAPE`.
     const KNEE_SHAPE: f32 = 20.0;
@@ -2140,6 +2212,10 @@ mod tests {
     /// `process_block` must be bit-identical to running `process` per sample:
     /// the block form is purely a buffering convenience and changes no DSP math.
     /// The whole CLAP-insert plan relies on this equivalence holding.
+    ///
+    /// This also covers the master bus's DC blockers, which are the only state
+    /// in it. Parity survives them because each path drives its own blockers
+    /// one sample at a time, deterministically.
     #[test]
     fn process_block_matches_per_sample() {
         let sr = 48_000.0;
@@ -2331,12 +2407,85 @@ mod tests {
         }
     }
 
+    /// The master bus must remove a DC offset. This is not hypothetical: with a
+    /// **full-rig AU** the built-in amp is skipped (`skip_cab`), so nothing in the
+    /// chain removes the plugin's DC — only the cab's 70–105 Hz high-pass does,
+    /// and that stage is exactly the one being skipped. A DC offset wastes
+    /// headroom and thumps on engage/disengage.
+    #[test]
+    fn master_bus_removes_a_dc_offset() {
+        let sr = 48_000.0;
+        for offset in [0.05f32, 0.2, -0.3] {
+            let mut dc = MasterDc::new(sr);
+            // Constant input: a DC blocker must drive the output to zero, and a
+            // pass-through would hold the offset exactly.
+            let mut last = 0.0f32;
+            for _ in 0..(sr as usize) {
+                last = dc.l.process(offset);
+            }
+            assert!(
+                last.abs() < offset.abs() * 0.001,
+                "DC blocker left {last:.6} from a {offset} offset"
+            );
+        }
+
+        // And through the full bus, so the real call path is covered. The mean
+        // is measured *after* a warmup: the blocker's initial step has a finite
+        // area (`sum(x·R^n) ≈ x/(1-R)`), so a window that includes it reads a
+        // transient, not leakage. 0.25 s is >12 time constants at 8 Hz.
+        let mut dc = MasterDc::new(sr);
+        for _ in 0..(sr as usize / 4) {
+            master_bus(0.25, -0.25, 1.0, &mut dc);
+        }
+        let mut sum = 0.0f64;
+        let n = sr as usize;
+        for _ in 0..n {
+            let (l, _r) = master_bus(0.25, -0.25, 1.0, &mut dc);
+            sum += l as f64;
+        }
+        let mean = (sum / n as f64) as f32;
+        assert!(
+            mean.abs() < 1e-5,
+            "master bus passed a {mean:.6} DC mean through"
+        );
+    }
+
+    /// The DC blocker must not colour the spectrum. At 82 Hz (a low-B open
+    /// string, the lowest fundamental in the guitar's range) the loss should be
+    /// far below a dB; well below DC it is essentially unity.
+    #[test]
+    fn dc_blocker_is_transparent_in_the_guitar_range() {
+        let sr = 48_000.0;
+        let gain_at = |f: f32| {
+            let mut dc = DcBlocker::new(sr);
+            // Use a quadrature pair so a phase shift cannot masquerade as gain.
+            let (mut cr, mut ci) = (0.0f64, 0.0f64);
+            for i in 0..(sr as usize) {
+                let t = i as f32 / sr;
+                let out = dc.process((2.0 * PI * f * t).cos());
+                cr += (out * (2.0 * PI * f * t).cos()) as f64;
+                ci += (out * (2.0 * PI * f * t).sin()) as f64;
+            }
+            let n = sr as f64;
+            (2.0 * (cr * cr + ci * ci).sqrt() / n) as f32
+        };
+        for f in [82.41f32, 110.0, 220.0, 1000.0, 4000.0] {
+            let g = gain_at(f);
+            assert!(
+                (g - 1.0).abs() < 0.01,
+                "DC blocker changed {f} Hz by {:+.3} dB",
+                20.0 * (g.max(1e-9)).log10()
+            );
+        }
+    }
+
     /// The studio master: width `1.0` is the neutral reference (below the limiter
     /// knee it is wire-transparent), the widener preserves the mid, and the
     /// output limiter still catches peaks at every width.
     #[test]
     fn master_bus_width_is_neutral_at_one_and_limiter_is_independent() {
-        let (nl, nr) = master_bus(0.5, -0.2, 1.0);
+        let mut dc = MasterDc::new(48_000.0);
+        let (nl, nr) = master_bus(0.5, -0.2, 1.0, &mut dc);
         assert!(
             (nl - 0.5).abs() < 1e-6 && (nr + 0.2).abs() < 1e-6,
             "width 1.0 must be neutral, got ({nl}, {nr})"
@@ -2352,7 +2501,8 @@ mod tests {
         );
 
         for width in [0.0, 1.0, 1.3, 2.0] {
-            let (l, r) = master_bus(4.0, -4.0, width);
+            let mut dc = MasterDc::new(48_000.0);
+            let (l, r) = master_bus(4.0, -4.0, width, &mut dc);
             assert!(
                 l.abs() <= 1.0 && r.abs() <= 1.0,
                 "limiter failed to bound output at width {width}: ({l}, {r})"

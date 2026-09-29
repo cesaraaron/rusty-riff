@@ -12,7 +12,7 @@ use crate::dsp::effects::db_to_lin;
 use crate::dsp::metronome::{Metronome, MetronomeVoice};
 use crate::dsp::player::{PlayerTrack, PlayerVoice, TrackKind};
 use crate::dsp::tuner::{Tuner, TunerDetector};
-use crate::dsp::{DspChain, Levels, Params, StereoInsert};
+use crate::dsp::{DcBlocker, DspChain, Levels, Params, StereoInsert, soft_limit};
 use crate::looper::{Looper, LooperControl};
 use crate::practice::Practice;
 use crate::recording::{CaptureState, capture_ring};
@@ -727,6 +727,23 @@ fn with_buffer(cfg: &StreamConfig, buffer_size: cpal::BufferSize) -> StreamConfi
 /// Scarlett Solo) expose `S32_LE` capture rather than `f32`, so hard-coding an f32
 /// stream fails to open at all. `on_input` converts the device's samples into the
 /// engine's `f32` domain on the way in.
+/// Final output stage: sum the live and take buses, then apply the output
+/// ceiling.
+///
+/// Both buses have *already* been through their own `master_bus` (the take bus
+/// is a whole second [`DspChain`]), so each is bounded by 1.0 on its own. Their
+/// **sum** is not: two buses at the ceiling are +3 dB, and the metronome click
+/// and looper are mixed into the live bus before this point with nothing after
+/// them. Before this existed, the converter clipped and the overload grew with
+/// every take layer.
+///
+/// The ceiling is the same [`soft_limit`] the master bus uses, so live and
+/// exported audio are conditioned identically.
+#[inline]
+fn output_stage(live_l: f32, live_r: f32, take_l: f32, take_r: f32) -> (f32, f32) {
+    (soft_limit(live_l + take_l), soft_limit(live_r + take_r))
+}
+
 struct InputState {
     /// The live guitar rig.
     chain: DspChain,
@@ -752,6 +769,10 @@ struct InputState {
     /// Take-bus rig output for this block.
     take_l: Vec<f32>,
     take_r: Vec<f32>,
+    /// DC blockers for the tuner bypass, which writes straight to the output
+    /// without passing through the chain's master bus.
+    tuner_dc_l: DcBlocker,
+    tuner_dc_r: DcBlocker,
     insert_rx: Consumer<InsertCommand>,
     dropped_tx: Producer<Box<dyn StereoInsert>>,
     ext_cab_rx: Consumer<ExtCabCommand>,
@@ -961,7 +982,9 @@ impl InputState {
 
         if self.tuner.active.load(Relaxed) {
             // Bypass the whole rig: clean dry guitar to both channels, and
-            // analyse the same signal for pitch and spectrum.
+            // analyse the same signal for pitch and spectrum. The DC blocker
+            // matches what the master bus would have done, since this path
+            // never reaches it.
             self.tuner_detector.process(&self.in_buf, &self.tuner);
             for ((dst_l, dst_r), &x) in self
                 .out_l
@@ -969,8 +992,8 @@ impl InputState {
                 .zip(self.out_r.iter_mut())
                 .zip(self.in_buf.iter())
             {
-                *dst_l = x;
-                *dst_r = x;
+                *dst_l = self.tuner_dc_l.process(x);
+                *dst_r = self.tuner_dc_r.process(x);
             }
         } else {
             self.chain
@@ -1084,8 +1107,14 @@ impl InputState {
             .zip(self.take_l.iter().zip(self.take_r.iter()))
             .take(frames)
         {
-            let out_left = live_l + take_l;
-            let out_right = live_r + take_r;
+            // Final output ceiling. Both buses above were already limited by
+            // their *own* `master_bus` (the take bus runs a whole second
+            // `DspChain`), so their sum can reach twice the ceiling — a hot rig
+            // at 1.0 plus a take layer is +3 dB — and the metronome click
+            // (0.5) and the looper ride on top of that with nothing after
+            // them. Without this the converter clips, and the overload grows
+            // with every take layer.
+            let (out_left, out_right) = output_stage(live_l, live_r, take_l, take_r);
             let out_mono = 0.5 * (out_left + out_right);
 
             // Fan the stereo pair out to the device channels: L→0, R→1, any extra
@@ -1281,6 +1310,8 @@ fn build_engine(
         take_in,
         take_l,
         take_r,
+        tuner_dc_l: DcBlocker::new(sr),
+        tuner_dc_r: DcBlocker::new(sr),
         insert_rx,
         dropped_tx,
         ext_cab_rx,
@@ -1387,7 +1418,57 @@ fn build_engine(
 
 #[cfg(test)]
 mod tests {
-    use super::block_ranges;
+    use super::{block_ranges, output_stage};
+
+    /// The final output stage must hold the ceiling **no matter how many
+    /// already-limited buses are summed into it**.
+    ///
+    /// The defect: each bus went through its own `master_bus` and was bounded
+    /// at 1.0, but nothing bounded their *sum*. Live rig + take bus + metronome
+    /// click reached the converter at up to 1.5, and the take bus is a whole
+    /// second rig, so the overload grew with every layer.
+    #[test]
+    fn summed_monitor_buses_cannot_exceed_the_ceiling() {
+        // The worst realistic case: both rigs at the ceiling, plus the
+        // metronome click (CLICK_GAIN = 0.5) and a full-scale loop.
+        const CLICK: f32 = 0.5;
+        for &(live, take) in &[
+            (1.0f32, 1.0f32),
+            (1.0, 0.5),
+            (1.0, 0.0),
+            (1.5, 1.5),
+            (4.0, 4.0),
+            (1.0e6, 1.0e6),
+        ] {
+            let (l, r) = output_stage(live, live, take, take);
+            assert!(
+                l <= 1.0 && l.is_finite(),
+                "L ceiling failed at {l} for {live}+{take}"
+            );
+            assert!(
+                r <= 1.0 && r.is_finite(),
+                "R ceiling failed at {r} for {live}+{take}"
+            );
+
+            // And with the monitor-only buses riding on the live channel.
+            let (l, r) = output_stage(live + CLICK, live + CLICK, take, take);
+            assert!(
+                l <= 1.0 && r <= 1.0,
+                "ceiling failed with the click: ({l}, {r}) for {live}+{take}"
+            );
+        }
+    }
+
+    /// A quiet bus must pass through the final stage untouched, so the stage is
+    /// only a safety net and not a permanent colouration.
+    #[test]
+    fn final_stage_is_transparent_at_normal_levels() {
+        for v in [0.0f32, 0.1, 0.5, 0.9] {
+            let (l, r) = output_stage(v, -v, 0.0, 0.0);
+            assert!((l - v).abs() < 1e-6, "L changed a quiet sample: {v} -> {l}");
+            assert!((r + v).abs() < 1e-6, "R changed a quiet sample: {v} -> {r}");
+        }
+    }
 
     /// An oversized callback is split into preallocated pieces: contiguous,
     /// in-order, each at most `max` frames, covering every frame exactly once.

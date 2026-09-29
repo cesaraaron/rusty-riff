@@ -1074,3 +1074,61 @@ release (1 ms attack unchanged) and the hold carries the knob.
   (88–1411 Hz mostly). Direction: the gate now passes more sustain, which
   raises the mean, and `ltas_third_octave` is mean-normalized, so bands show a
   small relative dip. Baseline regenerated (20 presets), `--check` green.
+
+### A2 + F3 — the output path: a final ceiling, and a master-bus DC blocker
+
+**A2 — the monitor buses were summed after the limiter.** `chain.process_block`
+ends in `master_bus` (widen → limit), and the take bus runs a *whole second*
+`DspChain` with its own `master_bus`. Both were then added together, and the
+metronome click (`CLICK_GAIN = 0.5`) and the looper were mixed into the live bus
+on top, with nothing after them. Two bounded-at-1.0 buses sum to +3 dB and a
+click takes it to 1.5, straight into the converter — and it grew with every take
+layer.
+
+Fix: a final `output_stage(live_l, live_r, take_l, take_r)` applying the *same*
+`soft_limit` ceiling, so live and exported audio are conditioned identically.
+This covers the tuner bypass for free, since that path writes into the same
+buffers.
+
+**F3 — nothing removed DC on the full-rig AU path.** Every built-in amp ends with
+a ~12 Hz high-pass, but that is not unconditional: with a **full-rig AU** the
+built-in amp is skipped entirely (`skip_cab`), so the only stage that would have
+removed DC — the cab's 70–105 Hz high-pass — is exactly the one being skipped. A
+plugin's DC offset reached the output raw. The tuner bypass had the same gap.
+
+Fix: a first-order `DcBlocker` (`y[n] = x[n] - x[n-1] + R·y[n-1]`, 8 Hz corner)
+in the master bus, plus a pair on the tuner path. It also gives the **offline
+export** the same guarantee as the live path, since export drives
+`chain.process_block` directly.
+
+**On making the master bus stateful.** It was documented as stateless, and
+`process_block_matches_per_sample` asserts *bit-exact* parity between the
+per-sample and per-block paths. The blockers are the first state in it. Parity
+holds because each path drives its own blockers one sample at a time and
+deterministically — the test is unchanged and still passes, and its doc comment
+now records why.
+
+- **Tests:** `master_bus_removes_a_dc_offset` (both the blocker directly and
+  through the real bus; the mean is measured *after* a 0.25 s warmup, because
+  the blocker's initial step has a finite area — `sum(x·R^n) ≈ x/(1-R)` — so a
+  window including it reads the transient, not leakage),
+  `dc_blocker_is_transparent_in_the_guitar_range` (a quadrature measurement at
+  82.41 Hz through 4 kHz, so a phase shift cannot masquerade as gain),
+  `summed_monitor_buses_cannot_exceed_the_ceiling`, and
+  `final_stage_is_transparent_at_normal_levels`.
+- **Measured:** no baseline drift at all — `--check` green without a re-bless.
+  The built-in rigs were already DC-free, and the harness's `ltas_third_octave` is
+  mean-normalized, so removing a residual the renders barely had is invisible.
+- **CPU:** no measurable cost. Bench, measured serially (running the fidelity
+  harness alongside it produced a bogus 5.3% reading from contention):
+  **4.27% / 4.50%** of the realtime budget with this change vs **4.28% / 4.52%**
+  at the previous commit. Six float ops per sample against 8× oversampled amp
+  stages is not measurable. Note both are above the 3.3–3.6% in `roadmap-next.md`
+  §4.2 — that figure predates the `2527c61` amp re-voice, not this phase.
+- **Still open (F1), deliberately:** `soft_limit` bounds peaks but applies no
+  *gain reduction*, so it squashes rather than turns down — no stereo-linked
+  detector (a hard-panned peak still shifts the image), no release time, no
+  true-peak/inter-sample detection, and it is a base-rate nonlinearity so it
+  generates its own alias products. Replacing it changes the level of every
+  preset, so it belongs in the output-gain discussion rather than in a bug fix.
+  What shipped here is the ceiling guarantee, which is what the A2 defect was.
