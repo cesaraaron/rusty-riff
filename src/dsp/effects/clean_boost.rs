@@ -42,8 +42,8 @@ impl CleanBoost {
 
     fn set_tone(&mut self, treble: f32, bass: f32) {
         let db = |v: f32| (v - 0.5) * TONE_RANGE_DB; // 0 → −12, 0.5 → 0, 1 → +12
-        self.treble = Biquad::high_shelf(self.sr, TREBLE_FREQ, db(treble));
-        self.bass = Biquad::low_shelf(self.sr, BASS_FREQ, db(bass));
+        self.treble.set_high_shelf(self.sr, TREBLE_FREQ, db(treble));
+        self.bass.set_low_shelf(self.sr, BASS_FREQ, db(bass));
         self.last_treble = treble;
         self.last_bass = bass;
     }

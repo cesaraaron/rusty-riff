@@ -148,10 +148,14 @@ impl ThreeBandEq {
     }
 
     /// Recompute the three biquads for the given per-band gains (in dB).
+    ///
+    /// Retunes in place so a live knob move does not discard the filter state
+    /// and click (three state resets, six across the stereo pair).
     pub fn set_gains_db(&mut self, low_db: f32, mid_db: f32, high_db: f32) {
-        self.low = Biquad::low_shelf(self.sr, self.low_freq, low_db);
-        self.mid = Biquad::peak_eq(self.sr, self.mid_freq, self.mid_q, mid_db);
-        self.high = Biquad::high_shelf(self.sr, self.high_freq, high_db);
+        self.low.set_low_shelf(self.sr, self.low_freq, low_db);
+        self.mid
+            .set_peak_eq(self.sr, self.mid_freq, self.mid_q, mid_db);
+        self.high.set_high_shelf(self.sr, self.high_freq, high_db);
     }
 
     #[inline]

@@ -98,7 +98,7 @@ impl Tweed {
         let tone = tone.clamp(0.0, 1.0);
         // ~1.4 kHz fully cut to ~8 kHz wide open.
         let corner = 1400.0 * (8000.0f32 / 1400.0).powf(tone);
-        self.tone = Biquad::lowpass(self.sr, corner, 0.707);
+        self.tone.set_lowpass(self.sr, corner, 0.707);
     }
 
     /// 5Y3-rectified sag: a deep-but-slow give — the supply compresses under load

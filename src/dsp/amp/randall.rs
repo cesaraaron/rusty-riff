@@ -124,15 +124,18 @@ impl Randall {
     }
 
     fn update_tone_stack(&mut self, bass: f32, mid: f32, treble: f32) {
-        self.bass_shelf = Biquad::low_shelf(self.sr, 80.0, (bass - 0.5) * 30.0);
-        self.mid_peak = Biquad::peak_eq(self.sr, 500.0, 0.4, (mid - 0.5) * 24.0);
-        self.treble_shelf = Biquad::high_shelf(self.sr, 4500.0, (treble - 0.5) * 30.0);
+        self.bass_shelf
+            .set_low_shelf(self.sr, 80.0, (bass - 0.5) * 30.0);
+        self.mid_peak
+            .set_peak_eq(self.sr, 500.0, 0.4, (mid - 0.5) * 24.0);
+        self.treble_shelf
+            .set_high_shelf(self.sr, 4500.0, (treble - 0.5) * 30.0);
     }
 
     fn update_presence(&mut self, presence: f32) {
         // Randall presence at 5 kHz (glassy solid-state top end), +3 dB at noon → ±6 dB range
         let gain_db = 3.0 + (presence - 0.5) * 12.0;
-        self.presence_shelf = Biquad::high_shelf(self.sr, 5000.0, gain_db);
+        self.presence_shelf.set_high_shelf(self.sr, 5000.0, gain_db);
     }
 }
 

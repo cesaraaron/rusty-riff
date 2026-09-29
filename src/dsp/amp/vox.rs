@@ -212,7 +212,7 @@ impl Amplifier for Vox {
         // Fully counter-clockwise (0) is transparent; turning it up darkens the top.
         if self.cut_cache.changed(cut) {
             let f = 18_000.0 * (2_500.0 / 18_000.0_f32).powf(cut.clamp(0.0, 1.0));
-            self.cut = Biquad::lowpass(self.sr, f, 0.707);
+            self.cut.set_lowpass(self.sr, f, 0.707);
         }
         let x = self.cut.process(x);
 

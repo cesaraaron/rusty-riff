@@ -873,3 +873,54 @@ the unity region), so there is no slope discontinuity where the knee opens.
   between the per-sample and per-block paths, so that restructuring lands with
   F3.
 - **Baseline regenerated** (20 presets), `--check` green.
+
+### A3 — live biquad retunes discarded filter state (the click on every knob move)
+
+`Biquad::from_coeffs` sets `z1 = z2 = 0`. A constructor therefore *always*
+discards the recursion state, and for a shelving or EQ filter the discarded `z1`
+is a large fraction of signal amplitude. `Biquad::set_high_shelf` existed
+specifically to avoid this ("so a live control change does not click") and had
+**zero call sites** — the TS-808 commit that added it wired it into that one
+pedal's constructor path only.
+
+Nine live paths rebuilt instead of retuning, resetting 24 filter states in
+total:
+
+| Site | Filters | Trigger |
+| --- | --- | --- |
+| `effects/graphic_eq.rs` `rebuild` | **14** | GE-7, on *any* band move |
+| `effects/mod.rs` `ThreeBandEq::set_gains_db` | 6 | param EQ **and** pre-amp EQ |
+| `cab/mod.rs` `MicChannel::retune` | 2 | MIC knob, 0.05 per keypress |
+| `amp/randall.rs` | 4 | bass / mid / treble / presence |
+| `effects/distortion.rs` `update_tone` | 2 | DS-1 TONE |
+| `effects/metal_core.rs` | 2 | ML-2 LOW / HIGH (±15 dB shelves) |
+| `effects/clean_boost.rs` `set_tone` | 2 | boost BASS / TREBLE |
+| `effects/fuzz.rs` `set_guitar` | 1 | fuzz GUITAR |
+| `amp/vox.rs` `set_cut`, `amp/tweed.rs` `update_tone` | 2 | Vox CUT, Tweed tone |
+
+Fix: every design now has a `set_*` twin that recomputes coefficients **in
+place**, preserving `z1`/`z2`. The cookbook maths moved into one `*_coeffs`
+helper per design, shared by the constructor and the setter, so the two cannot
+drift apart. Also dropped a stale `#[allow(dead_code)]` from `lowpass`, which is
+used in eight places.
+
+- **Tests:** `setters_match_their_constructors_bit_for_bit` (all five designs,
+  so a setter is provably the same filter as its constructor);
+  `every_setter_preserves_state`; `set_high_shelf_preserves_state_across_a_live_change`;
+  `designs_hit_their_cookbook_targets` (the five designs still hit their
+  cookbook targets, and a 0 dB shelf is confirmed *exactly* unity — which is
+  what made `vox.rs:124`'s presence filter a mathematical no-op, see C5).
+- **Pedal-level regression:** `a_live_fader_move_does_not_click` drives a real
+  1 kHz tone through the GE-7 while walking the 1 kHz fader in 0.05 keypress
+  steps, and bounds the worst sample-to-sample step. Measured: **4.4× the sine
+  slew with the fix, 17.6× without**; the bound is 10×. Verified the test fails
+  against the old `rebuild`.
+- **On the smoothness claim.** Preserving state is the right behaviour for a
+  knob-sized step, not for an arbitrary one: a 24 dB jump in a single sample
+  leaves stale state that is wrong for the new transfer function too. The first
+  draft of this test used such a jump and measured the *opposite* ordering, so
+  the test now uses a realistic monotonic drag and says why in its doc comment.
+- **Baseline unchanged** — `--check` green without a re-bless. The harness
+  renders static presets, so a live-retune defect is invisible to it by
+  construction. This is a gap in the harness's coverage, not evidence the
+  change was a no-op.

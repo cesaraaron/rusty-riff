@@ -632,9 +632,12 @@ impl MicChannel {
 
     /// Re-dial the two shelves for a new mic position. The comb gain/delay are shared
     /// across channels and passed into [`MicChannel::process`].
+    ///
+    /// Retunes in place: the MIC knob steps 0.05 per keypress, so rebuilding
+    /// would zip two filters on every press.
     fn retune(&mut self, sr: f32, prox_db: f32, bright_db: f32) {
-        self.prox = Biquad::low_shelf(sr, PROX_FREQ, prox_db);
-        self.shelf = Biquad::high_shelf(sr, SHELF_FREQ, bright_db);
+        self.prox.set_low_shelf(sr, PROX_FREQ, prox_db);
+        self.shelf.set_high_shelf(sr, SHELF_FREQ, bright_db);
     }
 
     #[inline]

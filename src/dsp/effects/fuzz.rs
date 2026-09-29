@@ -79,7 +79,7 @@ impl Fuzz {
     fn set_guitar(&mut self, guitar: f32) {
         let gv = guitar.clamp(0.03, 1.0);
         let corner = (70.0 * (1.0 / gv).powf(1.3)).clamp(70.0, 1200.0);
-        self.guitar_hp = Biquad::highpass(self.sr, corner, 0.707);
+        self.guitar_hp.set_highpass(self.sr, corner, 0.707);
         self.last_guitar = gv;
     }
 

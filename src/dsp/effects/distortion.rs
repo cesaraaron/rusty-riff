@@ -101,8 +101,8 @@ impl Distortion {
         // Tilt: tone up → cut bass / boost treble; tone down → boost bass / cut
         // treble. Centre (0.5) is flat. ±12 dB seesaw around the ~1 kHz pivot.
         let tilt = (tone - 0.5) * 24.0;
-        self.tone_low = Biquad::low_shelf(self.sr, 500.0, -tilt);
-        self.tone_high = Biquad::high_shelf(self.sr, 1800.0, tilt);
+        self.tone_low.set_low_shelf(self.sr, 500.0, -tilt);
+        self.tone_high.set_high_shelf(self.sr, 1800.0, tilt);
         self.last_tone = tone;
     }
 

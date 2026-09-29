@@ -104,13 +104,15 @@ impl MetalCore {
 
     fn update_low(&mut self, low: f32) {
         // Active low shelf @ 120 Hz, ±15 dB; centre (0.5) is flat.
-        self.low_shelf = Biquad::low_shelf(self.sr, 120.0, (low - 0.5) * 30.0);
+        self.low_shelf
+            .set_low_shelf(self.sr, 120.0, (low - 0.5) * 30.0);
         self.last_low = low;
     }
 
     fn update_high(&mut self, high: f32) {
         // Active high shelf @ 3.2 kHz, ±15 dB; centre (0.5) is flat.
-        self.high_shelf = Biquad::high_shelf(self.sr, 3200.0, (high - 0.5) * 30.0);
+        self.high_shelf
+            .set_high_shelf(self.sr, 3200.0, (high - 0.5) * 30.0);
         self.last_high = high;
     }
 

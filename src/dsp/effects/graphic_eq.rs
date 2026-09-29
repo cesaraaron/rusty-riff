@@ -62,10 +62,12 @@ impl GraphicEq {
     }
 
     fn rebuild(&mut self, bands: &[f32; BANDS], level: f32) {
+        // Retune in place. Rebuilding would reset 14 filters' state on any
+        // single band move — the loudest zipper in the chain.
         for i in 0..BANDS {
             let db = band_db(bands[i]);
-            self.left[i] = Biquad::peak_eq(self.sr, FREQS[i], Q, db);
-            self.right[i] = Biquad::peak_eq(self.sr, FREQS[i], Q, db);
+            self.left[i].set_peak_eq(self.sr, FREQS[i], Q, db);
+            self.right[i].set_peak_eq(self.sr, FREQS[i], Q, db);
         }
         // Output level: 0.5 = unity, ends are ±15 dB of make-up/trim.
         self.level_lin = db_to_lin((level - 0.5) * 30.0);
@@ -189,6 +191,59 @@ mod tests {
         assert!(
             (flat - 0.707).abs() < 0.05,
             "flat EQ is not transparent: {flat:.4}"
+        );
+    }
+
+    /// A live fader move must not click.
+    ///
+    /// This is the pedal-level regression test for the A3 finding: `rebuild`
+    /// used to assign fresh `Biquad`s, zeroing all 14 filter states on *any*
+    /// band move, which is an audible zipper. With the in-place `set_peak_eq`
+    /// the recursion continues through the change, so the worst
+    /// sample-to-sample jump stays close to the tone's own slew.
+    ///
+    /// The comparison is against the slew of a 1 kHz unit sine at this rate,
+    /// which is the largest step a *clean* signal can produce here. A state
+    /// reset shows up as a jump many times larger than that.
+    #[test]
+    fn a_live_fader_move_does_not_click() {
+        let freq = 1000.0;
+        let n = 6000usize;
+        let mut eq = GraphicEq::new(SR);
+
+        // Settle on the 1 kHz band at unity, then walk it up as a drag would.
+        let (b1, b2, b3, b4, b5, b6, b7) = (0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5);
+        let mut bands = [b1, b2, b3, b4, b5, b6, b7];
+        // Concrete f32 type, so the literal below is not an ambiguous float.
+        let step: f32 = 0.05;
+        let mut peak_step: f32 = 0.0;
+        let mut prev_y = 0.0f32;
+        for i in 0..n {
+            if i >= 1000 && (i - 1000).is_multiple_of(200) {
+                // One keypress of fader travel, 0.05, wrapping around the range.
+                bands[3] = (bands[3] + step).rem_euclid(1.0);
+            }
+            let x = (2.0 * PI * freq * i as f32 / SR).sin();
+            let (yl, _yr) = eq.process(
+                x, x, bands[0], bands[1], bands[2], bands[3], bands[4], bands[5], bands[6], 0.5,
+            );
+            assert!(yl.is_finite(), "GEQ non-finite at {i}");
+            if i > 1001 {
+                peak_step = peak_step.max((yl - prev_y).abs());
+            }
+            prev_y = yl;
+        }
+
+        // A unit 1 kHz sine slews at most 2*pi*f/SR = 0.131 per sample, and the
+        // EQ can legitimately add its own band gain on top of that, so the
+        // bound is a generous multiple of the slew. Measured on this rig: the
+        // in-place setter peaks at 4.4x the slew, while rebuilding the filters
+        // peaks at 17.6x, so 10x separates them with margin on both sides.
+        let slew = 2.0 * PI * freq / SR;
+        assert!(
+            peak_step < slew * 10.0,
+            "fader move clicks: peak sample step {peak_step:.4} vs a {:.4} sine slew",
+            slew
         );
     }
 }
