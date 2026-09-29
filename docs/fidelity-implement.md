@@ -1023,3 +1023,54 @@ when the user reaches for MODE.
   5644 Hz +0.35 dB, 7112 Hz −0.98 dB. The shift is the removed 4 ms changing how
   the amp's bias-tremolo envelope lines up with the signal content. Baseline
   regenerated (20 presets), `--check` green.
+
+### A8 — the noise gate opened in 0.21 ms, and its RELEASE knob was dead code
+
+Three separate problems in `noise_gate.rs`:
+
+1. **`gain_coeff = 0.9` on opening.** A one-pole with `coeff = 0.9` has a
+   10-sample time constant — **0.21 ms @48 kHz**. The gate was therefore opening
+   essentially instantly on a non-zero waveform, which is a hard cut and clicks
+   on every note. Real gates open in roughly 0.5–2 ms.
+2. **The detector release was hardcoded at 100 ms**, built in `new()` and
+   ignoring the knob entirely.
+3. **The RELEASE knob did nothing.** `release_ms` was computed and then thrown
+   away:
+   ```rust
+   let release_ms = 10.0 + release * 490.0;
+   let _ = release_ms; // used for future hold extension
+   ```
+   and the only thing the knob reached was the gain-smoothing coefficient
+   `0.999 - release * 0.009` (a 1 ms → 0.9 ms range, inaudible).
+
+The hold the comment described is now implemented: RELEASE sets how long the
+gate stays open after the signal falls below the threshold (10–500 ms), which is
+what stops a gate chomping the gap before a reverb tail starts.
+
+**The detector release had to get faster for the hold to be audible.** With the
+old 100 ms detector, the envelope took ~480 ms to fall from a note's level to
+below the threshold, so the hold timer was always expired before the gate could
+begin closing and the knob was inaudible. The detector now uses a fast 10 ms
+release (1 ms attack unchanged) and the hold carries the knob.
+
+- **Tests:** `opening_the_gate_does_not_click`, `release_knob_is_a_hold_time`,
+  plus the pre-existing `passes_loud_and_gates_quiet` unchanged.
+- **On the click test's probe — this took three attempts and the reason matters.**
+  It measures the worst sample-to-sample step as the gate opens, and the obvious
+  probe is a 220 Hz tone. That does not work: the tone's own slew is 0.023 of
+  its amplitude per sample, the same order as the step under test, so the
+  measurement is dominated by the probe — **both** the old 0.21 ms ramp and the
+  new 1 ms ramp measured 0.0230, and the test passed against the buggy code.
+  A constant probe has zero slew, so the only step is the gate's. Measured:
+  **0.0800 with the old `coeff = 0.9`** (exactly `amp * (1 - 0.9)`, as a
+  one-pole should) and 0.0168 with the 1 ms ramp; the bound is 0.03. Verified
+  the test fails against the old coefficient.
+- The hold test also probes with a small sub-threshold constant rather than
+  silence, because the gate's output is `input * gain` — with a zero input the
+  output is zero whatever the gain is doing, and the first draft of this test
+  measured a hold time of 0.0 ms for every knob setting.
+- **Measured:** 44 LTAS violations across the 15 presets that enable the gate,
+  every one **≤ 0.6 dB** and in the third-octave bands around the note decay
+  (88–1411 Hz mostly). Direction: the gate now passes more sustain, which
+  raises the mean, and `ltas_third_octave` is mean-normalized, so bands show a
+  small relative dip. Baseline regenerated (20 presets), `--check` green.
