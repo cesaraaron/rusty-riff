@@ -1917,11 +1917,15 @@ mod tests {
     }
 
     /// Golden snapshot of a realistic default screen — the board the app boots
-    /// with (TS-808 + Noise Gate tiles), focused on the first on-board pedal so
-    /// the detail editor's dials are captured too. This is the tripwire for the
-    /// overall layout: any unintended change to spacing, labels, tiles, or dials
-    /// shows up as a diff; intentional changes are re-blessed with
-    /// `cargo insta accept`.
+    /// with, focused on the first on-board pedal so the detail editor's dials are
+    /// captured too. This is the tripwire for the overall layout: any unintended
+    /// change to spacing, labels, tiles, or dials shows up as a diff; intentional
+    /// changes are re-blessed with `cargo insta review` or `INSTA_UPDATE=always`.
+    ///
+    /// The boot board is **empty** as of 2026-09-29 — the vanilla default leaves
+    /// the gate, the TS-808 and the reverb off, so there is no first pedal to
+    /// focus. This mirrors the app's own focus fallback (`apply_factory_defaults`),
+    /// which lands on the amp tile when the board has nothing on it.
     ///
     /// Gated on `clap`: the help footer's `V plugins` key is `clap`-only, so the
     /// rendered chrome (and thus every golden below) is specific to the default
@@ -1931,8 +1935,12 @@ mod tests {
     fn snapshot_default_screen() {
         let params = Params::new();
         let board = default_board(&params);
-        let first_on = board.iter().position(|&on| on).expect("a default pedal");
-        let text = render_with(&params, &board, Some(PEDALS[first_on].start), |_| {});
+        let focus = board
+            .iter()
+            .position(|&on| on)
+            .map(|pi| PEDALS[pi].start)
+            .unwrap_or(AMP_START);
+        let text = render_with(&params, &board, Some(focus), |_| {});
         insta::assert_snapshot!("default_screen", text);
     }
 

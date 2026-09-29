@@ -829,6 +829,11 @@ mod tests {
     #[test]
     fn nudge_moves_only_the_targeted_knob() {
         let p = Params::new();
+        // Park the target mid-scale before sampling. The test used to assume the
+        // default amp model, but the models have different knob defaults and
+        // count — the Plexi's BASS (slot 2) sits at 1.0, so a +0.05 nudge clamped
+        // and the test measured the clamp, not the nudge.
+        (KNOBS[2].param)(&p).store(0.5, Relaxed);
         let before: Vec<f32> = (0..KNOBS.len()).map(|k| knob(&p, k)).collect();
         nudge(&p, 2, 0.05);
         for (k, knob_before) in before.iter().enumerate().take(KNOBS.len()) {
@@ -865,12 +870,16 @@ mod tests {
         let q = Params::new();
         select_amp(&q, AmpModel::ALL.len(), false);
         assert!(!q.amp_external_active.load(Relaxed));
-        // Garbage indices never touch anything.
+        // Garbage indices never touch anything. Assert against whatever model
+        // was selected above, not the boot default, so the test does not encode
+        // which amp the app starts on.
+        select_amp(&q, 3, true);
+        let picked = AmpModel::from_u8(q.amp_model.load(Relaxed));
         select_amp(&q, 99, true);
         assert_eq!(
             AmpModel::from_u8(q.amp_model.load(Relaxed)),
-            AmpModel::Mesa,
-            "default model must survive a garbage pick"
+            picked,
+            "a garbage pick must not change the model"
         );
     }
 

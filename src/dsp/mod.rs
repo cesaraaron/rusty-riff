@@ -504,15 +504,26 @@ pub fn sanitize_chain_order(ids: &[u8]) -> [u8; CHAIN_LEN] {
         .unwrap_or_else(|_| ChainStage::default_order())
 }
 
-const DEFAULT_AMP_MODEL: u8 = AmpModel::Mesa as u8;
-const DEFAULT_CAB_MODEL: u8 = CabModel::Mesa as u8;
+/// The startup rig. Deliberately plain: a clean cranked Plexi into a Greenback,
+/// no pedals, neutral stereo width. This is a *starting point to hear the models*
+/// and to dial away from — not a sound in its own right. Every bundled preset
+/// overrides all of it.
+///
+/// It was a Mesa Dual Rectifier + Mesa 4×12 until 2026-09-29, which is a
+/// specific modern high-gain voice and a poor thing to hand someone whose first
+/// action is "where do I turn this down".
+const DEFAULT_AMP_MODEL: u8 = AmpModel::Plexi as u8;
+const DEFAULT_CAB_MODEL: u8 = CabModel::Marshall as u8;
 const DEFAULT_MIC_POS: f32 = 0.4;
 const DEFAULT_MIC_BLEND: f32 = 0.0;
 const DEFAULT_MIC_ROOM: f32 = 0.0;
 /// Studio-master stereo width. `1.0` = neutral reference (no side boost),
-/// `1.3` = the historic shipped widening. The default keeps existing presets
-/// and recordings sounding as before; `W` cycles neutral ↔ studio live.
-pub const DEFAULT_MASTER_WIDTH: f32 = 1.3;
+/// `1.3` = the historic shipped widening. `W` cycles neutral ↔ studio live.
+///
+/// This is now `1.0` so the boot state is genuinely neutral. It was `1.3` for
+/// back-compat with the shipped default (review finding R8), and every bundled
+/// preset already set `width = 1.0`, so nothing in the preset set depends on it.
+pub const DEFAULT_MASTER_WIDTH: f32 = 1.0;
 
 // When an external IR is loaded it can be toggled against the built-in cabs live;
 // it starts inactive (the engine boots on a built-in cab).
@@ -522,7 +533,10 @@ const DEFAULT_CAB_EXTERNAL_ACTIVE: bool = false;
 // built-in amp+cab live and starts inactive (the engine boots on the built-in amp).
 const DEFAULT_AMP_EXTERNAL_ACTIVE: bool = false;
 
-const DEFAULT_NG_ENABLED: bool = true;
+/// The boot rig is dry, so the gate, the TS-808 and the reverb all start off
+/// (they were on until 2026-09-29). Enable one deliberately rather than finding
+/// it already on and wondering what is colouring the tone.
+const DEFAULT_NG_ENABLED: bool = false;
 const DEFAULT_NG_THRESHOLD: f32 = 0.20;
 const DEFAULT_NG_RELEASE: f32 = 0.30;
 
@@ -572,7 +586,7 @@ const DEFAULT_FZ_LEVEL: f32 = 0.60;
 const DEFAULT_FZ_TYPE: f32 = 0.0;
 const DEFAULT_FZ_GUITAR: f32 = 1.0;
 
-const DEFAULT_TS_ENABLED: bool = true;
+const DEFAULT_TS_ENABLED: bool = false;
 const DEFAULT_TS_DRIVE: f32 = 0.45;
 const DEFAULT_TS_TONE: f32 = 0.60;
 const DEFAULT_TS_LEVEL: f32 = 0.70;
@@ -588,7 +602,7 @@ const DEFAULT_ML_LOW: f32 = 0.50;
 const DEFAULT_ML_HIGH: f32 = 0.50;
 const DEFAULT_ML_LEVEL: f32 = 0.60;
 
-const DEFAULT_REV_ENABLED: bool = true;
+const DEFAULT_REV_ENABLED: bool = false;
 const DEFAULT_REV_ROOM: f32 = 0.55;
 const DEFAULT_REV_DAMP: f32 = 0.40;
 const DEFAULT_REV_MIX: f32 = 0.25;
