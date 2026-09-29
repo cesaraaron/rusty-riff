@@ -123,13 +123,13 @@ impl Phaser {
             (t - 1.0) / (t + 1.0)
         };
 
-        // Phase 90 collapses to mono and drops the quarter-cycle stereo offset.
-        let (in_l, in_r) = if phase90 {
-            let m = 0.5 * (l + r);
-            (m, m)
-        } else {
-            (l, r)
-        };
+        // The script Phase 90 is a mono pedal, so the *wet* path collapses to one
+        // channel and drops the quarter-cycle offset. The **dry** path stays
+        // stereo: a mono pedal sits in a stereo rack, and folding the dry signal
+        // would hard-mono everything downstream even at mix = 0. Folding only
+        // the wet is what makes the pedal transparent when it is turned down.
+        let m = 0.5 * (l + r);
+        let (wet_in_l, wet_in_r) = if phase90 { (m, m) } else { (l, r) };
         let a_l = coeff(lfo(self.phase));
         let a_r = if phase90 {
             a_l
@@ -145,14 +145,12 @@ impl Phaser {
         } else {
             feedback.clamp(0.0, 1.0) * 0.9
         };
-        let wet_l = Self::run_channel(&mut self.z_l, &mut self.fb_l, in_l, a_l, fb);
-        let wet_r = Self::run_channel(&mut self.z_r, &mut self.fb_r, in_r, a_r, fb);
+        let wet_l = Self::run_channel(&mut self.z_l, &mut self.fb_l, wet_in_l, a_l, fb);
+        let wet_r = Self::run_channel(&mut self.z_r, &mut self.fb_r, wet_in_r, a_r, fb);
 
+        // Dry is the caller's own L/R; only the wet is the pedal's mono signal.
         let mix = mix.clamp(0.0, 1.0);
-        (
-            in_l * (1.0 - mix) + wet_l * mix,
-            in_r * (1.0 - mix) + wet_r * mix,
-        )
+        (l * (1.0 - mix) + wet_l * mix, r * (1.0 - mix) + wet_r * mix)
     }
 }
 
@@ -190,12 +188,54 @@ mod tests {
     /// `mix = 0` must pass the dry signal through untouched on both channels.
     #[test]
     fn fully_dry_is_passthrough() {
-        let mut p = Phaser::new(SR);
-        for n in 0..2000 {
-            let x = (n as f32 * 0.03).sin();
-            let (l, r) = p.process(x, x * 0.7, 0.4, 0.8, 0.6, 0.0, 0.0);
-            assert!((l - x).abs() < 1e-6 && (r - x * 0.7).abs() < 1e-6);
+        // Covers *both* kinds. The Phase 90 (`kind = 1.0`) is a mono pedal, so
+        // the regression this pins is that it used to fold L/R to mono *before*
+        // the mix - which made a fully-dry Phase 90 a hard mono fold of the
+        // whole rack. `kind = 0.0` is the generic stereo mode, folded in for
+        // symmetry. The differing L/R inputs are what catch a collapse.
+        for kind in [0.0f32, 1.0] {
+            let mut p = Phaser::new(SR);
+            for n in 0..2000 {
+                let x = (n as f32 * 0.03).sin();
+                let (l, r) = p.process(x, x * 0.7, 0.4, 0.8, 0.6, 0.0, kind);
+                assert!(
+                    (l - x).abs() < 1e-6 && (r - x * 0.7).abs() < 1e-6,
+                    "kind {kind} is not dry-transparent: got ({l}, {r})"
+                );
+            }
         }
+    }
+
+    /// A mono pedal must fold its *wet* to mono, not its dry. With a hard-panned
+    /// input and the wet at full, the Phase 90's output should be the same
+    /// signal in both channels; at mix = 0 it must still be the original pair.
+    /// That is the shape of the fix: fold the wet, keep the dry stereo.
+    #[test]
+    fn phase_90_folds_the_wet_but_not_the_dry() {
+        let mut p = Phaser::new(SR);
+        for n in 0..4000 {
+            // Hard-panned: the two channels are uncorrelated, so any mono fold
+            // is unmistakable.
+            let l_in = (n as f32 * 0.021).sin();
+            let r_in = (n as f32 * 0.037).cos();
+            let (l, r) = p.process(l_in, r_in, 0.4, 0.8, 0.5, 0.0, 1.0);
+            assert!((l - l_in).abs() < 1e-6, "dry L was folded at {n}");
+            assert!((r - r_in).abs() < 1e-6, "dry R was folded at {n}");
+        }
+
+        // Wet-only probe: mix = 1 must be a single mono signal in both channels.
+        let mut p = Phaser::new(SR);
+        let mut max_diff: f32 = 0.0;
+        for n in 0..4000 {
+            let l_in = (n as f32 * 0.021).sin();
+            let r_in = (n as f32 * 0.037).cos();
+            let (l, r) = p.process(l_in, r_in, 0.4, 0.8, 0.5, 1.0, 1.0);
+            max_diff = max_diff.max((l - r).abs());
+        }
+        assert!(
+            max_diff < 1e-6,
+            "Phase 90 wet should be mono, L/R diverged by {max_diff}"
+        );
     }
 
     /// Extreme settings (fast, deep, near-max feedback) must stay finite and bounded
@@ -294,24 +334,46 @@ mod tests {
         );
     }
 
-    /// Phase 90 mode is a mono, script-style pedal: it collapses any stereo input
-    /// to one signal, so the two output channels are identical, and it has no
-    /// regeneration — a maxed feedback knob must not destabilise it.
+    /// Phase 90 mode is a mono, script-style pedal: at **full wet** it collapses
+    /// any stereo input to one signal, so the two output channels are identical,
+    /// and it has no regeneration — a maxed feedback knob must not destabilise
+    /// it. At `mix = 0` it must instead be fully transparent, *including* the
+    /// stereo image: the mono fold belongs to the wet, not to the pedal's
+    /// input. (Folding the dry too meant a Phase 90 turned down silently
+    /// mono-folded the whole downstream rack.)
     #[test]
     fn phase90_mode_is_mono_and_script() {
+        // Full wet: mono.
         let mut p = Phaser::new(SR);
         let mut max_diff = 0.0f32;
         let mut max_abs = 0.0f32;
         for n in 0..(SR as usize) {
             let x = (2.0 * PI * 440.0 * n as f32 / SR).sin();
-            let (l, r) = p.process(x, x * 0.3, 0.5, 1.0, 1.0, 0.5, 1.0);
+            let (l, r) = p.process(x, x * 0.3, 0.5, 1.0, 1.0, 1.0, 1.0);
             max_diff = max_diff.max((l - r).abs());
             max_abs = max_abs.max(l.abs());
         }
-        assert!(max_diff < 1e-6, "phase 90 not mono (L/R diff {max_diff})");
+        assert!(
+            max_diff < 1e-6,
+            "phase 90 not mono at full wet ({max_diff})"
+        );
         assert!(
             max_abs.is_finite() && max_abs < 4.0,
             "phase 90 unstable at max feedback: {max_abs}"
+        );
+
+        // Dry: stereo survives. The input is (x, 0.3x) with x peaking at 1.0,
+        // so the two channels must still differ by 0.7.
+        let mut p = Phaser::new(SR);
+        let mut max_diff = 0.0f32;
+        for n in 0..(SR as usize) {
+            let x = (2.0 * PI * 440.0 * n as f32 / SR).sin();
+            let (l, r) = p.process(x, x * 0.3, 0.5, 1.0, 1.0, 0.0, 1.0);
+            max_diff = max_diff.max((l - r).abs());
+        }
+        assert!(
+            (max_diff - 0.7).abs() < 1e-5,
+            "phase 90 folded the stereo image when dry: L/R diff {max_diff}"
         );
     }
 

@@ -924,3 +924,52 @@ used in eight places.
   renders static presets, so a live-retune defect is invisible to it by
   construction. This is a gap in the harness's coverage, not evidence the
   change was a no-op.
+
+### A6 — the Phase 90 and the Electric Mistress folded the rack to mono when dry
+
+Both mono-type modulation pedals computed the mono fold **before** the wet/dry
+mix:
+
+```rust
+let (in_l, in_r) = if phase90 { let m = 0.5 * (l + r); (m, m) } else { (l, r) };
+...
+in_l * (1.0 - mix) + wet_l * mix,
+in_r * (1.0 - mix) + wet_r * mix,
+```
+
+So at `mix = 0` — the setting that means "this pedal does nothing" — a Phase 90
+or a Mistress output `(m, m)`: a hard mono fold of the entire downstream rack.
+Turning a pedal *down* narrowed the stereo image, which is the opposite of what
+a dry effect should do.
+
+The fold also ran **before** the flanger's regeneration write, so the Mistress's
+feedback loop was summing a pre-folded signal too.
+
+Fix: fold only the **wet**. The dry is now the caller's own L/R, and the wet is
+the pedal's mono signal. At `mix = 0` both pedals are wire-transparent; at
+`mix = 1` both are mono, which is the real pedal's behaviour.
+
+- **Two existing tests encoded the old contract** and had to be rewritten, not
+  just extended: `phase90_mode_is_mono_and_script` and `mistress_mode_is_mono`
+  both asserted L == R at `mix = 0.5`. They now assert the pair that actually
+  defines the fix — mono at `mix = 1`, full stereo difference preserved at
+  `mix = 0` (input `(x, 0.3x)` with `x` peaking at 1.0, so the channels must
+  still differ by 0.7). `fully_dry_is_passthrough` in both files was also only
+  exercising `kind = 0.0`; it now loops over both kinds.
+- **New:** `phase_90_folds_the_wet_but_not_the_dry` and
+  `mistress_folds_the_wet_but_not_the_dry` use a hard-panned, uncorrelated
+  input — the shape that makes a collapse unmistakable — and assert both ends of
+  the mix range.
+- **Measured (3 of 20 presets drift, and the drift is exactly the mechanism):**
+
+  | Preset | Mono pedal | mix | correlation | LUFS-i |
+  | --- | --- | --- | --- | --- |
+  | `pink_floyd_another_brick_pt2` | Phase 90 | 0.42 | 0.9410 → **0.8952** | −14.091 → **−13.986** |
+  | `pink_floyd_comfortably_numb_solo_1` | Mistress | 0.20 | 0.9572 → **0.8320** | −14.940 → **−14.642** |
+  | `pink_floyd_comfortably_numb_solo_2` | Mistress | 0.26 | 0.9165 → **0.8062** | −16.615 → **−16.350** |
+
+  Every preset that moved uses a mono-type phaser/flanger at `mix < 1`, and
+  correlation falls as the dry regains its width — the wider the image, the
+  bigger the fall, so `numb_solo_1` (mix 0.20, most dry) moves most. The other
+  17 presets are byte-identical: the generic stereo phaser and flanger were
+  never folding anything. Baseline regenerated (20 presets), `--check` green.

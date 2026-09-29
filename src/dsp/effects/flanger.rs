@@ -96,13 +96,14 @@ impl Flanger {
         };
         let span = min_ms + sweep_ms * depth;
 
-        // The Mistress is mono and drops the quarter-cycle stereo offset.
-        let (in_l, in_r) = if mistress {
-            let m = 0.5 * (l + r);
-            (m, m)
-        } else {
-            (l, r)
-        };
+        // The Electric Mistress is a mono pedal, so the *wet* path (and the
+        // regeneration it feeds) collapses to one channel and drops the
+        // quarter-cycle offset. The **dry** path stays stereo: folding the dry
+        // signal would hard-mono everything downstream even at mix = 0, which
+        // makes a fully-dry Mistress a different, wider-fading signal than it
+        // was at mix = 1. Folding only the wet keeps it transparent.
+        let m = 0.5 * (l + r);
+        let (wet_in_l, wet_in_r) = if mistress { (m, m) } else { (l, r) };
         let del_l = (min_ms + span * lfo(self.phase)) * self.sr / 1000.0;
         let del_r = if mistress {
             del_l
@@ -116,16 +117,14 @@ impl Flanger {
         // Regeneration feeds the swept tap back in; capped below unity so the comb
         // never runs away.
         let fb = feedback.clamp(0.0, 1.0) * 0.9;
-        self.buf_l[self.write] = in_l + wet_l * fb;
-        self.buf_r[self.write] = in_r + wet_r * fb;
+        self.buf_l[self.write] = wet_in_l + wet_l * fb;
+        self.buf_r[self.write] = wet_in_r + wet_r * fb;
         let len = self.buf_l.len();
         self.write = (self.write + 1) % len;
 
+        // Dry is the caller's own L/R; only the wet is the pedal's mono signal.
         let mix = mix.clamp(0.0, 1.0);
-        (
-            in_l * (1.0 - mix) + wet_l * mix,
-            in_r * (1.0 - mix) + wet_r * mix,
-        )
+        (l * (1.0 - mix) + wet_l * mix, r * (1.0 - mix) + wet_r * mix)
     }
 }
 
@@ -136,15 +135,53 @@ mod tests {
 
     const SR: f32 = 48_000.0;
 
-    /// `mix = 0` must pass the dry signal through untouched on both channels.
+    /// `mix = 0` must pass the dry signal through untouched on both channels,
+    /// for **both** kinds. The Electric Mistress (`kind = 1.0`) is a mono pedal,
+    /// so the regression this pins is that it used to fold L/R to mono *before*
+    /// the mix - which made a fully-dry Mistress a hard mono fold of the whole
+    /// rack. The differing L/R inputs are what catch a collapse.
     #[test]
     fn fully_dry_is_passthrough() {
-        let mut f = Flanger::new(SR);
-        for n in 0..2000 {
-            let x = (n as f32 * 0.03).sin();
-            let (l, r) = f.process(x, x * 0.7, 0.4, 0.8, 0.6, 0.0, 0.0);
-            assert!((l - x).abs() < 1e-6 && (r - x * 0.7).abs() < 1e-6);
+        for kind in [0.0f32, 1.0] {
+            let mut f = Flanger::new(SR);
+            for n in 0..2000 {
+                let x = (n as f32 * 0.03).sin();
+                let (l, r) = f.process(x, x * 0.7, 0.4, 0.8, 0.6, 0.0, kind);
+                assert!(
+                    (l - x).abs() < 1e-6 && (r - x * 0.7).abs() < 1e-6,
+                    "kind {kind} is not dry-transparent: got ({l}, {r})"
+                );
+            }
         }
+    }
+
+    /// A mono pedal must fold its *wet* to mono, not its dry. With a hard-panned
+    /// input and the wet at full, the Mistress's output should be the same
+    /// signal in both channels; at mix = 0 the original pair must survive.
+    #[test]
+    fn mistress_folds_the_wet_but_not_the_dry() {
+        let mut f = Flanger::new(SR);
+        for n in 0..4000 {
+            let l_in = (n as f32 * 0.021).sin();
+            let r_in = (n as f32 * 0.037).cos();
+            let (l, r) = f.process(l_in, r_in, 0.4, 0.8, 0.5, 0.0, 1.0);
+            assert!((l - l_in).abs() < 1e-6, "dry L was folded at {n}");
+            assert!((r - r_in).abs() < 1e-6, "dry R was folded at {n}");
+        }
+
+        // Wet-only probe: mix = 1 must be a single mono signal in both channels.
+        let mut f = Flanger::new(SR);
+        let mut max_diff: f32 = 0.0;
+        for n in 0..4000 {
+            let l_in = (n as f32 * 0.021).sin();
+            let r_in = (n as f32 * 0.037).cos();
+            let (l, r) = f.process(l_in, r_in, 0.4, 0.8, 0.5, 1.0, 1.0);
+            max_diff = max_diff.max((l - r).abs());
+        }
+        assert!(
+            max_diff < 1e-6,
+            "Mistress wet should be mono, L/R diverged by {max_diff}"
+        );
     }
 
     /// Extreme settings (fast, deep, near-max feedback) must stay finite and
@@ -240,18 +277,38 @@ mod tests {
         );
     }
 
-    /// Electric Mistress mode is mono: any stereo input collapses to one signal, so
-    /// the two output channels are identical.
+    /// Electric Mistress mode is mono: at **full wet** any stereo input collapses
+    /// to one signal, so the two output channels are identical. At `mix = 0` the
+    /// stereo image must survive untouched — the mono fold belongs to the wet,
+    /// not to the pedal's input. (Folding the dry too meant a Mistress turned
+    /// down silently mono-folded the whole downstream rack.)
     #[test]
     fn mistress_mode_is_mono() {
         let mut f = Flanger::new(SR);
         let mut max_diff = 0.0f32;
         for n in 0..(SR as usize) {
             let x = (2.0 * PI * 700.0 * n as f32 / SR).sin();
-            let (l, r) = f.process(x, x * 0.3, 0.5, 0.6, 0.4, 0.5, 1.0);
+            let (l, r) = f.process(x, x * 0.3, 0.5, 0.6, 0.4, 1.0, 1.0);
             max_diff = max_diff.max((l - r).abs());
         }
-        assert!(max_diff < 1e-6, "mistress not mono (L/R diff {max_diff})");
+        assert!(
+            max_diff < 1e-6,
+            "mistress not mono at full wet (L/R diff {max_diff})"
+        );
+
+        // Dry: the input is (x, 0.3x) with x peaking at 1.0, so the two
+        // channels must still differ by 0.7.
+        let mut f = Flanger::new(SR);
+        let mut max_diff = 0.0f32;
+        for n in 0..(SR as usize) {
+            let x = (2.0 * PI * 700.0 * n as f32 / SR).sin();
+            let (l, r) = f.process(x, x * 0.3, 0.5, 0.6, 0.4, 0.0, 1.0);
+            max_diff = max_diff.max((l - r).abs());
+        }
+        assert!(
+            (max_diff - 0.7).abs() < 1e-5,
+            "mistress folded the stereo image when dry: L/R diff {max_diff}"
+        );
     }
 
     /// The Electric Mistress **Filter Matrix**: with DEPTH at zero the sweep freezes,
