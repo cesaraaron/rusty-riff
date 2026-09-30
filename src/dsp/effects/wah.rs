@@ -1,3 +1,4 @@
+use super::SmoothedGain;
 use std::f32::consts::PI;
 
 /// Auto-wah — a resonant bandpass whose peak is swept by an envelope follower, so
@@ -31,6 +32,9 @@ pub struct Wah {
     // TPT state-variable filter integrator states.
     ic1: f32,
     ic2: f32,
+    /// Wet/dry, smoothed. `wah_position` is the primary MIDI CC target in this
+    /// app, so a pedal sweep lands here continuously.
+    mix: SmoothedGain,
 }
 
 /// Lowest base peak frequency (FREQ at 0) — the heel-down position.
@@ -57,6 +61,8 @@ impl Wah {
             rel: 1.0 - (-1.0 / (0.080 * sr)).exp(),
             ic1: 0.0,
             ic2: 0.0,
+            // `DEFAULT_WAH_MIX`.
+            mix: SmoothedGain::new(0.90, sr),
         }
     }
 
@@ -115,7 +121,8 @@ impl Wah {
         // then a small fixed boost gives the resonant quack.
         let wet = v1 * k * WAH_BOOST;
 
-        let mix = mix.clamp(0.0, 1.0);
+        self.mix.set(mix.clamp(0.0, 1.0));
+        let mix = self.mix.step();
         x * (1.0 - mix) + wet * mix
     }
 }

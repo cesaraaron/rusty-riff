@@ -1,4 +1,4 @@
-use super::{OnePoleLp, param_changed};
+use super::{OnePoleLp, SmoothedGain, param_changed};
 use crate::dsp::biquad::Biquad;
 use crate::dsp::oversample::Oversampler4;
 
@@ -37,9 +37,12 @@ use crate::dsp::oversample::Oversampler4;
 /// drive-dependent `51 pF` feedback rolloff follow the source above.
 pub struct TubeScreamer {
     sr: f32,
-    dc_block: Biquad,     // input coupling (1 µF × 10 kΩ ≈ 16 Hz)
-    shelf_hp: OnePoleLp,  // HP leg of the first-order RC gain shelf (corner 720 Hz)
-    shelf_gain: f32,      // Zf / Zi: the extra high-frequency gain (drive-dependent)
+    dc_block: Biquad,    // input coupling (1 µF × 10 kΩ ≈ 16 Hz)
+    shelf_hp: OnePoleLp, // HP leg of the first-order RC gain shelf (corner 720 Hz)
+    /// Zf / Zi: the extra high-frequency gain, *smoothed*. The raw value runs to
+    /// 117x (41 dB) at full drive, so an unsmoothed knob step is a 41 dB
+    /// discontinuity in the waveform.
+    shelf_gain: SmoothedGain,
     os: Oversampler4,     // 4× oversample the soft-clip stage to suppress aliasing
     fb_lp: OnePoleLp,     // 51 pF feedback pole: clipping-stage treble loss, drive-dependent
     out_dc_block: Biquad, // output coupling cap (10 µF × 100 Ω ≈ 16 Hz)
@@ -73,7 +76,9 @@ impl TubeScreamer {
             sr,
             dc_block: Biquad::highpass(sr, 16.0, 0.707),
             shelf_hp: OnePoleLp::new(),
-            shelf_gain: 0.0,
+            // Settled on the value `set_drive(0.0)` computes, so the first
+            // samples are not ramped in from an unrelated gain.
+            shelf_gain: SmoothedGain::new((ZF_FIXED_OHMS + 0.0 * DRIVE_POT_OHMS) / ZI_OHMS, sr),
             os: Oversampler4::new(sr),
             fb_lp: OnePoleLp::new(),
             out_dc_block: Biquad::highpass(sr, 16.0, 0.707),
@@ -98,7 +103,8 @@ impl TubeScreamer {
     /// to `1 + Zf/R`; we apply `x + (Zf/R)·HP₇₂₀(x)` exactly.
     fn set_drive(&mut self, drive: f32) {
         self.shelf_hp.set_cutoff(CORNER_720_HZ, self.sr);
-        self.shelf_gain = (ZF_FIXED_OHMS + drive * DRIVE_POT_OHMS) / ZI_OHMS;
+        self.shelf_gain
+            .set((ZF_FIXED_OHMS + drive * DRIVE_POT_OHMS) / ZI_OHMS);
         self.fb_lp.set_cutoff(feedback_corner_hz(drive), self.sr);
         self.last_drive = drive;
     }
@@ -117,7 +123,7 @@ impl TubeScreamer {
         // RC gain shelf: unity at DC, rising toward the drive gain above 720 Hz.
         let x = self.dc_block.process(x);
         let hp = x - self.shelf_hp.process(x);
-        let x = x + self.shelf_gain * hp;
+        let x = x + self.shelf_gain.step() * hp;
 
         // 4× oversampled symmetric diode soft-clip.
         let x = self.os.process(x, soft_clip);

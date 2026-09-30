@@ -1,4 +1,4 @@
-use super::{db_to_lin, param_changed};
+use super::{SmoothedGain, db_to_lin, param_changed};
 use crate::dsp::biquad::Biquad;
 
 /// Boss GE-7 style graphic equalizer — seven fixed-frequency peak bands plus an
@@ -25,7 +25,9 @@ pub struct GraphicEq {
     right: [Biquad; BANDS],
     last_bands: [f32; BANDS],
     last_level: f32,
-    level_lin: f32,
+    /// Output make-up/trim, smoothed. ±15 dB across the knob, and an unsmoothed
+    /// move is a 15 dB step in the waveform.
+    level_lin: SmoothedGain,
 }
 
 /// Number of frequency bands (Boss GE-7: seven sliders).
@@ -55,7 +57,7 @@ impl GraphicEq {
             right: flat(),
             last_bands: [-1.0; BANDS], // force first rebuild
             last_level: -1.0,
-            level_lin: 1.0,
+            level_lin: SmoothedGain::new(1.0, sr),
         };
         eq.rebuild(&[0.5; BANDS], 0.5);
         eq
@@ -69,8 +71,10 @@ impl GraphicEq {
             self.left[i].set_peak_eq(self.sr, FREQS[i], Q, db);
             self.right[i].set_peak_eq(self.sr, FREQS[i], Q, db);
         }
-        // Output level: 0.5 = unity, ends are ±15 dB of make-up/trim.
-        self.level_lin = db_to_lin((level - 0.5) * 30.0);
+        // Output level: 0.5 = unity, ends are ±15 dB of make-up/trim. A *set*
+        // rather than an assignment, so the gain ramps instead of stepping —
+        // the band moves retune in place (A3) but the level is still a gain.
+        self.level_lin.set(db_to_lin((level - 0.5) * 30.0));
         self.last_bands = *bands;
         self.last_level = level;
     }
@@ -92,7 +96,10 @@ impl GraphicEq {
         level: f32,
     ) -> (f32, f32) {
         let bands = [b1, b2, b3, b4, b5, b6, b7];
-        if level != self.last_level
+        // `param_changed` for the level too: it was an exact `!=` while the
+        // bands used the epsilon, so any float jitter in `level` was enough to
+        // retrigger the whole bank.
+        if param_changed(level, self.last_level)
             || bands
                 .iter()
                 .zip(&self.last_bands)
@@ -107,7 +114,8 @@ impl GraphicEq {
             lo = self.left[i].process(lo);
             ro = self.right[i].process(ro);
         }
-        (lo * self.level_lin, ro * self.level_lin)
+        let level = self.level_lin.step();
+        (lo * level, ro * level)
     }
 }
 

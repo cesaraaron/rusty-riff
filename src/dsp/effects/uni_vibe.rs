@@ -1,5 +1,6 @@
 use std::f32::consts::{PI, TAU};
 
+use super::SmoothedGain;
 /// Uni-Vibe: a four-stage, LFO-swept all-pass cascade with a photocell-style throb,
 /// summed with the dry signal — the "vibe" behind the DSOTM lead tones.
 ///
@@ -26,6 +27,8 @@ pub struct UniVibe {
     /// One delay element of state per all-pass stage.
     z: [f32; N_STAGES],
     phase: f32,
+    /// Wet/dry, smoothed so a mix move is not a step.
+    mix: SmoothedGain,
     sr: f32,
 }
 
@@ -48,6 +51,8 @@ impl UniVibe {
         Self {
             z: [0.0; N_STAGES],
             phase: 0.0,
+            // `DEFAULT_UV_MIX`.
+            mix: SmoothedGain::new(0.50, sr),
             sr,
         }
     }
@@ -81,7 +86,8 @@ impl UniVibe {
 
         // Chorus blends dry + phase; vibrato runs fully wet (the moving group delay
         // alone gives the pitch shimmer). `mode` slides between the two.
-        let mix = mix.clamp(0.0, 1.0);
+        self.mix.set(mix.clamp(0.0, 1.0));
+        let mix = self.mix.step();
         let mode = mode.clamp(0.0, 1.0);
         let wet_amt = mix + (1.0 - mix) * mode;
         x * (1.0 - wet_amt) + wet * wet_amt

@@ -9,7 +9,7 @@
 //! Model, not a circuit-exact emulation: a single linear gain plus a low and a
 //! high shelf. The real pedal's interactive passive/active tone network is only
 //! approximated.
-use super::{db_to_lin, param_changed};
+use super::{SmoothedGain, db_to_lin, param_changed};
 use crate::dsp::biquad::Biquad;
 
 const TREBLE_FREQ: f32 = 3000.0;
@@ -23,6 +23,10 @@ pub struct CleanBoost {
     sr: f32,
     bass: Biquad,
     treble: Biquad,
+    /// The boost gain, *smoothed*. The knob spans a 24 dB range and is a MIDI CC
+    /// target (`boost_gain`), so an expression pedal sweeping it writes a new
+    /// value every few samples; unsmoothed that is a staircase at audio rate.
+    gain: SmoothedGain,
     last_treble: f32,
     last_bass: f32,
 }
@@ -33,6 +37,8 @@ impl CleanBoost {
             sr,
             bass: Biquad::low_shelf(sr, BASS_FREQ, 0.0),
             treble: Biquad::high_shelf(sr, TREBLE_FREQ, 0.0),
+            // Unity: the GAIN knob at 0.
+            gain: SmoothedGain::new(1.0, sr),
             last_treble: -1.0,
             last_bass: -1.0,
         };
@@ -55,8 +61,8 @@ impl CleanBoost {
         if param_changed(treble, self.last_treble) || param_changed(bass, self.last_bass) {
             self.set_tone(treble, bass);
         }
-        let g = db_to_lin(gain.clamp(0.0, 1.0) * MAX_GAIN_DB);
-        self.treble.process(self.bass.process(x)) * g
+        self.gain.set(db_to_lin(gain.clamp(0.0, 1.0) * MAX_GAIN_DB));
+        self.treble.process(self.bass.process(x)) * self.gain.step()
     }
 }
 

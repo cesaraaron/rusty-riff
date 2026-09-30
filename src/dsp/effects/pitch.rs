@@ -1,4 +1,4 @@
-use super::{OnePoleLp, param_changed};
+use super::{OnePoleLp, SmoothedGain, param_changed};
 use std::f32::consts::TAU;
 
 /// Pitch shifter / Whammy — a time-domain, allocation-free pitch transposer.
@@ -28,6 +28,9 @@ pub struct Pitch {
     phase: f32,
     tone: OnePoleLp,
     last_tone: f32,
+    /// Wet/dry, smoothed. A MIDI CC sweep of the whammy's mix would otherwise be
+    /// an audio-rate staircase.
+    mix: SmoothedGain,
     sr: f32,
 }
 
@@ -45,6 +48,8 @@ impl Pitch {
             phase: 0.0,
             tone: OnePoleLp::new(),
             last_tone: -1.0, // force first update
+            // `DEFAULT_PITCH_MIX`.
+            mix: SmoothedGain::new(0.50, sr),
             sr,
         };
         p.set_tone(0.7);
@@ -109,7 +114,8 @@ impl Pitch {
         self.write = (self.write + 1) % BUF_LEN;
 
         let wet = self.tone.process(wet);
-        let mix = mix.clamp(0.0, 1.0);
+        self.mix.set(mix.clamp(0.0, 1.0));
+        let mix = self.mix.step();
         x * (1.0 - mix) + wet * mix
     }
 }

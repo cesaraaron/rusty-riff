@@ -1,3 +1,4 @@
+use super::SmoothedGain;
 use std::f32::consts::TAU;
 
 /// Stereo chorus: a set of LFO-swept delay taps mixed back with the dry signal.
@@ -21,6 +22,9 @@ pub struct Chorus {
     buf_r: Vec<f32>,
     write: usize,
     phase: f32,
+    /// Wet/dry, smoothed. `chorus_mix` is a MIDI CC target, so an expression
+    /// pedal sweeping it rewrites this every few samples.
+    mix: SmoothedGain,
     sr: f32,
 }
 
@@ -40,6 +44,8 @@ impl Chorus {
             buf_r: vec![0.0; len],
             write: 0,
             phase: 0.0,
+            // `DEFAULT_CH_MIX`.
+            mix: SmoothedGain::new(0.5, sr),
             sr,
         }
     }
@@ -79,7 +85,8 @@ impl Chorus {
         let len = self.buf_l.len();
         self.write = (self.write + 1) % len;
 
-        let mix = mix.clamp(0.0, 1.0);
+        self.mix.set(mix.clamp(0.0, 1.0));
+        let mix = self.mix.step();
         (l * (1.0 - mix) + wet_l * mix, r * (1.0 - mix) + wet_r * mix)
     }
 }

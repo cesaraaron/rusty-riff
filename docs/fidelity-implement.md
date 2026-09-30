@@ -1238,3 +1238,73 @@ frame, matching the harness.
   the shift is under a tenth of a preroll.
 - Baseline unchanged: `--check` green, 8 presets. The harness already prerolled
   and the export path is not what the bundled-preset renders go through.
+
+### A4 — unsmoothed gains, and a compressor that was never unity
+
+Every output-scaling control in `src/dsp/effects/` was applied as an
+instantaneous per-sample multiply. Added `SmoothedGain` (a one-pole, 8 ms) and
+routed every such coefficient through it: the TS-808's drive shelf, the clean
+boost's gain, the compressor's output level, the GE-7's output level, and the
+wet/dry mix on the whammy, pitch shifter, chorus, flanger, phaser, Uni-Vibe,
+delay and reverb.
+
+**What made this more than cosmetic:** `MidiTarget` (`src/midi.rs`) binds an
+expression-pedal CC to `delay_mix`, `reverb_mix`, `chorus_mix`, `flanger_mix`,
+`phaser_mix`, `boost_gain`, `ts_drive`, `ds_drive`, `wah_position` and more. An
+expression pedal writes a *new* value every few samples, so the unsmoothed gain
+was an audio-rate staircase. The 41 dB TS-808 shelf step and 24 dB boost step
+made it audible from a keyboard too.
+
+**The compressor had a second defect.** Its auto-makeup was
+`db_to_lin(-thresh_db * (1-1/ratio) * 0.5)`. At `sustain = 0` (threshold −6 dB,
+ratio 2:1) that is `db_to_lin(1.5)` = **+1.5 dB** — so engaging the compressor at
+its most transparent setting was itself a level step, and bypassing it dropped
+that step. The makeup is now `1 + (full - 1) * sustain`: **unity at sustain = 0
+and exactly the old value at sustain = 1**, so the top of the knob, where the
+makeup does its actual job, is untouched.
+
+A first attempt scaled the dB directly by `sustain` instead. That also fixes the
+zero but pulled ~4.7 dB out of the mid-range and produced **96** baseline
+violations; the linear fade is the gentlest smooth interpolation between unity
+and the original curve and cut that to **83**, with much smaller level moves.
+
+- **Design note — the first `set` snaps, later ones ramp.** The constructed
+  value is only a placeholder (the effect has not been given a control value
+  yet), so the first value is adopted verbatim. Without that, a
+  freshly-constructed effect driven at `mix = 0` would ramp in from the default
+  mix and fail bit-exact dry transparency for its first few ms — which is what
+  the first run of this change did, failing 10 `fully_dry_is_passthrough` tests.
+- The compressor's gain-computer constants (`thresh_db`, `ratio`, the detector
+  coefficients, the makeup) are now recomputed on a knob move rather than every
+  sample, removing a `lin_to_db`, a `db_to_lin` and two `powf` from the hot path.
+- `graphic_eq`'s output level was compared with an **exact** `!=` while its bands
+  used `param_changed(ε)`, so any float jitter in `level` retriggered the whole
+  14-filter bank. Now uses `param_changed` like the bands.
+- **Tests:** five for `SmoothedGain` (ramped not stepped, transparent when
+  static, settles in 5–40 ms, staircase-free under a 100 Hz CC sweep, and the
+  first-value snap); `zero_sustain_is_level_transparent`,
+  `auto_makeup_still_compensates_at_high_sustain` and `level_knob_moves_smoothly`
+  for the compressor.
+- **Measured.** The **smoothing is transparent in steady state**: the five
+  presets with no compressor (`stairway_solo`, `numb_solo_1/2`,
+  `hotel_california_solo`, `time_chorus`) show no LUFS, crest, correlation or
+  centroid movement at all — only LTAS bands within ~1.5 dB, which is the first
+  ~30 ms of ramp inside a multi-second render. The level moves are all from the
+  compressor fix, and only on the three presets that use one:
+
+  | Preset | sustain | LUFS-i | crest | centroid |
+  | --- | --- | --- | --- | --- |
+  | `eagles_hotel_california_clean` | 0.34 | −11.106 → **−11.843** | — | 3277 → **3326 Hz** |
+  | `pink_floyd_mother_solo` | 0.40 | −14.374 → **−15.594** | 16.73 → **17.04 dB** | 3648 → **3692 Hz** |
+  | `pink_floyd_time_solo` | 0.42 | −13.902 → **−14.077** | — | — |
+
+  These three are up to **1.2 dB quieter** and slightly brighter. That is the
+  defect fix, not a regression: the old curve was paying up to +7.9 dB of
+  automatic makeup mid-way on the knob. If the levels are preferred as they
+  were, the fix is one `level` value per preset — say so and it is a
+  three-line change. Baseline regenerated (8 presets), `--check` green.
+- **CPU:** 5.09% / 4.61% of the realtime budget, against 4.27% / 4.50% measured
+  in A2/F3 — but on a **different preset pair** (`bench` was repointed to
+  survivors when the other twelve were retired), so the two numbers are not
+  comparable. The added cost is one multiply-add per smoothed control per
+  sample.

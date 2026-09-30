@@ -2,6 +2,7 @@ use std::f32::consts::TAU;
 
 use crate::dsp::biquad::Biquad;
 
+use super::SmoothedGain;
 /// Stereo delay with two voicings selected by `kind`.
 ///
 /// **Digital** (`kind` low) — tempo-free stereo ping-pong: feedback cross-feeds
@@ -18,6 +19,8 @@ pub struct Delay {
     buf_l: Vec<f32>,
     buf_r: Vec<f32>,
     write: usize,
+    /// Wet/dry, smoothed. `delay_mix` is a MIDI CC target.
+    mix: SmoothedGain,
     sr: f32,
     // Tape transport: wow/flutter LFO phases and the per-channel feedback damping.
     wow_phase: f32,
@@ -73,6 +76,8 @@ impl Delay {
             ec_lp_r: Biquad::lowpass(sr, ECHOREC_LP_HZ, 0.707),
             ec_hp_l: Biquad::highpass(sr, ECHOREC_HP_HZ, 0.707),
             ec_hp_r: Biquad::highpass(sr, ECHOREC_HP_HZ, 0.707),
+            // `DEFAULT_DELAY_MIX`.
+            mix: SmoothedGain::new(0.30, sr),
         }
     }
 
@@ -85,13 +90,15 @@ impl Delay {
         r: f32,
         time: f32,
         feedback: f32,
-        mix: f32,
+        mix_param: f32,
         kind: f32,
     ) -> (f32, f32) {
         let echorec = kind > 0.25 && kind < 0.75;
         let tape = kind >= 0.75;
         let len = self.buf_l.len();
         let base = time * self.sr * 0.5;
+        // Aim the smoother once; each branch below takes one `next()` step.
+        self.mix.set(mix_param.clamp(0.0, 1.0));
 
         // Wow + flutter modulate the read position for the moving-media modes;
         // digital is rock steady.
@@ -120,6 +127,9 @@ impl Delay {
             self.buf_l[self.write] = l + wl * feedback * ECHOREC_FB;
             self.buf_r[self.write] = r + wr * feedback * ECHOREC_FB;
             self.write = (self.write + 1) % len;
+            // One `next()` for the pair: calling it twice would advance the
+            // smoother twice and give L and R different mix values.
+            let mix = self.mix.step();
             let out_l = l * (1.0 - mix) + wl * mix;
             let out_r = r * (1.0 - mix) + wr * mix;
             return (out_l, out_r);
@@ -143,6 +153,7 @@ impl Delay {
         }
         self.write = (self.write + 1) % len;
 
+        let mix = self.mix.step();
         let out_l = l * (1.0 - mix) + delayed_l * mix;
         let out_r = r * (1.0 - mix) + delayed_r * mix;
         (out_l, out_r)

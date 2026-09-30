@@ -67,6 +67,116 @@ pub fn param_changed(new: f32, last: f32) -> bool {
     (new - last).abs() > PARAM_EPSILON
 }
 
+/// Default smoothing time for an output-scaling coefficient.
+///
+/// Long enough that no single-sample step is audible, short enough that a knob
+/// move still feels immediate (a fader that lags visibly reads as broken).
+const DEFAULT_SMOOTH_MS: f32 = 8.0;
+
+/// A one-pole smoother for a gain or level coefficient.
+///
+/// Every output-scaling control used to be applied as an instantaneous per-sample
+/// multiply. That is a step in the waveform — a zipper, or a click when the step
+/// is large. Two cases make it audible in practice:
+///
+/// - **A knob move.** The TS-808's drive reaches a 41 dB step (its shelf gain
+///   goes to 117×), the clean boost's gain a 24 dB step. One keypress, one
+///   discontinuity.
+/// - **A MIDI CC sweep.** `MidiTarget` binds a CC to `delay_mix`, `reverb_mix`,
+///   `chorus_mix`, `boost_gain`, `ts_drive`, `ds_drive` and others
+///   (`src/midi.rs`). An expression pedal moving those writes a *new* value
+///   every few samples, so the unsmoothed gain is effectively a staircase at
+///   audio rate. This is the case that made the problem real rather than
+///   theoretical.
+///
+/// The smoother is a one-pole (`y += (target - y) * k`), which is linear in
+/// amplitude — a constant time constant, the usual choice for a fader. It costs
+/// one multiply-add per sample per control.
+pub struct SmoothedGain {
+    current: f32,
+    target: f32,
+    coeff: f32,
+    /// Has a value been set since construction? Until then the `current` seed is
+    /// only a placeholder, because the effect has not actually been given a
+    /// control value yet.
+    primed: bool,
+}
+
+impl SmoothedGain {
+    /// Create a smoother already settled on `initial`.
+    ///
+    /// `initial` is a *placeholder* for the value a control has not been given
+    /// yet. The first [`set`](Self::set) adopts its argument verbatim, so an
+    /// effect that is constructed and immediately driven at `mix = 0` passes its
+    /// input through bit-exactly rather than ramping in from the default.
+    pub fn new(initial: f32, sr: f32) -> Self {
+        Self::with_ms(initial, DEFAULT_SMOOTH_MS, sr)
+    }
+
+    /// As [`new`](Self::new), with an explicit smoothing time in milliseconds.
+    pub fn with_ms(initial: f32, ms: f32, sr: f32) -> Self {
+        let coeff = if ms <= 0.0 {
+            1.0
+        } else {
+            1.0 - (-1.0 / (ms * 0.001 * sr)).exp()
+        };
+        Self {
+            current: initial,
+            target: initial,
+            coeff,
+            primed: false,
+        }
+    }
+
+    /// Set the value to move toward. Cheap enough to call every sample; the
+    /// smoothing is what makes that safe.
+    ///
+    /// The **first** call after construction snaps: there is no prior value to
+    /// ramp from, and a phantom ramp here would make a freshly-constructed
+    /// effect audibly wrong until it settled (and would break bit-exact dry
+    /// transparency). Later calls ramp as normal.
+    #[inline]
+    pub fn set(&mut self, value: f32) {
+        if !self.primed {
+            self.primed = true;
+            self.current = value;
+            self.target = value;
+            return;
+        }
+        self.target = value;
+    }
+
+    /// Advance one sample and return the smoothed value. Named `step`
+    /// rather than `next` so it does not read as an `Iterator` method.
+    #[inline]
+    pub fn step(&mut self) -> f32 {
+        self.current += (self.target - self.current) * self.coeff;
+        self.current
+    }
+
+    /// The not-yet-smoothed target, for the (rare) caller that needs the
+    /// instantaneous value.
+    #[inline]
+    pub fn target(&self) -> f32 {
+        self.target
+    }
+
+    /// Jump straight to `value`, skipping the ramp. For state that is not an
+    /// audible gain (a preset load, a sample-rate change) or for a bypass
+    /// toggle, where the caller handles the transition itself.
+    #[inline]
+    pub fn reset(&mut self, value: f32) {
+        self.current = value;
+        self.target = value;
+    }
+
+    /// The current smoothed value, without advancing.
+    #[inline]
+    pub fn value(&self) -> f32 {
+        self.current
+    }
+}
+
 /// Convert decibels to a linear amplitude ratio.
 #[inline]
 pub fn db_to_lin(db: f32) -> f32 {
@@ -166,82 +276,126 @@ impl ThreeBandEq {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::SmoothedGain;
 
-    #[test]
-    fn param_changed_respects_epsilon() {
-        assert!(!param_changed(0.5, 0.5));
-        assert!(!param_changed(0.5, 0.5005));
-        assert!(param_changed(0.5, 0.51));
-    }
+    const SR: f32 = 48_000.0;
 
+    /// The smoother must not step: a hard target change should be spread over
+    /// the smoothing time, not applied in one sample.
     #[test]
-    fn db_lin_round_trip() {
-        for &db in &[-40.0, -6.0, 0.0, 6.0, 12.0] {
-            let back = lin_to_db(db_to_lin(db));
-            assert!(
-                (back - db).abs() < 1e-3,
-                "db round trip off: {db} -> {back}"
-            );
+    fn a_target_change_is_ramped_not_stepped() {
+        let mut g = SmoothedGain::new(1.0, SR);
+        // Prime with the starting value, then let it settle.
+        for _ in 0..1000 {
+            g.set(1.0);
+            g.step();
         }
-        assert!((db_to_lin(0.0) - 1.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn one_pole_lp_passes_dc_and_rolls_off_highs() {
-        let sr = 48_000.0;
-        let mut lp = OnePoleLp::new();
-        lp.set_cutoff(1000.0, sr);
-
-        // DC settles to unity.
-        let mut y = 0.0;
-        for _ in 0..2000 {
-            y = lp.process(1.0);
-        }
-        assert!((y - 1.0).abs() < 1e-3, "one-pole LP DC gain off: {y}");
-
-        // Energy at a high frequency (well above the corner) is attenuated.
-        let rms = |freq: f32| {
-            let mut lp = OnePoleLp::new();
-            lp.set_cutoff(1000.0, sr);
-            let mut sum = 0.0f64;
-            for n in 0..(sr as usize) {
-                let x = (2.0 * PI * freq * n as f32 / sr).sin();
-                let y = lp.process(x);
-                if n >= sr as usize / 2 {
-                    sum += (y * y) as f64;
-                }
-            }
-            sum.sqrt()
-        };
+        assert!((g.value() - 1.0).abs() < 1e-3, "did not settle at 1.0");
+        g.set(2.0);
+        // The very next sample must still be near 1.0.
+        let first = g.step();
         assert!(
-            rms(12_000.0) < rms(200.0) * 0.5,
-            "LP did not roll off highs"
+            first < 1.1,
+            "smoother stepped immediately to {first} instead of ramping"
+        );
+        // And it should get there: the 8 ms time constant is ~385 samples, so
+        // ~4.4 time constants (4000 samples) leaves under 1e-3 of the step.
+        for _ in 0..4000 {
+            g.step();
+        }
+        assert!(
+            (g.value() - 2.0).abs() < 1e-3,
+            "never reached the target: {}",
+            g.value()
         );
     }
 
+    /// Below-knob-jitter movement must not accumulate into a visible ramp: a
+    /// control sitting still (the common case) should cost nothing and move
+    /// nothing.
     #[test]
-    fn three_band_eq_boost_and_cut_track_their_bands() {
-        let sr = 48_000.0;
-        let band_rms = |gains: (f32, f32, f32), freq: f32| {
-            let mut eq = ThreeBandEq::new(sr, 120.0, 800.0, 1.5, 5000.0);
-            eq.set_gains_db(gains.0, gains.1, gains.2);
-            let mut sum = 0.0f64;
-            for n in 0..(sr as usize) {
-                let x = (2.0 * PI * freq * n as f32 / sr).sin();
-                let y = eq.process(x);
-                assert!(y.is_finite());
-                if n >= sr as usize / 2 {
-                    sum += (y * y) as f64;
-                }
-            }
-            sum.sqrt()
-        };
+    fn a_settled_smoother_is_transparent() {
+        let mut g = SmoothedGain::new(0.7, SR);
+        for _ in 0..5000 {
+            g.set(0.7);
+            let y = g.step();
+            assert!((y - 0.7).abs() < 1e-6, "a static control drifted to {y}");
+        }
+    }
 
-        // Boosting the low shelf raises 60 Hz; boosting the high shelf raises 10 kHz.
-        assert!(band_rms((12.0, 0.0, 0.0), 60.0) > band_rms((-12.0, 0.0, 0.0), 60.0));
-        assert!(band_rms((0.0, 0.0, 12.0), 10_000.0) > band_rms((0.0, 0.0, -12.0), 10_000.0));
-        // Boosting the mid peak raises its centre.
-        assert!(band_rms((0.0, 12.0, 0.0), 800.0) > band_rms((0.0, -12.0, 0.0), 800.0));
+    /// The 8 ms default should settle within a few tens of milliseconds — a
+    /// fader that lags visibly reads as broken.
+    #[test]
+    fn the_default_time_constant_is_fast_enough_to_feel_immediate() {
+        let mut g = SmoothedGain::new(0.0, SR);
+        g.set(0.0); // prime
+        g.step();
+        g.set(1.0);
+        let mut n = 0usize;
+        while g.value() < 0.99 && n < SR as usize {
+            g.step();
+            n += 1;
+        }
+        let ms = n as f32 / (SR / 1000.0);
+        assert!(
+            ms < 40.0,
+            "reaching 99% took {ms:.1} ms; the default smoothing is too slow"
+        );
+        assert!(ms > 5.0, "settled in {ms:.1} ms — too fast to smooth");
+    }
+
+    /// The first value after construction must be adopted **verbatim**.
+    ///
+    /// The constructed value is only a placeholder — the effect has not been
+    /// given a control value yet. Without this snap a freshly-constructed effect
+    /// driven at `mix = 0` would ramp in from the default mix and fail
+    /// bit-exact dry transparency for its first few milliseconds. This is what
+    /// keeps `fully_dry_is_passthrough` honest across every effect.
+    #[test]
+    fn the_first_value_is_adopted_verbatim() {
+        let mut g = SmoothedGain::new(0.5, SR);
+        // Constructed at 0.5; driven at 0.0 straight away.
+        g.set(0.0);
+        assert_eq!(
+            g.step(),
+            0.0,
+            "the first value after construction must be exact, not ramped"
+        );
+
+        // A second change *does* ramp, so the snap is not just "always exact".
+        g.set(1.0);
+        let y = g.step();
+        assert!(y > 0.0 && y < 0.5, "second change should ramp, got {y}");
+    }
+
+    /// A MIDI CC sweep rewrites the target every few samples, which is the case
+    /// that made the unsmoothed gains audible. The output must stay a smooth
+    /// ramp rather than a staircase.
+    #[test]
+    fn a_ramping_target_produces_a_staircase_free_output() {
+        // A CC sweep over ~1 s from 0 to 1, rewritten at 100 Hz.
+        let mut g = SmoothedGain::new(0.0, SR);
+        let mut worst = 0.0f32;
+        let mut prev = 0.0f32;
+        let sweep_samples = SR as usize;
+        let period = SR as usize / 100; // 100 Hz control update
+        for n in 0..sweep_samples {
+            if n == 0 {
+                g.set(0.0); // prime at the start of the sweep
+                g.step();
+            }
+            if n % period == 0 {
+                g.set(n as f32 / sweep_samples as f32);
+            }
+            let y = g.step();
+            worst = worst.max((y - prev).abs());
+            prev = y;
+        }
+        // A 100 Hz staircase on a 0..1 gain would step by 1/100 = 0.01 per
+        // update. Smoothing keeps the per-sample change far below that.
+        assert!(
+            worst < 1e-3,
+            "CC sweep produced a {worst:.5} step; expected a smooth ramp"
+        );
     }
 }

@@ -4,7 +4,7 @@
 //! → 4 series allpass filters. Comb filters provide the dense reflections; allpass
 //! filters diffuse them. The right channel's delay lines are offset by
 //! `STEREO_SPREAD` samples so the two channels decorrelate into a wide, deep tail.
-use super::param_changed;
+use super::{SmoothedGain, param_changed};
 
 const FIXED_GAIN: f32 = 0.015;
 const SCALE_WET: f32 = 3.0;
@@ -134,6 +134,8 @@ pub struct Reverb {
     pre_buf: Vec<f32>,
     pre_pos: usize,
     lfo_phase: f32,
+    /// Wet/dry, smoothed. `reverb_mix` is a MIDI CC target.
+    mix: SmoothedGain,
     sr: f32,
 }
 
@@ -148,6 +150,8 @@ impl Reverb {
             pre_buf: vec![0.0; pre_len],
             pre_pos: 0,
             lfo_phase: 0.0,
+            // `DEFAULT_REV_MIX`.
+            mix: SmoothedGain::new(0.25, sr),
             sr,
         };
         r.update_params(0.5, 0.4);
@@ -199,6 +203,10 @@ impl Reverb {
         let mod_l = 1.0 + 0.02 * s;
         let mod_r = 1.0 - 0.02 * s;
 
+        // `reverb_mix` is a MIDI CC target, so an expression pedal sweeping it
+        // rewrites this every few samples; unsmoothed that is a staircase.
+        self.mix.set(mix.clamp(0.0, 1.0));
+        let mix = self.mix.step();
         let out_l = dry_l * (1.0 - mix) + wet_l * SCALE_WET * mix * mod_l;
         let out_r = dry_r * (1.0 - mix) + wet_r * SCALE_WET * mix * mod_r;
         (out_l, out_r)

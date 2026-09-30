@@ -1,5 +1,6 @@
 use std::f32::consts::TAU;
 
+use super::SmoothedGain;
 /// Stereo flanger: a short LFO-swept delay mixed back with the dry signal, the
 /// moving comb-filter notches producing the classic "jet plane" sweep. Feedback
 /// (regeneration) sharpens the notches into a resonant, metallic voice.
@@ -19,6 +20,8 @@ pub struct Flanger {
     buf_r: Vec<f32>,
     write: usize,
     phase: f32,
+    /// Wet/dry, smoothed. `flanger_mix` is a MIDI CC target.
+    mix: SmoothedGain,
     sr: f32,
 }
 
@@ -41,6 +44,8 @@ impl Flanger {
             buf_r: vec![0.0; len],
             write: 0,
             phase: 0.0,
+            // `DEFAULT_FL_MIX`.
+            mix: SmoothedGain::new(0.50, sr),
             sr,
         }
     }
@@ -123,7 +128,8 @@ impl Flanger {
         self.write = (self.write + 1) % len;
 
         // Dry is the caller's own L/R; only the wet is the pedal's mono signal.
-        let mix = mix.clamp(0.0, 1.0);
+        self.mix.set(mix.clamp(0.0, 1.0));
+        let mix = self.mix.step();
         (l * (1.0 - mix) + wet_l * mix, r * (1.0 - mix) + wet_r * mix)
     }
 }

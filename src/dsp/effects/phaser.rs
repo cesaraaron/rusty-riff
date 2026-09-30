@@ -1,5 +1,6 @@
 use std::f32::consts::{PI, TAU};
 
+use super::SmoothedGain;
 /// Stereo phaser: a cascade of LFO-swept first-order all-pass filters summed back
 /// with the dry signal. Where the flanger sweeps a *delay* (a comb with evenly
 /// spaced notches) and the chorus sweeps a *long* delay (pitch shimmer), the phaser
@@ -31,6 +32,8 @@ pub struct Phaser {
     fb_l: f32,
     fb_r: f32,
     phase: f32,
+    /// Wet/dry, smoothed. `phaser_mix` is a MIDI CC target.
+    mix: SmoothedGain,
     sr: f32,
 }
 
@@ -53,6 +56,8 @@ impl Phaser {
             fb_l: 0.0,
             fb_r: 0.0,
             phase: 0.0,
+            // `DEFAULT_PH_MIX`.
+            mix: SmoothedGain::new(0.50, sr),
             sr,
         }
     }
@@ -149,7 +154,8 @@ impl Phaser {
         let wet_r = Self::run_channel(&mut self.z_r, &mut self.fb_r, wet_in_r, a_r, fb);
 
         // Dry is the caller's own L/R; only the wet is the pedal's mono signal.
-        let mix = mix.clamp(0.0, 1.0);
+        self.mix.set(mix.clamp(0.0, 1.0));
+        let mix = self.mix.step();
         (l * (1.0 - mix) + wet_l * mix, r * (1.0 - mix) + wet_r * mix)
     }
 }
