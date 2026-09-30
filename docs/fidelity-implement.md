@@ -1448,3 +1448,46 @@ when the ramp is fully out.
 
 Bypass **transparency** is unaffected and still asserted: a fully bypassed stage
 returns the input untouched, because at `g = 0` the wet is never even computed.
+
+### B3 — a release-only defect: the cab could precede the amp
+
+`amp_precedes_cab` was enforced in exactly two places — the UI move
+(`ui/input.rs:384`, which returns `false` and so refuses the move) and
+`sanitize_chain_order`. But the only guard inside `set_chain_order` itself was a
+`debug_assert!`. In a **release** build a cab-before-amp order was accepted and
+installed.
+
+Nothing crashes. It is worse than that: the Cab makes the signal stereo and the
+Amp immediately folds it back with `Sig::into_mono`, so **the entire rack runs
+mono** — no error, no crash, just quietly wrong sound, and only in the build that
+ships. A `debug_assert!` is the wrong tool for a topology invariant precisely
+because it disappears in release.
+
+**Fix.** `set_chain_order` now sanitizes on the way in. It remains the last point
+before the audio thread can observe a topology, so the invariant holds for every
+build and every caller instead of depending on them. Cost is 21 elements on the
+control thread, under the writer mutex, and free for the audio thread. The
+`debug_assert!` stays — a non-permutation is still a caller bug worth shouting
+about in dev, just not worth trusting in release.
+
+**On the test.** A test for a release-only defect has to fail in **debug** too,
+or it is decoration: `cargo test` in CI is a debug build and would never have
+caught this. So the test asserts on the *installed* order, not on the argument,
+and passes in both profiles. Verified by temporarily removing the sanitize line —
+the test fails in release with `a cab-before-amp order reached the audio thread`.
+
+This also changed an existing contract. `rapid_reorder_keeps_a_complete_permutation`
+swapped positions `0`/`1` on round 0, which is *exactly* the `Amp = 11` /
+`Cab = 12` pair, and asserted the snapshot equalled the order written. Under the
+repair that is no longer true, and should not be: the test now asserts against
+`sanitize_chain_order(&order)`. Its actual purpose — that the seqlock never
+publishes a torn or partial order under 1000 rapid swaps — is still checked
+exactly, and `sanitize_chain_order` gained its own direct test for the dupe,
+unknown-id and empty-input cases.
+
+Also closed the **B1 doc defect**: `BlockRoute` claimed its snapshot meant nothing
+is re-read "once per block … so a toggle landing mid-block cannot change the
+topology partway through", which was true for the topology (amp, cab, `skip_cab`,
+`order`) but not for bypass — `stage_enabled` is deliberately per sample, and
+every knob is re-read per sample inside each effect. The doc now says which
+guarantee holds and which does not, rather than the stronger untrue one.

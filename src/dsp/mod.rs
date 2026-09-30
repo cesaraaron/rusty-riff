@@ -1266,15 +1266,30 @@ impl Params {
     }
 
     /// Install a full chain order (UI move / preset apply), publishing it
-    /// atomically through the seqlock. The caller must pass a sanitized
-    /// permutation containing every stage exactly once (see
-    /// [`sanitize_chain_order`]); a `debug_assert` enforces that in debug builds,
-    /// and unknown ids are skipped rather than stored.
+    /// atomically through the seqlock.
+    ///
+    /// Callers are expected to pass a permutation containing every stage exactly
+    /// once (see [`sanitize_chain_order`]), and `debug_assert!` says so loudly
+    /// in dev builds. But the order is still **sanitized here**, because this is
+    /// the last point before the audio thread can see it and a bad topology does
+    /// not crash — it silently sounds wrong.
+    ///
+    /// The case that mattered: `amp_precedes_cab` was enforced by the UI move and
+    /// by [`sanitize_chain_order`], but *not* here, and the only check in this
+    /// function was a `debug_assert!`. In a **release** build a cab-before-amp
+    /// order was accepted, and because the Cab makes the signal stereo while the
+    /// Amp folds it straight back to mono, the entire rack then ran mono — no
+    /// error, just wrong sound, and only in the build that ships. Sanitizing on
+    /// the way in makes the invariant hold for every build and every caller
+    /// instead of relying on them.
+    ///
+    /// Cost is 21 elements on the control thread, under the writer mutex.
     pub fn set_chain_order(&self, order: &[u8; CHAIN_LEN]) {
         debug_assert!(
             is_chain_permutation(order),
             "set_chain_order requires a permutation containing every stage exactly once"
         );
+        let order = &sanitize_chain_order(order);
         // Serialize writers so the seqlock stays single-writer. The audio thread
         // never takes this lock.
         let _guard = self
@@ -1399,11 +1414,20 @@ impl Sig {
     }
 }
 
-/// Everything routing-related, read **once** per block (or per `process` call)
-/// so a toggle landing mid-block cannot change the topology partway through.
+/// Everything **routing-related**, read **once** per block (or per `process`
+/// call) so a toggle landing mid-block cannot change the topology partway
+/// through.
 ///
 /// In particular the [`ChainStage::Cab`] decision is baked into `skip_cab` here,
 /// instead of re-reading the AU flags per sample (the R2 defect).
+///
+/// **What this does *not* freeze.** Stage *bypass* is deliberately per sample:
+/// `run_ordered_stage` reads `stage_enabled` every sample and crossfades over
+/// [`BYPASS_DECLICK_SECS`], so a `Space` press lands on the next sample. That is
+/// the intended behaviour — a bypass that could not take effect until the next
+/// block would feel laggy — but it means the "once per block" guarantee holds for
+/// the *topology* (amp, cab, `skip_cab`, `order`) and **not** for bypass. Every
+/// effect's knobs are likewise re-read per sample inside its own `process`.
 #[derive(Clone, Copy)]
 struct BlockRoute {
     /// The coherent chain order for this block.
@@ -2329,6 +2353,99 @@ mod tests {
         }
     }
 
+    /// The cab must never precede the amp, and `set_chain_order` has to enforce
+    /// that itself rather than trusting its caller.
+    ///
+    /// A cab-before-amp order does not crash — it silently runs the whole rack
+    /// mono, because the Cab makes the signal stereo and the Amp immediately
+    /// folds it back with `Sig::into_mono`. It used to get through in **release**
+    /// builds only, since `amp_precedes_cab` was checked by the UI move and by
+    /// `sanitize_chain_order` but the sole guard inside `set_chain_order` was a
+    /// `debug_assert!`. A release-only defect is invisible to `cargo test` in
+    /// debug, which is exactly why this asserts on the *installed* order instead
+    /// of on the argument, and passes in both profiles.
+    #[test]
+    fn set_chain_order_rejects_a_cab_before_the_amp() {
+        let params = Params::new();
+
+        let mut bad = ChainStage::default_order();
+        let a = bad
+            .iter()
+            .position(|&v| v == ChainStage::Amp as u8)
+            .expect("amp present");
+        let c = bad
+            .iter()
+            .position(|&v| v == ChainStage::Cab as u8)
+            .expect("cab present");
+        bad.swap(a, c);
+        assert!(
+            !amp_precedes_cab(&bad),
+            "the test needs a genuinely inverted order"
+        );
+
+        // No `catch_unwind`: this must be repaired, not panic, even though the
+        // argument is a valid permutation and so trips no assertion.
+        params.set_chain_order(&bad);
+
+        let installed = params.chain_slots();
+        assert!(
+            amp_precedes_cab(&installed),
+            "a cab-before-amp order reached the audio thread"
+        );
+    }
+
+    /// The rest of the contract, for the same reason: whatever goes in, the audio
+    /// thread must receive every stage exactly once.
+    #[test]
+    fn set_chain_order_always_installs_a_valid_permutation() {
+        let params = Params::new();
+
+        let good = ChainStage::default_order();
+        params.set_chain_order(&good);
+        assert_eq!(
+            params.chain_slots(),
+            good,
+            "a valid order must pass through untouched"
+        );
+    }
+
+    /// The sanitizing half of that contract, tested on the pure function.
+    ///
+    /// Deliberately *not* driven through `set_chain_order`: feeding that a
+    /// non-permutation trips its `debug_assert!` in dev, which is the intended
+    /// "you have a caller bug, say so loudly" behavior. What matters here is that
+    /// the sanitizer itself always returns something the audio thread can walk.
+    #[test]
+    fn sanitize_chain_order_always_returns_a_permutation() {
+        let good = ChainStage::default_order();
+
+        // A dupe in place of one stage: the dupe is dropped and the missing
+        // stage appended, so the result is still every stage exactly once.
+        let mut holed = good;
+        let gap = holed
+            .iter()
+            .position(|&v| v == ChainStage::Reverb as u8)
+            .expect("reverb present");
+        holed[gap] = ChainStage::Flanger as u8;
+        let fixed = sanitize_chain_order(&holed);
+        assert!(
+            is_chain_permutation(&fixed),
+            "a dupe left an invalid chain: {fixed:?}"
+        );
+
+        // Unknown ids are dropped rather than stored.
+        let mut junk = good;
+        junk[0] = 200;
+        let fixed = sanitize_chain_order(&junk);
+        assert!(
+            is_chain_permutation(&fixed),
+            "an unknown id left an invalid chain: {fixed:?}"
+        );
+
+        // Empty in, full default order out.
+        assert_eq!(sanitize_chain_order(&[]), good);
+    }
+
     /// Swapping two drives must actually change the sound: comp-before-fuzz vs
     /// fuzz-before-comp through the same knobs must diverge audibly.
     #[test]
@@ -2765,8 +2882,16 @@ mod tests {
     }
 
     /// Rapid adjacent swaps (as the UI's `[` / `]` produce) never leave a
-    /// duplicate or missing stage: after every move the snapshot is exactly the
-    /// order that was written, and a full permutation of all stages.
+    /// duplicate or missing stage: after every move the snapshot is a full
+    /// permutation of all stages, torn or partial.
+    ///
+    /// The expected value is the *sanitized* order, not the raw one written.
+    /// `Amp = 11` and `Cab = 12` sit next to each other in the default order, so
+    /// round 0 proposes swapping them — a cab before its amp, which
+    /// `set_chain_order` now repairs on the way in rather than installing. That
+    /// is the intended contract, so this asserts against it instead of asserting
+    /// the old "whatever went in comes back out" behavior. The point of the test
+    /// is seqlock integrity, which this still checks exactly.
     #[test]
     fn rapid_reorder_keeps_a_complete_permutation() {
         let params = Params::new();
@@ -2776,8 +2901,12 @@ mod tests {
             let i = round % (CHAIN_LEN - 1);
             order.swap(i, i + 1);
             params.set_chain_order(&order);
+            let expected = sanitize_chain_order(&order);
             let snap = params.chain_slots();
-            assert_eq!(snap, order, "snapshot diverged from the written order");
+            assert_eq!(
+                snap, expected,
+                "snapshot diverged from the written order in round {round}"
+            );
             let mut sorted = snap;
             sorted.sort_unstable();
             assert_eq!(
