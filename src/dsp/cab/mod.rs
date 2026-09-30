@@ -1046,6 +1046,118 @@ mod tests {
         );
     }
 
+    /// Aliasing must be measured with an input that actually reaches the
+    /// nonlinearities' harmonic range.
+    ///
+    /// The existing `breakup_stays_clean_and_musical` fizz check drives **220 Hz**,
+    /// so its 2nd/3rd harmonics are 440/660 Hz — far below every lowpass corner in
+    /// the cab. The band it probes (6.5–12 kHz) cannot contain a folded harmonic of
+    /// a 220 Hz tone, so the check is structurally incapable of seeing aliasing: it
+    /// would still pass with `cone_breakup` replaced by a hard clip.
+    ///
+    /// The cab's nonlinearities (`cone_breakup`, Bl droop, thermal compression,
+    /// Doppler FM, `mic_sat`) all run at **base rate**. To make them fold, the input
+    /// needs energy up near Nyquist, so their harmonics run past it and land back
+    /// inside the passband. A 7 kHz tone puts the fold-back products at 1, 6, 8,
+    /// 13, 15 and 20 kHz — none of which is a harmonic of 7 kHz (7/14/21 kHz), so
+    /// anything measured there is aliasing and not signal.
+    ///
+    /// **This test found finding D4.** Measured amplitude relative to the drive
+    /// tone, on the Marshall cab:
+    ///
+    /// | harmonic folds to | product  | measured |
+    /// | ------------------ | -------- | -------- |
+    /// | 7F = 49 kHz        | **1 kHz** | **0.43** |
+    /// | 6F = 42 kHz        | 6 kHz    | 0.010    |
+    /// | 8F = 56 kHz        | 8 kHz    | 0.002    |
+    /// | 5F = 35 kHz        | 13 kHz   | 0.002    |
+    /// | 9F = 63 kHz        | 15 kHz   | 0.0002   |
+    /// | 4F = 28 kHz        | 20 kHz   | 0.0002   |
+    ///
+    /// Out-of-band fold-back is negligible — that part is genuinely fine. The
+    /// problem is the **in-band** product: the 7th harmonic of a 7 kHz tone lands
+    /// at 1 kHz, deep in the cab's passband, and gets the full benefit of its
+    /// response. So the cab's base-rate nonlinearities generate a sub-audible-
+    /// partner tone an octave-and-a-bit under the drive.
+    ///
+    /// This is finding **D4** in [`docs/dsp-findings-2026-09.md`](dsp-findings-2026-09.md):
+    /// `SpeakerDrive` and `mic_sat` have no oversampling, so their harmonics fold
+    /// straight back. The fix is to wrap that stage in the existing
+    /// `Oversampler4` — deliberately **not** done here, since it is a Phase D item
+    /// with a real audio-thread CPU cost. This test's job is to make the gap
+    /// measurable so the fix can be verified.
+    ///
+    /// The bounds below therefore sit just above the measured values: they catch a
+    /// *regression* rather than asserting a target the code does not meet. They
+    /// tighten when D4 lands.
+    #[test]
+    fn hf_input_folds_back_into_the_passband_documented() {
+        const F: f32 = 7_000.0;
+
+        // Where harmonics of F land once they exceed Nyquist (24 kHz @ 48 kHz),
+        // computed rather than hard-coded so the intent stays legible. Only
+        // products that are NOT legitimate harmonics of F are kept.
+        let alias_products: Vec<f32> = (3..=9)
+            .map(|h| {
+                let wrapped = (h as f32 * F) % SR;
+                if wrapped > SR / 2.0 {
+                    SR - wrapped
+                } else {
+                    wrapped
+                }
+            })
+            .filter(|&f| {
+                let ratio = f / F;
+                (ratio - ratio.round()).abs() > 0.05
+            })
+            .collect();
+        assert_eq!(
+            alias_products,
+            vec![20_000.0, 13_000.0, 6_000.0, 1_000.0, 8_000.0, 15_000.0],
+            "the fold-back frequencies changed; re-derive the bounds below"
+        );
+
+        let mut cab = MarshallCab::new(SR);
+        let n = SR as usize;
+        let warm = n / 3;
+        let mut out: Vec<f32> = Vec::with_capacity(n - warm);
+        for i in 0..n {
+            let x = (2.0 * PI * F * i as f32 / SR).sin() * 0.9; // hot, to bite
+            let (l, r) = cab.process(x, 0.5, 0.15, 0.15);
+            assert!(l.is_finite() && r.is_finite(), "non-finite at {i}");
+            if i >= warm {
+                out.push(0.5 * (l + r));
+            }
+        }
+
+        // Reference the *drive tone*, not its 2nd/3rd harmonics: the cab's own
+        // lowpass is steep around 7 kHz, so 14/21 kHz are attenuated far more than
+        // the fold-back products and would make every ratio meaningless.
+        let fund = goertzel(&out, F, SR).abs().max(1e-9);
+        let rel = |f: f32| goertzel(&out, f, SR).abs() / fund;
+
+        let (in_band, out_of_band) =
+            alias_products
+                .iter()
+                .fold((0.0f32, 0.0f32), |(i_max, o_max), &f| {
+                    let v = rel(f);
+                    if f < 2_000.0 {
+                        (i_max.max(v), o_max)
+                    } else {
+                        (i_max, o_max.max(v))
+                    }
+                });
+
+        assert!(
+            in_band < 0.50,
+            "in-band fold-back grew to {in_band:.4} of the fundamental (was 0.43)"
+        );
+        assert!(
+            out_of_band < 0.02,
+            "out-of-band fold-back grew to {out_of_band:.4} of the fundamental (was 0.010)"
+        );
+    }
+
     /// Frequency-dependent driver distortion: sustained bass excursion must
     /// modulate the treble riding on it (motor droop AM + Doppler FM), putting
     /// sidebands around an HF carrier at the bass fundamental's spacing — the

@@ -244,6 +244,11 @@ struct RenderReport {
     punch_p95_med: f32,
     treble_mod: f32,
     noise_floor_db: f32,
+    /// Mean of the render, as a fraction of its RMS. A static DC offset shows up
+    /// here and nowhere else: `ltas_third_octave` is mean-normalized and the
+    /// 70 Hz band starts above most of a real amp's DC blocker, so an offset
+    /// large enough to waste headroom is invisible to every other metric.
+    dc_ratio: f32,
     ltas: Vec<Band>,
 }
 
@@ -277,6 +282,11 @@ fn measure(preset: &str, di: &str, r: &Render, width: f32) -> RenderReport {
         punch_p95_med: punch,
         treble_mod: treble_mod_depth(&mid, r.sr),
         noise_floor_db: noise_floor_db(&mid, r.sr),
+        dc_ratio: {
+            let mean = mid.iter().sum::<f32>() / mid.len().max(1) as f32;
+            let r_rms = rms(&mid).max(1e-12);
+            (mean / r_rms).abs()
+        },
         ltas,
     }
 }
@@ -301,6 +311,7 @@ fn write_reports(out: &Path, reports: &[RenderReport]) -> Result<()> {
                 punch_p95_med: r.punch_p95_med,
                 treble_mod: r.treble_mod,
                 noise_floor_db: r.noise_floor_db,
+                dc_ratio: r.dc_ratio,
                 ltas: r.ltas.clone(),
             })
             .collect(),
@@ -309,11 +320,11 @@ fn write_reports(out: &Path, reports: &[RenderReport]) -> Result<()> {
 
     let mut csv = String::from(
         "preset,di,sr,width,lufs_i,lufs_st_max,sample_peak,rms_db,crest_db,\
-         centroid_hz,correlation,side_to_mid_db,punch_p95_med,treble_mod,noise_floor_db\n",
+         centroid_hz,correlation,side_to_mid_db,punch_p95_med,treble_mod,noise_floor_db,dc_ratio\n",
     );
     for r in reports {
         csv.push_str(&format!(
-            "{},{},{},{},{:.3},{:.3},{:.6},{:.3},{:.3},{:.1},{:.4},{:.2},{:.3},{:.3},{:.2}\n",
+            "{},{},{},{},{:.3},{:.3},{:.6},{:.3},{:.3},{:.1},{:.4},{:.2},{:.3},{:.3},{:.2},{:.6}\n",
             r.preset,
             r.di,
             r.sr,
@@ -329,6 +340,7 @@ fn write_reports(out: &Path, reports: &[RenderReport]) -> Result<()> {
             r.punch_p95_med,
             r.treble_mod,
             r.noise_floor_db,
+            r.dc_ratio,
         ));
     }
     std::fs::write(out.join("summary.csv"), csv)?;
@@ -420,6 +432,32 @@ fn check_baseline(path: &Path, reports: &[RenderReport], sr: f32) -> Result<()> 
             println!(
                 "  {}: centroid {:.1} vs {:.1} (±1%)",
                 want.preset, got.centroid_hz, want.centroid_hz
+            );
+            violations += 1;
+        }
+        // The output ceiling is a **guarantee, not a measurement**, so this is a
+        // hard bound rather than a drift tolerance: `soft_limit` asymptotes to
+        // exactly 1.0 and the audio engine's final output stage re-applies it
+        // after the take-bus sum, so nothing above that can reach the converter.
+        //
+        // This gate is the reason finding A1 survived so long: `sample_peak` was
+        // *recorded* and never checked, so a limiter that raised its own ceiling
+        // to +1.21 dBFS looked fine for months.
+        if got.sample_peak > 1.0 {
+            println!(
+                "  {}: sample_peak {:.5} exceeds the 1.0 ceiling",
+                want.preset, got.sample_peak
+            );
+            violations += 1;
+        }
+        // A static DC offset is invisible to every other metric here: the LTAS is
+        // mean-normalized and starts at 70 Hz, above most of the amps' DC
+        // blockers. A few percent of RMS is already audibly pumping and wastes
+        // headroom; nothing legitimate sits there.
+        if got.dc_ratio > 0.02 {
+            println!(
+                "  {}: dc_offset {:.4} of rms (±0.02)",
+                want.preset, got.dc_ratio
             );
             violations += 1;
         }

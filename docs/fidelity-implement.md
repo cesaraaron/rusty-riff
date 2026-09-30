@@ -1341,3 +1341,61 @@ Added two output-only overlays:
   output stage in A2.
 - Snapshots re-blessed; the diff is the `LIM` badge on the OUT row and nothing
   else. Baseline unchanged — this is measurement, not signal.
+
+### A9 — gate `sample_peak` and DC in the harness, and finally measure aliasing
+
+**`sample_peak` is now a gate.** It was *recorded* and never checked, which is
+precisely why A1 survived: a limiter that raised its own ceiling to +1.21 dBFS
+looked fine for months. It is a **hard bound, not a drift tolerance** — the
+ceiling is a guarantee (`soft_limit` asymptotes to 1.0, and the engine's final
+output stage re-applies it after the take-bus sum), so nothing above it can reach
+the converter.
+
+> **Its honest limitation.** Measured across all 8 presets × 7 DIs, the highest
+> `sample_peak` is **0.72**. Nothing in the bundled set reaches the 0.95 knee, so
+> the gate currently has no leverage: reintroducing the old `KNEE_SHAPE = 5.0` did
+> **not** trip it, because the limiter never engages. It protects against a preset
+> or export *starting* to exceed the ceiling. The limiter's shape itself is covered
+> by `soft_limit_holds_a_hard_ceiling_of_unity`, which I verified does fail
+> against the old curve. Both layers exist for different failure modes.
+
+**DC offset is now a metric and a gate.** New `dc_ratio` = mean ÷ RMS of the
+render. Nothing else in the harness could see a static offset: `ltas_third_octave`
+is mean-normalized, and its lowest band is 70 Hz — above where most of the amp
+DC blockers are working. Measured max across all renders: **1.1e-7**, i.e. the
+master-bus DC blocker from F3 is doing its job completely. Gate at 2% of RMS.
+
+**Aliasing is now measured, and the measurement found a real gap.**
+
+The existing cab alias check (`breakup_stays_clean_and_musical`) drives **220 Hz**,
+so its harmonics are 440/660 Hz — far below every lowpass corner in the cab. The
+band it probes (6.5–12 kHz) *cannot* contain a folded harmonic of a 220 Hz tone.
+The check is structurally incapable of seeing aliasing; it would still pass with
+`cone_breakup` replaced by a hard clip.
+
+Driving a **7 kHz** tone instead — whose harmonics run past Nyquist and fold back
+to 1, 6, 8, 13, 15 and 20 kHz, none of which is a harmonic of 7 kHz — measures,
+relative to the drive tone:
+
+| harmonic folds to | product | measured |
+| --- | --- | --- |
+| 7F = 49 kHz | **1 kHz** | **0.43** |
+| 6F = 42 kHz | 6 kHz | 0.010 |
+| 8F = 56 kHz | 8 kHz | 0.002 |
+| 5F = 35 kHz | 13 kHz | 0.002 |
+| 9F = 63 kHz | 15 kHz | 0.0002 |
+| 4F = 28 kHz | 20 kHz | 0.0002 |
+
+Out-of-band fold-back is negligible. The problem is the **in-band** product: the
+cab's base-rate nonlinearities put a tone at **1 kHz at 43% of the drive tone's
+amplitude** — deep in the passband, so it gets the full benefit of the cab's
+response.
+
+This is finding **D4** confirmed by measurement. The fix is to wrap `SpeakerDrive`
+in the existing `Oversampler4`, which is a Phase D item with a real audio-thread
+CPU cost — deliberately not done here. `hf_input_folds_back_into_the_passband_documented`
+therefore sets its bounds just above the measured values so they catch a
+*regression* rather than assert a target the code does not meet, and the doc
+comment carries the full table so the bounds can be tightened when D4 lands. The
+fold-back frequencies are asserted exactly, so if the Nyquist relationships change
+the test fails loudly rather than silently measuring the wrong thing.

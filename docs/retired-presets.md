@@ -99,5 +99,12 @@ cargo run --release --example fidelity_render -- --presets all \
 Three of these (`marshall_hard_rock_rhythm`, `mesa_modern_metal`,
 `vox_chime_clean`) were **not** artist presets — they were generic rig showcases
 that existed to give the JCM800, the Dual Rectifier and the AC30 a bundled
-presence. Their loss is the direct cause of the coverage gap above. If rig
-coverage needs restoring, those three are the cheapest to bring back.
+presence. Their loss is the direct cause of the coverage gap above.
+
+> **Decision (2026-09-29, maintainer): do not bring them back.** The coverage gap
+> is accepted deliberately. The eight surviving artist presets are the point of
+> the set; re-adding non-artist rig showcases to give internal models a bundled
+> presence is not wanted. Those five amp models and four cabs remain covered by
+> their own unit tests in `src/dsp/amp` and `src/dsp/cab` — what they lose is
+> *end-to-end* coverage through a preset. Keep that in mind during the amp
+> rework (Phase C), which moves the very rigs the harness can no longer see.
