@@ -1399,3 +1399,52 @@ therefore sets its bounds just above the measured values so they catch a
 comment carries the full table so the bounds can be tightened when D4 lands. The
 fold-back frequencies are asserted exactly, so if the Nyquist relationships change
 the test fails loudly rather than silently measuring the wrong thing.
+
+### B1 — bypass toggles clicked, and the fix was hiding in the macros
+
+Toggling any of the 21 chainable stages was a **hard cut** from dry to wet (or
+back). That is a step in the waveform, and the step is as large as the difference
+between the stage's two signals. For a flanger at `feedback = 0.9, mix = 0.5` the
+wet runs well above the dry, so engaging it was a full-scale discontinuity — the
+familiar "pop" when you stomp a pedal in a live rig.
+
+**The fix.** `DspChain` now carries a `bypass_ramp: [f32; CHAIN_LEN]` and a
+per-sample `bypass_step` (`BYPASS_DECLICK_SECS = 0.006`). `run_ordered_stage`
+walks the ramp toward the target every sample and crossfades
+`dry + (wet - dry) * g`. It is deliberately staged at the **stage boundary**
+rather than inside each effect:
+
+- Every bypassable stage gets the same treatment, including the ones I would not
+  have thought to audit (there are 21).
+- The effect's own internals stay untouched, so their CPU cost is unchanged.
+- Fully bypassed (`g <= 0`) returns the dry signal *without running the effect*,
+  so a bypassed stage still costs nothing and its state stays frozen.
+  Fully engaged (`g >= 1`) returns the wet signal exactly as before.
+
+6 ms, not 4 ms like `DECLICK_SECS`: a bypass step can be larger than a
+built-in↔AU path switch (a flanger's wet is an order of magnitude above its dry),
+so the ramp has more ground to cover. Still far below the ~20 ms where a fade
+starts to read as a swell.
+
+**The part that was not obvious.** `mono_stage!`/`stereo_stage!` each branched on
+the stage's own `*_enabled` flag and returned the dry signal in the `else`. That
+looked like free CPU, but it silently defeated the ramp: `run_ordered_stage`
+computed `wet = dry` because the macro had already discarded the effect, so the
+crossfade blended two copies of the dry path and the click survived at full size.
+The macros now process unconditionally; the ramp is the single place that decides
+bypass. The saving is not lost — `run_ordered_stage` returns *before* calling them
+when the ramp is fully out.
+
+> **How the test found it.** `bypass_toggle_does_not_click` measures the worst
+> sample-to-sample step across a toggle and compares three runs of the *same*
+> rig: an untoggled control, the ramp, and the ramp forced to one sample. The A/B
+> is what makes the probe shape irrelevant — a tone's own slew is identical in
+> all three runs and cancels out. (A DC probe does not work here at all: the
+> flanger is a delay comb, so on a constant input its delay line fills with DC,
+> its wet equals its dry, and toggling measured a step of **6e-6** — it would have
+> "passed" a useless test.) Measured worst step: **control 0.018**, **ramp
+> 0.082**, **hard cut 0.561** — a 6.8x improvement, landing within 4.6x of the
+> signal's own natural slew.
+
+Bypass **transparency** is unaffected and still asserted: a fully bypassed stage
+returns the input untouched, because at `g = 0` the wet is never even computed.

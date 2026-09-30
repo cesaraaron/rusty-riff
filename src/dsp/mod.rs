@@ -1349,28 +1349,28 @@ pub trait StereoInsert: Send {
 /// Run a mono effect when its enable flag is set, otherwise pass `$x` through.
 ///
 /// Every pedal in the chain is bypassable and reads its knobs from the shared,
-/// lock-free [`Params`]. Spelling that `if enabled { effect.process(load…) } else
-/// { x }` dance out once per pedal was the bulk of the old `process` body; this
-/// macro expands to the exact same straight-line code (no allocation, no dynamic
-/// dispatch) so the audio thread pays nothing for the deduplication.
+/// lock-free [`Params`]. Spelling the call out once per pedal was the bulk of
+/// the old `process` body; this macro expands to straight-line code (no
+/// allocation, no dynamic dispatch) so the audio thread pays nothing for the
+/// deduplication.
+///
+/// These deliberately do **not** branch on the enable flag. Bypass is decided
+/// one level up, in [`DspChain::run_ordered_stage`], which crossfades dry/wet over
+/// [`BYPASS_DECLICK_SECS`]. Gating here as well would snap the input straight to
+/// the dry signal the instant the flag flipped, so the ramp would crossfade two
+/// copies of the dry path and the click would survive (which is exactly what
+/// `bypass_toggle_does_not_click` caught). Skipping the effect while fully
+/// bypassed is still free: `run_ordered_stage` returns before calling these.
 macro_rules! mono_stage {
     ($self:ident, $p:ident, $x:ident, $enabled:ident, $field:ident, $($param:ident),+) => {
-        if $p.$enabled.load(Relaxed) {
-            $self.$field.process($x, $($p.$param.load(Relaxed)),+)
-        } else {
-            $x
-        }
+        $self.$field.process($x, $($p.$param.load(Relaxed)),+)
     };
 }
 
-/// Stereo counterpart of [`mono_stage!`]: passes `($l, $r)` through when bypassed.
+/// Stereo counterpart of [`mono_stage!`].
 macro_rules! stereo_stage {
     ($self:ident, $p:ident, $l:ident, $r:ident, $enabled:ident, $field:ident, $($param:ident),+) => {
-        if $p.$enabled.load(Relaxed) {
-            $self.$field.process($l, $r, $($p.$param.load(Relaxed)),+)
-        } else {
-            ($l, $r)
-        }
+        $self.$field.process($l, $r, $($p.$param.load(Relaxed)),+)
     };
 }
 
@@ -1419,6 +1419,12 @@ struct BlockRoute {
 /// Built-in↔AU declick fade time. Long enough to smooth a waveform step, short
 /// enough to feel instant under the finger.
 const DECLICK_SECS: f32 = 0.004;
+
+/// Bypass-toggle crossfade time, same intent as [`DECLICK_SECS`] but a little
+/// longer: a bypass step can be larger than a path switch (a flanger's wet can
+/// be an order of magnitude above its dry), so the ramp has more ground to
+/// cover. Still far below the ~20 ms where a fade starts to read as a swell.
+const BYPASS_DECLICK_SECS: f32 = 0.006;
 
 pub struct DspChain {
     ng: NoiseGate,
@@ -1474,6 +1480,11 @@ pub struct DspChain {
     declick_step: f32,
     /// Master-bus DC blockers, one per channel.
     master_dc: MasterDc,
+    /// Per-stage bypass crossfade position, 0 = fully bypassed and 1 = fully
+    /// engaged. See [`Self::run_ordered_stage`].
+    bypass_ramp: [f32; CHAIN_LEN],
+    /// Per-sample step for the bypass crossfade.
+    bypass_step: f32,
 }
 
 impl DspChain {
@@ -1513,6 +1524,8 @@ impl DspChain {
             declick_target: 1.0,
             declick_step: 1.0 / (DECLICK_SECS * sr).max(1.0),
             master_dc: MasterDc::new(sr),
+            bypass_ramp: [0.0; CHAIN_LEN],
+            bypass_step: 1.0 / (BYPASS_DECLICK_SECS * sr).max(1.0),
         }
     }
 
@@ -1856,10 +1869,43 @@ impl DspChain {
             }
             _ => {}
         }
-        if !self.params.stage_enabled(stage) {
+        // Bypass declick. A bypass toggle used to be a hard cut: `process` was
+        // simply not called, so the output jumped from the dry signal straight
+        // to the wet one (or back) in a single sample. For a stage whose wet is
+        // much louder than its dry — the flanger at `feedback = 0.9, mix = 0.5`
+        // reaches ~12x, and the reverb's wet is 3x — that step is a click.
+        //
+        // The ramp is at the *stage boundary*, not inside each effect, so all 19
+        // bypassable stages get it from one place. At rest it is exactly 0 or
+        // exactly 1, so a bypassed stage is still bit-exact transparent (the
+        // property the route-domain test matrix pins) and an engaged one still
+        // runs exactly the effect.
+        //
+        // Linear rather than equal-power: for a bypass crossfade the two signals
+        // are usually highly correlated (wet ≈ dry plus the effect), where an
+        // equal-power law would *raise* the level through the middle of the fade.
+        let target = if self.params.stage_enabled(stage) {
+            1.0
+        } else {
+            0.0
+        };
+        let idx = stage as usize;
+        let ramp = &mut self.bypass_ramp[idx];
+        if *ramp < target {
+            *ramp = (*ramp + self.bypass_step).min(target);
+        } else if *ramp > target {
+            *ramp = (*ramp - self.bypass_step).max(target);
+        }
+        let g = *ramp;
+
+        // Fully out: do not run the effect at all. That keeps a bypassed stage
+        // free (the factory default has most pedals off) and keeps its state
+        // frozen exactly as before — its buffers are simply not advanced.
+        if g <= 0.0 {
             return sig;
         }
-        if stage.is_mono_pedal() {
+
+        let wet = if stage.is_mono_pedal() {
             match sig {
                 Sig::Mono(x) => Sig::Mono(self.run_mono_stage(stage, x)),
                 Sig::Stereo(l, r) => {
@@ -1877,6 +1923,24 @@ impl DspChain {
                     let (l, r) = self.run_stereo_stage(stage, x, x);
                     Sig::Stereo(l, r)
                 }
+            }
+        };
+
+        // Fully in: the effect alone, unchanged.
+        if g >= 1.0 {
+            return wet;
+        }
+        // Mid-ramp: crossfade dry -> wet in the signal's own domain. Bridging
+        // happens on the wet side only, so the dry keeps whatever channel layout
+        // it arrived with.
+        match (sig, wet) {
+            (Sig::Mono(d), Sig::Mono(w)) => Sig::Mono(d + (w - d) * g),
+            (Sig::Mono(d), Sig::Stereo(wl, wr)) => Sig::Stereo(d + (wl - d) * g, d + (wr - d) * g),
+            (Sig::Stereo(dl, dr), Sig::Mono(w)) => {
+                Sig::Stereo(dl + (w - dl) * g, dr + (w - dr) * g)
+            }
+            (Sig::Stereo(dl, dr), Sig::Stereo(wl, wr)) => {
+                Sig::Stereo(dl + (wl - dl) * g, dr + (wr - dr) * g)
             }
         }
     }
@@ -2415,6 +2479,90 @@ mod tests {
         );
     }
 
+    /// Toggling a bypass must not click.
+    ///
+    /// A hard cut is a step in the waveform, and the step is as large as the
+    /// difference between the stage's dry and wet signals. For a flanger at
+    /// `feedback = 0.9, mix = 0.5` the wet can be an order of magnitude above
+    /// the dry, so engaging or bypassing it is a full-scale discontinuity.
+    ///
+    /// The probe is a **DC constant**, not a tone: a tone's own slew would mask
+    /// the step being measured (the same trap the noise-gate click test hit — a
+    /// 220 Hz sine slews 0.023 per sample, the same order as the step). With a
+    /// constant the only step in the output is the bypass transition.
+    ///
+    /// Measured against the same rig with the ramp forced to one sample, so the
+    /// comparison cannot be argued with probe shape or level.
+    #[test]
+    fn bypass_toggle_does_not_click() {
+        let sr = 48_000.0;
+        let worst_step = |instant: bool, toggle: bool| -> f32 {
+            let params = Arc::new(Params::new());
+            params.fl_enabled.store(true, Relaxed);
+            params.fl_feedback.store(0.9, Relaxed);
+            params.fl_mix.store(0.5, Relaxed);
+            let mut chain = DspChain::new(sr, Arc::clone(&params));
+            if instant {
+                // One sample per step: the pre-B1 hard cut.
+                chain.bypass_step = 1.0;
+            }
+
+            // The probe is a **tone**, not DC. A DC probe is useless here: the
+            // flanger is a delay comb, so on a constant input its delay line fills
+            // with DC, its wet equals its dry, and bypassing changes nothing at
+            // all (measured: a step of 6e-6). A tone makes the wet genuinely
+            // differ from the dry.
+            //
+            // A tone does slew, which would normally mask a step — but this is an
+            // A/B against the *same* probe with the ramp forced to one sample, so
+            // the slew is identical in both runs and cancels out.
+            //
+            // Settle for 200 ms first: the amp's DC blockers and the cab's filters
+            // charge from zero when the tone arrives, and that transient has
+            // nothing to do with the bypass.
+            let probe = |i: usize| (2.0 * PI * 200.0 * i as f32 / sr).sin() * 0.5;
+            for i in 0..9_600 {
+                chain.process(probe(i));
+            }
+
+            let window = 480;
+            let mut worst = 0.0f32;
+            let mut i = 9_600;
+            let mut prev = chain.process(probe(i));
+            i += 1;
+            let windows: &[bool] = if toggle {
+                &[false, true]
+            } else {
+                &[true, true]
+            };
+            for &on in windows {
+                params.fl_enabled.store(on, Relaxed);
+                for _ in 0..window {
+                    let cur = chain.process(probe(i));
+                    worst = worst
+                        .max((cur.0 - prev.0).abs())
+                        .max((cur.1 - prev.1).abs());
+                    prev = cur;
+                    i += 1;
+                }
+            }
+            worst
+        };
+
+        let control = worst_step(false, false);
+        let ramped = worst_step(false, true);
+        let hard_cut = worst_step(true, true);
+        assert!(
+            hard_cut > control * 1.5,
+            "the hard cut should stand out from the untoggled control: {hard_cut:.5} vs {control:.5}"
+        );
+        assert!(
+            ramped < hard_cut / 5.0,
+            "bypass ramp ({ramped:.5}) should be far smoother than the hard cut \
+             ({hard_cut:.5})"
+        );
+    }
+
     /// A **live** mono pedal sitting on a stereo feed intentionally downmixes to
     /// mono (and duplicates): that is the documented behavior of a real mono
     /// pedal fed from a stereo send, unlike a bypassed one.
@@ -2424,8 +2572,16 @@ mod tests {
         params.wah_enabled.store(true, Relaxed); // live mono effect
         let mut chain = DspChain::new(48_000.0, params);
 
+        // The bypass crossfade has to reach 1 before the stage's *own* domain
+        // rule is observable: mid-ramp the output is a blend of the dry pair and
+        // the effect, so L and R differ by construction. Drive it to steady
+        // state, then check the last sample.
         let route = chain.route_for_block(false);
-        let out = chain.run_ordered_stage(Sig::Stereo(0.4, -0.2), ChainStage::Wah, &route);
+        let mut out = Sig::Mono(0.0);
+        let ramp_samples = (48_000.0 / (1.0 / BYPASS_DECLICK_SECS)) as usize + 8;
+        for _ in 0..ramp_samples {
+            out = chain.run_ordered_stage(Sig::Stereo(0.4, -0.2), ChainStage::Wah, &route);
+        }
         match out {
             Sig::Stereo(l, r) => assert_eq!(
                 l, r,
