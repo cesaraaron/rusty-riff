@@ -1,6 +1,9 @@
 use std::sync::atomic::Ordering::Relaxed;
 
-use crate::dsp::{AmpModel, CHAIN_LEN, CabModel, ChainStage, Params, amp_precedes_cab};
+use crate::dsp::{
+    AmpModel, CHAIN_LEN, CabModel, ChainStage, Params, amp_precedes_cab,
+    stereo_stages_follow_the_amp,
+};
 
 use super::config::{
     ADD_TILE, AMP_END, AMP_START, CHAIN_TILE, KNOBS, MIC_END, MIC_START, PEDALS, PRACTICE_TILE,
@@ -382,6 +385,15 @@ pub(super) fn move_selected_stage(
     order.swap(a, b);
     // The cab must always follow its amp.
     if !amp_precedes_cab(&order) {
+        return false;
+    }
+    // And nothing stereo may move ahead of it. The Amp folds the chain to mono,
+    // so a rack pedal or cab placed in front of it is silently downmixed and the
+    // whole rack loses its stereo image -- a much larger change than "move"
+    // implies, and one the user gets no warning about. Refused rather than
+    // toasted, matching the cab/amp refusal above: the move has no upside to
+    // trade against the downside, so there is nothing to decide.
+    if !stereo_stages_follow_the_amp(&order) {
         return false;
     }
     params.set_chain_order(&order);
@@ -1038,6 +1050,95 @@ mod tests {
         // …and back again.
         assert!(move_selected_stage(&p, &b, ChainStage::Comp, -1));
         assert_eq!(p.chain_slots(), ChainStage::default_order());
+    }
+
+    /// Moving a stereo stage in front of the amp must be refused.
+    ///
+    /// The Amp folds the chain to mono (`Sig::into_mono`), so a rack pedal or the
+    /// cab placed ahead of it is silently downmixed and the whole rack loses its
+    /// stereo image — with no warning and nothing on screen to explain the change
+    /// afterwards. The move has no upside (a pre-amp "stereo" pedal is exactly as
+    /// mono as a mono pedal), so it is refused outright.
+    #[test]
+    fn move_selected_stage_refuses_to_leap_a_stereo_stage_before_the_amp() {
+        // Walk the reverb leftwards one slot at a time. Every step up to the amp
+        // is refused; the ones before it are not, which is what makes this a test
+        // of the boundary rather than of a blanket "no moves".
+        let p = Params::new();
+        let b = board(true);
+
+        let start = p.chain_slots();
+        let amp_at = start
+            .iter()
+            .position(|&v| v == ChainStage::Amp as u8)
+            .expect("amp present");
+        assert!(
+            start[amp_at..].contains(&(ChainStage::Reverb as u8)),
+            "the reverb should start after the amp"
+        );
+
+        // The reverb starts last in the ribbon, so a handful of leftward moves
+        // walks it back toward the amp. It must stop *at* the amp, not at the
+        // start of the ribbon -- asserting only that some move was refused would
+        // pass for the wrong reason if it had simply hit the left-hand end.
+        for _ in 0..amp_at + 2 {
+            if !move_selected_stage(&p, &b, ChainStage::Reverb, -1) {
+                break;
+            }
+        }
+        let order = p.chain_slots();
+        let rev_at = order
+            .iter()
+            .position(|&v| v == ChainStage::Reverb as u8)
+            .expect("reverb present");
+        assert_eq!(
+            rev_at,
+            amp_at + 1,
+            "the reverb should come to rest immediately after the amp, not \
+             earlier: {order:?}"
+        );
+        assert!(
+            stereo_stages_follow_the_amp(&order),
+            "a stereo stage ended up ahead of the amp: {order:?}"
+        );
+        // The refusal must be inert: the chain is still a complete permutation,
+        // and the cab still follows the amp.
+        let mut sorted = order;
+        sorted.sort_unstable();
+        assert_eq!(sorted.as_slice(), (0..CHAIN_LEN as u8).collect::<Vec<_>>());
+        assert!(amp_precedes_cab(&order));
+    }
+
+    /// The mirror image, which must stay allowed: a **mono** pedal moving ahead of
+    /// the amp is the entire point of the pre-amp section and costs nothing.
+    #[test]
+    fn move_selected_stage_still_allows_mono_pedals_before_the_amp() {
+        let p = Params::new();
+        let b = board(true);
+        // Fuzz is a mono pedal well ahead of the amp by default; nudge it one
+        // rendered slot earlier and check it actually went there, so the test is
+        // not passing on a refused move.
+        let before = p
+            .chain_slots()
+            .iter()
+            .position(|&v| v == ChainStage::Fuzz as u8)
+            .expect("fuzz present");
+        assert!(move_selected_stage(&p, &b, ChainStage::Fuzz, -1));
+
+        let order = p.chain_slots();
+        let after = order
+            .iter()
+            .position(|&v| v == ChainStage::Fuzz as u8)
+            .expect("fuzz present");
+        assert_eq!(
+            after,
+            before - 1,
+            "the fuzz did not move earlier: {order:?}"
+        );
+        assert!(
+            stereo_stages_follow_the_amp(&order),
+            "a mono pedal should still be allowed ahead of the amp: {order:?}"
+        );
     }
 
     #[test]

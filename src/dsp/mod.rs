@@ -469,6 +469,34 @@ pub fn amp_precedes_cab(order: &[u8; CHAIN_LEN]) -> bool {
     }
 }
 
+/// True when `order` keeps every stereo stage after the amp.
+///
+/// The Amp folds the chain to mono (`Sig::into_mono`), so anything stereo that
+/// lands before it is silently downmixed and the rack collapses to mono: the
+/// reverb, chorus, flanger, phaser, trem, delay and both EQs all lose their
+/// stereo image, and the cab's decorrelation is gone for everything downstream.
+///
+/// The move is *purely* destructive — a pre-amp stereo pedal is not "slightly
+/// mono", it is exactly as mono as a mono pedal, with the same result and no
+/// benefit. So the UI refuses it rather than warning about it, the same way it
+/// refuses a cab before its amp.
+///
+/// Unlike [`amp_precedes_cab`] this is **not** applied by
+/// [`sanitize_chain_order`]: a cab before its amp is structurally broken and
+/// nothing can rescue it, whereas a preset that deliberately collapses its chain
+/// to mono is an authored choice. This guards a stray keypress, not intent.
+pub fn stereo_stages_follow_the_amp(order: &[u8; CHAIN_LEN]) -> bool {
+    let Some(amp) = order.iter().position(|&v| v == ChainStage::Amp as u8) else {
+        // No amp to precede; sanitizing repairs the hole.
+        return true;
+    };
+    // Everything ahead of the amp must be a mono pedal. `from_u8` returning
+    // `None` for an unknown id fails closed rather than waving it through.
+    order[..amp]
+        .iter()
+        .all(|&v| ChainStage::from_u8(v).is_some_and(|s| s.is_mono_pedal()))
+}
+
 /// Sanitize a candidate order into a valid one: drop unknown ids and dupes,
 /// append missing stages in default order, and repair a cab placed before its
 /// amp. Always returns every stage exactly once, so the audio thread never sees
@@ -2351,6 +2379,98 @@ mod tests {
             assert_eq!(l, bl, "L diverged from per-sample path");
             assert_eq!(r, br, "R diverged from per-sample path");
         }
+    }
+
+    /// `stereo_stages_follow_the_amp` is the boundary the UI refuses moves at.
+    ///
+    /// What matters is *which* stages count as stereo-ahead-of-the-amp: the eight
+    /// rack pedals and the cab are not allowed there, the eleven mono pre pedals
+    /// are, and an unknown id must fail closed rather than slip through.
+    #[test]
+    fn stereo_stages_follow_the_amp_draws_the_boundary_it_claims() {
+        /// Move `stage` into the slot immediately ahead of the amp.
+        fn hoist(stage: ChainStage) -> [u8; CHAIN_LEN] {
+            let mut order = ChainStage::default_order().to_vec();
+            let from = order
+                .iter()
+                .position(|&v| v == stage as u8)
+                .expect("stage present in the default order");
+            let id = order.remove(from);
+            // Recompute: removing `from` may have shifted the amp.
+            let amp_at = order
+                .iter()
+                .position(|&v| v == ChainStage::Amp as u8)
+                .expect("amp present");
+            assert!(amp_at >= 1, "the amp needs a slot ahead of it to test");
+            order.insert(amp_at - 1, id);
+            order.try_into().expect("splice preserves length")
+        }
+
+        let good = ChainStage::default_order();
+        assert!(
+            stereo_stages_follow_the_amp(&good),
+            "the default order must satisfy the rule: {good:?}"
+        );
+
+        // Every rack pedal, and the cab, must be rejected ahead of the amp.
+        for stage in [
+            ChainStage::Cab,
+            ChainStage::Geq,
+            ChainStage::Eq,
+            ChainStage::Flanger,
+            ChainStage::Chorus,
+            ChainStage::Phaser,
+            ChainStage::Trem,
+            ChainStage::Delay,
+            ChainStage::Reverb,
+        ] {
+            assert!(
+                !stage.is_mono_pedal(),
+                "{stage:?} was expected to be a stereo stage"
+            );
+            let order = hoist(stage);
+            assert!(
+                !stereo_stages_follow_the_amp(&order),
+                "{stage:?} should not be allowed ahead of the amp: {order:?}"
+            );
+        }
+
+        // Every mono pedal is fine right up against the amp.
+        for stage in (0..CHAIN_LEN)
+            .filter_map(|i| ChainStage::from_u8(i as u8))
+            .filter(|s| s.is_mono_pedal())
+        {
+            let order = hoist(stage);
+            assert!(
+                stereo_stages_follow_the_amp(&order),
+                "{stage:?} should be allowed ahead of the amp: {order:?}"
+            );
+        }
+
+        // An unknown id ahead of the amp fails closed.
+        let mut junk = good;
+        let amp_at = junk
+            .iter()
+            .position(|&v| v == ChainStage::Amp as u8)
+            .expect("amp present");
+        junk[amp_at - 1] = 200;
+        assert!(
+            !stereo_stages_follow_the_amp(&junk),
+            "an unknown stage id must not be waved through"
+        );
+
+        // No amp at all: nothing to precede, so the rule holds vacuously and
+        // sanitizing repairs the hole. A `[u8; CHAIN_LEN]` without an amp can only
+        // be a non-permutation, so the amp's slot is overwritten with a duplicate
+        // — which is the realistic way a headless chain reaches this function.
+        let mut headless = good;
+        let at = headless
+            .iter()
+            .position(|&v| v == ChainStage::Amp as u8)
+            .expect("amp present");
+        headless[at] = ChainStage::Flanger as u8;
+        assert!(!headless.contains(&(ChainStage::Amp as u8)));
+        assert!(stereo_stages_follow_the_amp(&headless));
     }
 
     /// The cab must never precede the amp, and `set_chain_order` has to enforce

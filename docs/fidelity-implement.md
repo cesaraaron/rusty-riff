@@ -1491,3 +1491,49 @@ topology partway through", which was true for the topology (amp, cab, `skip_cab`
 `order`) but not for bypass — `stage_enabled` is deliberately per sample, and
 every knob is re-read per sample inside each effect. The doc now says which
 guarantee holds and which does not, rather than the stronger untrue one.
+
+### B2 — the loudest part: a reorder could silently collapse the rack to mono
+
+Pressing `[` / `]` could destroy stereo with no warning. The Amp folds the
+chain to mono (`Sig::into_mono`), so any stereo stage landing *ahead* of it is
+silently downmixed and the rack loses its stereo image — and, because the cab is
+also downmixed, its decorrelation goes with it.
+
+The destructive cases, in order of severity:
+
+1. **A rack pedal or the cab moved in front of the Amp.** The whole rack
+   collapses to mono. Worst, because it is silent and irreversible by ear.
+2. **A *mono* pedal moved after the Cab.** It emits `Sig::Stereo(y, y)` dual
+   mono, killing cab decorrelation and the reverb tail for everything downstream.
+3. **A full-rig AU host** (`skip_cab` true) processing line-level effects between
+   AMP and CAB on already-miked signal. Finding R3, marked resolved — but
+   resolved only by a help-modal row, with no code-level guard.
+
+**Fixed (case 1).** New `stereo_stages_follow_the_amp` (`dsp/mod.rs:488`) and the
+UI move now **refuses** it, mirroring the existing cab-before-amp refusal. Not a
+toast: the move is *purely* destructive — a pre-amp "stereo" pedal is exactly as
+mono as a mono pedal, same result, no benefit — so there is no trade-off for the
+user to decide and a refusal says that more honestly than a warning would.
+
+**Deliberately not in `sanitize_chain_order`.** Unlike B3, this rule does *not*
+sanitize on the way in, and the asymmetry is intentional:
+
+- A cab before its amp is structurally broken; nothing can rescue it, so repair
+  is the only option.
+- A preset that deliberately collapses its chain to mono is *authored intent*.
+  The `[chain]` feature exists precisely to preserve authored topology ("old
+  presets keep their exact topology"), so rewriting it would be wrong. This guard
+  stops a stray keypress, not a decision.
+
+The predicate's own test pins the boundary rather than one example: all nine
+non-mono stages rejected immediately ahead of the amp, all eleven mono pedals
+accepted immediately ahead of it, an unknown id failing **closed** rather than
+being waved through, and the no-amp case holding vacuously. The UI test walks the
+reverb leftwards and asserts it comes to rest in the slot *right after* the amp —
+asserting only that "some move was refused" would pass for the wrong reason if
+the walk had simply hit the left-hand end of the ribbon. A mirror test confirms
+mono pedals still move freely ahead of it.
+
+**Still open.** Case 2 (mono pedal after the cab) wants a toast, and there is no
+toast facility in the UI at all — that is a feature, not a one-line change, so it
+is deliberately left for its own pass. Case 3 has no code-level guard.
