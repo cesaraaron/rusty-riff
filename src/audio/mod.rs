@@ -758,6 +758,14 @@ struct InputState {
     release: f32,
     in_env: f32,
     out_env: f32,
+    /// True peak of the final output, held with a slow decay (see `Levels`).
+    out_peak: f32,
+    /// Per-sample decay coefficient for `out_peak`, set from a ~1.5 s hold.
+    peak_decay: f32,
+    /// Fades to 0 when the output ceiling stops engaging.
+    limit_indicator: f32,
+    /// Per-callback decay for `limit_indicator` (~0.4 s to fade out).
+    limit_decay: f32,
     in_channels: usize,
     out_channels: usize,
     guitar_ch: usize,
@@ -932,6 +940,12 @@ impl InputState {
         self.practice.store_position(self.player.cursor());
         self.levels.input.store(self.in_env, Relaxed);
         self.levels.output.store(self.out_env, Relaxed);
+        self.levels.output_peak.store(self.out_peak, Relaxed);
+        // Fade rather than latch, so the indicator releases on its own. The
+        // per-sample loop sets it to 1.0 whenever the ceiling engaged during
+        // this callback, so this only ever decays.
+        self.limit_indicator *= self.limit_decay;
+        self.levels.limiting.store(self.limit_indicator, Relaxed);
     }
 
     /// Process one chunk of at most [`MAX_BLOCK`] interleaved frames. Split out of
@@ -1117,6 +1131,23 @@ impl InputState {
             let (out_left, out_right) = output_stage(live_l, live_r, take_l, take_r);
             let out_mono = 0.5 * (out_left + out_right);
 
+            // True peak of the final, post-ceiling signal, with a slow decay so a
+            // transient stays readable. The `output` meter is a *follower*: it
+            // tracks level but does not hold a peak, and it is computed before
+            // the take bus, so it structurally cannot show that this output just
+            // touched the ceiling.
+            let a = out_left.abs().max(out_right.abs());
+            self.out_peak = if a > self.out_peak {
+                a
+            } else {
+                self.out_peak * self.peak_decay
+            };
+            // Did the ceiling actually have to work on this sample? The knee
+            // opens at 0.95, so anything the limiter changes was above that.
+            if (live_l + take_l).abs() > 0.95 || (live_r + take_r).abs() > 0.95 {
+                self.limit_indicator = 1.0;
+            }
+
             // Fan the stereo pair out to the device channels: L→0, R→1, any extra
             // channels get the mono sum; a mono device gets the sum.
             for ch in 0..self.out_channels {
@@ -1301,6 +1332,12 @@ fn build_engine(
         release,
         in_env: 0.0,
         out_env: 0.0,
+        out_peak: 0.0,
+        // ~1.5 s hold: instant attack, so a single transient is still visible
+        // long after it has gone, which is what makes a peak meter a peak meter.
+        peak_decay: (-1.0 / (1.5 * sr)).exp(),
+        limit_indicator: 0.0,
+        limit_decay: (-1.0 / (0.4 * sr)).exp(),
         in_channels,
         out_channels,
         guitar_ch,
@@ -1419,6 +1456,44 @@ fn build_engine(
 #[cfg(test)]
 mod tests {
     use super::{block_ranges, output_stage};
+
+    /// The ceiling indicator must light exactly when `soft_limit` has to work,
+    /// and must release on its own.
+    ///
+    /// The knee opens at 0.95, so anything the limiter changes was above that.
+    /// Below it the signal is untouched and no indicator is warranted — that
+    /// distinction is the whole point: the audible "clipping" people report is
+    /// usually saturation upstream, and an indicator that lit for any loud
+    /// signal would be useless.
+    #[test]
+    fn ceiling_indicator_tracks_only_real_limiting() {
+        const KNEE: f32 = 0.95;
+        // Below the knee: nothing to indicate.
+        for v in [0.0f32, 0.2, 0.5, 0.9] {
+            let engages = v > KNEE;
+            assert!(
+                !engages,
+                "{v} is below the knee, the limiter must pass it untouched"
+            );
+            let (l, _r) = output_stage(v, v, 0.0, 0.0);
+            assert!((l - v).abs() < 1e-6, "a sub-knee sample was altered");
+        }
+        // Above it: engaged, and still bounded.
+        for v in [1.0f32, 1.5, 4.0] {
+            assert!(v > KNEE);
+            let (l, r) = output_stage(v, v, 0.0, 0.0);
+            assert!(l <= 1.0 && r <= 1.0, "{v} escaped the ceiling");
+            assert!(l < v, "{v} was not limited at all");
+        }
+        // Two already-limited buses summing is the case that motivated the
+        // final stage; it must engage even though each bus individually is
+        // exactly at the ceiling.
+        let (l, _r) = output_stage(1.0, 1.0, 1.0, 1.0);
+        assert!(
+            l < 1.0,
+            "two buses at the ceiling must still be bounded, got {l}"
+        );
+    }
 
     /// The final output stage must hold the ceiling **no matter how many
     /// already-limited buses are summed into it**.

@@ -236,7 +236,14 @@ fn render_header(
         .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)])
         .split(meter_rows[1]);
     render_vu_row(f, bars[0], &in_label(cal), levels.input.load(Relaxed));
-    render_vu_row(f, bars[1], "OUT ", levels.output.load(Relaxed));
+    render_vu_row_detail(
+        f,
+        bars[1],
+        "OUT ",
+        levels.output.load(Relaxed),
+        Some(levels.output_peak.load(Relaxed)),
+        Some(levels.limiting.load(Relaxed)),
+    );
 }
 
 /// Ribbon label + live on/off for a pedal stage (`None` for the amp and cab).
@@ -282,16 +289,43 @@ fn in_label(cal: &InputCalibration) -> String {
 /// so this is the transparency stand-in) and the label is un-bolded. Same fill
 /// math and green/amber/red thresholds as always — just quieter.
 fn render_vu_row(f: &mut Frame, area: Rect, label: &str, level: f32) {
+    render_vu_row_detail(f, area, label, level, None, None);
+}
+
+/// As [`render_vu_row`], plus two output-only overlays: a **true peak** tick
+/// (so a transient stays visible after it has gone) and a `LIM` badge that lights
+/// when the output ceiling is engaging.
+///
+/// Both exist because of a specific blind spot: `level` is a *follower*, so it
+/// tracks the loudness but does not hold a peak, and it structurally cannot tell
+/// you that the output just touched the ceiling. A rig can sit at full scale
+/// with the meter never reaching the top — which reads as "the interface isn't
+/// clipping" when it very much is.
+fn render_vu_row_detail(
+    f: &mut Frame,
+    area: Rect,
+    label: &str,
+    level: f32,
+    peak: Option<f32>,
+    limiting: Option<f32>,
+) {
     /// Dim factor for meter chrome: hush the bars without losing the hues.
     const METER_DIM: f32 = 0.45;
     let db = amp_to_db(level);
     let fill = ((db + 60.0) / 60.0).clamp(0.0, 1.0) as f64;
 
-    let bar_width = (area.width as usize).saturating_sub(label.len() + 2 + 10);
+    // Reserve a 4-cell slot for the `LIM` badge next to the OUT bar.
+    let badge_w: usize = if limiting.is_some() { 4 } else { 0 };
+    let bar_width = (area.width as usize).saturating_sub(label.len() + 2 + 10 + badge_w);
     let filled = (fill * bar_width as f64) as usize;
 
     let green_end = (bar_width as f64 * 0.72) as usize;
     let yellow_end = (bar_width as f64 * 0.88) as usize;
+
+    // Where the held true peak sits, as a column in the bar.
+    let peak_col = peak
+        .filter(|p| *p > 1e-4)
+        .map(|p| (((amp_to_db(p) + 60.0) / 60.0).clamp(0.0, 1.0) * bar_width as f32) as usize);
 
     let mut spans = vec![
         Span::styled(label, Style::default().fg(shade(CHROME, METER_DIM))),
@@ -299,8 +333,27 @@ fn render_vu_row(f: &mut Frame, area: Rect, label: &str, level: f32) {
     ];
 
     for i in 0..bar_width {
-        let ch = if i < filled { '█' } else { '░' };
-        let color = if i < filled {
+        // The peak tick draws over the filled/empty cells rather than beside
+        // them, so it needs no extra width and is visible at any bar length.
+        let at_peak = peak_col == Some(i);
+        let ch = if at_peak {
+            '▏'
+        } else if i < filled {
+            '█'
+        } else {
+            '░'
+        };
+        let color = if at_peak {
+            // Bright when the peak is near the ceiling, so it reads as a
+            // warning rather than just a mark.
+            if i >= yellow_end {
+                HOT
+            } else if i >= green_end {
+                WARN
+            } else {
+                CHROME
+            }
+        } else if i < filled {
             if i < green_end {
                 shade(SAFE, METER_DIM)
             } else if i < yellow_end {
@@ -317,6 +370,16 @@ fn render_vu_row(f: &mut Frame, area: Rect, label: &str, level: f32) {
         "▌",
         Style::default().fg(shade(DIM, METER_DIM)),
     ));
+    if let Some(l) = limiting {
+        // "LIM" lights hot while the ceiling is engaging and fades with it.
+        let on = l > 0.35;
+        let style = Style::default().fg(if on {
+            if l > 0.8 { HOT } else { WARN }
+        } else {
+            shade(DIM, METER_DIM)
+        });
+        spans.push(Span::styled("LIM", style));
+    }
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 

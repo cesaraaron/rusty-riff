@@ -1308,3 +1308,36 @@ and the original curve and cut that to **83**, with much smaller level moves.
   survivors when the other twelve were retired), so the two numbers are not
   comparable. The added cost is one multiply-add per smoothed control per
   sample.
+
+### Output ceiling visibility — a true peak and a `LIM` indicator
+
+Raised by a live observation: a rig was audibly "kinda clipped" while the
+interface's meters never reached the top. Measuring the rendered presets showed
+their peak at **0.27–0.56 FS**, i.e. the output limiter (knee 0.95) was not
+engaging at all — so the sound was saturation *upstream* (see C1/C3), and the
+meter was telling the truth. But two things made this genuinely hard to see:
+
+1. **`Levels::output` is a follower, not a peak meter.** A 1 ms attack / 300 ms
+   decay envelope tracks loudness but does not *hold* a peak, so a transient
+   that touched the ceiling could be gone before the next redraw.
+2. **It is computed before the take bus is added** (`audio/mod.rs` updates
+   `out_env` inside the loop that sums the metronome/player/looper, and the
+   take-bus rig runs afterwards), so the OUT meter never reflected the take
+   layer either.
+
+Added two output-only overlays:
+
+- **`output_peak`** — true peak of the *final*, post-ceiling signal, instant
+  attack with a ~1.5 s decay, drawn as a `▏` tick over the bar. Because it draws
+  over the filled/empty cells it needs no extra width.
+- **`limiting`** — a 0–1 value set to 1 whenever the knee actually engages
+  (either summed bus exceeded 0.95) and decaying over ~0.4 s, shown as a `LIM`
+  badge that fades rather than latching.
+
+- **Test:** `ceiling_indicator_tracks_only_real_limiting` pins that the knee
+  opens at exactly 0.95, that sub-knee samples pass through bit-exact, that
+  above-knee samples are bounded *and* altered, and that two already-limited
+  buses summing still engages — which is the case that motivated the final
+  output stage in A2.
+- Snapshots re-blessed; the diff is the `LIM` badge on the OUT row and nothing
+  else. Baseline unchanged — this is measurement, not signal.

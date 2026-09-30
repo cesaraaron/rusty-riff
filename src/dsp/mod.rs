@@ -1303,6 +1303,18 @@ pub fn amp_param<const I: usize>(p: &Params) -> &Arc<AtomicF32> {
 pub struct Levels {
     pub input: Arc<AtomicF32>,
     pub output: Arc<AtomicF32>,
+    /// True peak of the **final** output — after the ceiling, the take bus and
+    /// every monitor mix — with instant attack and a slow decay, so a single
+    /// transient stays visible for a second or so.
+    ///
+    /// [`output`](Self::output) is a follower with a 1 ms attack and a 300 ms
+    /// decay: it tracks the level but does not *hold* it, and it is computed
+    /// before the take bus is added. That combination is why a rig sitting at
+    /// full-scale can show a meter that never reaches the top.
+    pub output_peak: Arc<AtomicF32>,
+    /// 0–1 "the output ceiling is (or recently was) engaging". Decays rather
+    /// than latches, so the indicator fades instead of sticking.
+    pub limiting: Arc<AtomicF32>,
 }
 
 impl Default for Levels {
@@ -1316,6 +1328,8 @@ impl Levels {
         Self {
             input: Arc::new(AtomicF32::new(0.0)),
             output: Arc::new(AtomicF32::new(0.0)),
+            output_peak: Arc::new(AtomicF32::new(0.0)),
+            limiting: Arc::new(AtomicF32::new(0.0)),
         }
     }
 }
