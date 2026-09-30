@@ -1537,3 +1537,46 @@ mono pedals still move freely ahead of it.
 **Still open.** Case 2 (mono pedal after the cab) wants a toast, and there is no
 toast facility in the UI at all — that is a feature, not a one-line change, so it
 is deliberately left for its own pass. Case 3 has no code-level guard.
+
+### B4 — reordering is mostly level-neutral, and the compressor is the exception
+
+B4 asked for a test over legal permutations asserting a sane level, because
+`swapped_chain_order_changes_output` only asserts that two orders *differ* — it
+cannot tell a meaningful reordering from a catastrophic one.
+
+**It measured something narrower than expected.** Against the shipped order, on a
+hot rig (GE-7 and parametric EQ up, compressor on):
+
+| move | dB |
+| --- | --- |
+| GE-7 + parametric EQ hoisted ahead of the amp (preset-only) | -2.2 |
+| rack pedals shuffled behind the amp | 0.0 |
+| Boost or Fuzz walked past the amp and cab | 0.0 |
+| **Compressor walked past the cab** | **-10.0** |
+| **Compressor walked to the very end** | **-12.1** |
+
+So reordering is almost entirely level-neutral, and the suspected worst cases (the
+EQs hoisted into the clipping stage) cost only 2.2 dB — the cab's rolloff is
+already removing most of what the pre-amp EQ would have boosted. The finding's
+main worry is real but narrow: **the compressor is the one stage whose position
+genuinely costs level**, because its makeup gain is calibrated for a pre-amp
+signal and post-cab it is trimming an output that never needed it.
+
+The bands are loose on purpose (-30..+1 dBFS absolute, ±14 dB relative). This is a
+"nothing is on fire" gate, not a tone target: it fails if a legal permutation
+becomes inaudible or runaway. A per-position trim for the compressor (and
+loosely for the EQs) is the actual fix, but that is a tone decision, not
+something to guess at inside a regression test, so it stays future work.
+
+Two things worth noting about the test's construction:
+
+- **UI-reachable vs preset-only is now a distinction.** B2 refuses to put a stereo
+  stage ahead of the amp, so "move the GE-7 pre-amp" is no longer reachable by
+  hand — but a preset's `[chain]` is authored topology that
+  `sanitize_chain_order` deliberately does not rewrite, so the engine still has to
+  behave. The orders carry that label and the test asserts the label against
+  `stereo_stages_follow_the_amp`, which keeps the two contracts honest.
+- A **single swap** cannot carry a mono pedal past the amp, but repeated `[`
+  presses can, since everything ahead of the amp is still a mono pedal. The
+  compressor cases therefore splice directly rather than one `order.swap`, which
+  would have silently produced a different (and illegal) scenario.

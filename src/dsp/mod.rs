@@ -2381,6 +2381,187 @@ mod tests {
         }
     }
 
+    /// Reordering must not change how *loud* the rig is by an unbounded amount.
+    ///
+    /// `swapped_chain_order_changes_output` only asserts that two orders *differ*
+    /// — it cannot tell a meaningful reordering from a catastrophic one. Moving
+    /// the GE-7 or the parametric EQ ahead of the amp puts up to +12/+15 dB per
+    /// band into the amp's clipping stage; moving the compressor past the cab
+    /// applies its makeup gain to an already-clipped signal. Neither has any
+    /// headroom awareness, so the question is whether the result is at least
+    /// *usable* — not whether it is equal.
+    ///
+    /// **What it measured.** Against the shipped order, on that rig:
+    ///
+    /// | move | dB |
+    /// | --- | --- |
+    /// | GE-7 + parametric EQ hoisted ahead of the amp (preset-only) | -2.2 |
+    /// | rack pedals shuffled behind the amp | 0.0 |
+    /// | Boost or Fuzz walked past the amp and cab | 0.0 |
+    /// | **Compressor walked past the cab** | **-10.0** |
+    /// | **Compressor walked to the very end** | **-12.1** |
+    ///
+    /// So reordering is *mostly* level-neutral, and the compressor is the one
+    /// stage whose position genuinely costs level: its makeup gain is calibrated
+    /// for a pre-amp signal, so post-cab it is trimming an output that no longer
+    /// needs it. That is the "no gain compensation" cost, now measured instead of
+    /// suspected.
+    ///
+    /// The bands are deliberately loose for the same reason: this is a "nothing is
+    /// on fire" gate, not a tone target. It fails loudly if a change ever makes a
+    /// legal permutation inaudible or runaway, or shifts one by 40 dB. A real
+    /// per-position trim would tighten the relative band considerably, and is
+    /// tracked as future work rather than guessed at here.
+    #[test]
+    fn reordered_chains_stay_in_a_sane_level_band() {
+        let sr = 48_000.0;
+
+        /// A deliberately hot rig: the two EQs well up, the compressor on, the
+        /// amp cranked. Every permutation below is *legal* under the ordering
+        /// invariants, so what is being measured is the reordering itself.
+        fn hot_rig() -> Arc<Params> {
+            let p = Params::new();
+            p.geq_enabled.store(true, Relaxed);
+            for b in [&p.geq_b1, &p.geq_b2, &p.geq_b3, &p.geq_b4, &p.geq_b5] {
+                b.store(0.6, Relaxed); // a solid boost, not a stack of +12s
+            }
+            p.eq_enabled.store(true, Relaxed);
+            p.peq_low.store(0.5, Relaxed);
+            p.peq_mid.store(0.5, Relaxed);
+            p.peq_high.store(0.5, Relaxed);
+            p.cmp_enabled.store(true, Relaxed);
+            p.cmp_sustain.store(0.7, Relaxed);
+            Arc::new(p)
+        }
+
+        /// RMS of the last half-second, after settling, in dBFS.
+        fn rms_dbfs(sr: f32, order: [u8; CHAIN_LEN]) -> f32 {
+            let params = hot_rig();
+            params.set_chain_order(&order);
+            let mut chain = DspChain::new(sr, Arc::clone(&params));
+            let settle = (sr * 0.25) as usize;
+            for n in 0..settle {
+                chain.process((2.0 * PI * 110.0 * n as f32 / sr).sin() * 0.5);
+            }
+            let measure = (sr * 0.5) as usize;
+            let mut acc = 0.0f64;
+            for n in settle..settle + measure {
+                let x = (2.0 * PI * 110.0 * n as f32 / sr).sin() * 0.5;
+                let (l, r) = chain.process(x);
+                acc += ((l * l + r * r) * 0.5) as f64;
+            }
+            // RMS in dBFS. `acc` holds the mean *power*, so this is 10*log10 --
+            // not 20*log10(rms), which would double the result.
+            10.0 * (acc / measure as f64).log10() as f32
+        }
+
+        /// Move `stage` to sit immediately after `target`, preserving everything
+        /// else's relative order.
+        fn splice(
+            order: [u8; CHAIN_LEN],
+            stage: ChainStage,
+            target: ChainStage,
+        ) -> [u8; CHAIN_LEN] {
+            let mut v = order.to_vec();
+            let from = v
+                .iter()
+                .position(|&x| x == stage as u8)
+                .expect("stage present");
+            let id = v.remove(from);
+            let at = v
+                .iter()
+                .position(|&x| x == target as u8)
+                .expect("target present");
+            v.insert(at + 1, id);
+            v.try_into().expect("splice preserves length")
+        }
+
+        let default = ChainStage::default_order();
+        let reference = rms_dbfs(sr, default);
+
+        // (order, reachable by pressing `[` / `]`)
+        //
+        // Split because the UI refuses to put a stereo stage ahead of the amp (B2),
+        // so "move the GE-7 pre-amp" is no longer reachable by hand -- but a
+        // preset's `[chain]` is authored topology that `sanitize_chain_order`
+        // deliberately does not rewrite, so the engine still has to behave.
+        let mut orders: Vec<([u8; CHAIN_LEN], bool)> = vec![(default, true)];
+
+        // A mono pedal walked past the amp and the cab: the compressor's makeup
+        // gain then lands on an already-clipped signal. This is the UI-reachable
+        // version of B4 -- a single swap cannot do it, but repeated `[` presses can,
+        // since every mono pedal ahead of the amp is still a mono pedal.
+        for stage in [ChainStage::Comp, ChainStage::Boost, ChainStage::Fuzz] {
+            for target in [ChainStage::Cab, ChainStage::Reverb] {
+                let order = splice(default, stage, target);
+                orders.push((order, true));
+            }
+        }
+
+        // Rack pedals shuffled among themselves behind the amp.
+        let mut shuffled = default;
+        shuffled.swap(15, 18);
+        shuffled.swap(16, 19);
+        orders.push((shuffled, true));
+
+        // GE-7 and the parametric EQ hoisted in front of the amp, stacking up to
+        // +12/+15 dB per band into the clipping stage. Preset-only.
+        let mut hoisted = default;
+        for stage in [ChainStage::Geq, ChainStage::Eq] {
+            hoisted = splice_before(hoisted, stage, ChainStage::Amp);
+        }
+        orders.push((hoisted, false));
+
+        fn splice_before(
+            order: [u8; CHAIN_LEN],
+            stage: ChainStage,
+            target: ChainStage,
+        ) -> [u8; CHAIN_LEN] {
+            let mut v = order.to_vec();
+            let from = v
+                .iter()
+                .position(|&x| x == stage as u8)
+                .expect("stage present");
+            let id = v.remove(from);
+            let at = v
+                .iter()
+                .position(|&x| x == target as u8)
+                .expect("target present");
+            assert!(at >= 1);
+            v.insert(at - 1, id);
+            v.try_into().expect("splice preserves length")
+        }
+
+        for (order, ui_reachable) in &orders {
+            assert!(
+                amp_precedes_cab(order),
+                "test order puts the cab before its amp: {order:?}"
+            );
+            assert_eq!(
+                stereo_stages_follow_the_amp(order),
+                *ui_reachable,
+                "test order's UI-reachability was mislabelled: {order:?}"
+            );
+            let db = rms_dbfs(sr, *order);
+            // Absolute: usable, not silent and not pinned against the ceiling.
+            assert!(
+                (-30.0..1.0).contains(&db),
+                "chain {order:?} rendered at {db:.1} dBFS RMS"
+            );
+            // Relative: the actual content of the finding. Reordering has no gain
+            // compensation, so some deviation is expected -- the EQs and the
+            // compressor genuinely hit different stages in a different order. What
+            // is a defect is an *unbounded* one.
+            let delta = db - reference;
+            assert!(
+                delta.abs() < 14.0,
+                "chain {order:?} is {delta:+.1} dB against the shipped order \
+                 ({db:.1} vs {reference:.1} dBFS): reordering moves the level far \
+                 more than a position change should"
+            );
+        }
+    }
+
     /// `stereo_stages_follow_the_amp` is the boundary the UI refuses moves at.
     ///
     /// What matters is *which* stages count as stereo-ahead-of-the-amp: the eight
