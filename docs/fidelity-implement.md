@@ -1580,3 +1580,55 @@ Two things worth noting about the test's construction:
   presses can, since everything ahead of the amp is still a mono pedal. The
   compressor cases therefore splice directly rather than one `order.swap`, which
   would have silently produced a different (and illegal) scenario.
+
+### C5a — the cheap defect sweep: one dead filter, two wrong comments, and a missing test file
+
+**The Vox presence shelf was mathematically identity.** `vox.rs` carried
+`presence_shelf: Biquad::high_shelf(sr, 4500.0, 0.0)`, never retuned and with no
+knob, applied to the signal. A 0 dB RBJ high shelf is *exactly* unity: with
+`gain_db = 0` the coefficients collapse to `b0 = a0, b1 = a1, b2 = a2`. I checked
+this against the coefficients this module actually generates rather than trusting
+the algebra, and the response is 1.000000000 at 20 Hz through 20 kHz.
+
+So it was a biquad run per sample doing nothing, while the field's own comment
+claimed presence was "fixed at 0 dB" — reading as though the model had one. The
+real AC30 Top Boost has no presence control either, so the field, its constructor
+line and its use are gone, and the doc now states that absence instead of implying
+a modelled-but-fixed control.
+
+**The fidelity baseline came back bit-unchanged**, which is the calibration pass for
+the re-bless-per-sub-step process: it confirms both that the filter really was
+identity and that the harness is sensitive enough to notice when something is not.
+
+**Two Marshall comments were lying about their own code.** The class doc claimed an
+"inter-stage coupling HP at ~720 Hz (JCM800 22 nF coupling cap)" while the code has
+used 300 Hz, with a comment at `:115` explaining the deliberate drop for exactly the
+reason the finding gives. It also claimed the preamp gain is split with
+`g1·g2 = pregain`; the constants `1.4 * 1.6` give **2.24 × pregain**. Both now match.
+
+**`tonestack.rs` had no tests at all** — not one, anywhere, and nothing else in the
+tree referenced scoop depth or mid frequency. It now covers the mid scoop, the pot
+directions, the FMV cross-term, peak normalisation, stability across the whole pot
+range, and that the four `Components` sets stay pairwise distinct.
+
+> **Two of the new tests were wrong on arrival and had to be corrected against
+> measurement.** The mid pot is a **cut**, so turning it up *shallows* the scoop
+> (650 Hz: -14.8 dB at mid 0.1, -7.99 dB at mid 0.9) — I asserted the opposite,
+> because "mid up = more mid" reads more naturally than "mid up = less dip". And the
+> real cross-term is that **brightening costs bass** (100 Hz falls from -3.8 dB to
+> -6.7 dB across the treble range, ~3 dB), *not* "brightening pulls the mids down"
+> which the module's own prose invites; the mids move by under 0.5 dB and in the
+> other direction. Both were caught by printing the response surface rather than
+> reasoning about it, which is now the documented approach for this network.
+>
+> Stability is asserted as **decay, not a peak ceiling**. A first draft capped the
+> impulse response at 4.0 and failed at 6.5 — which is not a fault but the
+> resonance overshoot you get when a 3rd-order network is peak-normalised (bass at
+> 0.9 does exactly this). A magnitude cap measures resonance; "does the tail die"
+> measures stability.
+
+**Still open in C5:** the `OutputTransformer`'s `tanh` is the only in-amp
+nonlinearity still at base rate (every other one runs at 8×); there is no hum or
+noise generator anywhere, so a silent input produces bit-exact zero out of all nine
+models; Randall is architecturally different from the other eight and much thinner;
+and `SpeakerLoad` is passed the level envelope while its parameter is named `sag`.
