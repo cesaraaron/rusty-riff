@@ -52,7 +52,9 @@ pub const KNOBS: &[AmpKnob] = &[
 ///     the audible band, removing the harsh "digital" edge of stacked clippers
 ///   • Asymmetric 12AX7 waveshaper generates even harmonics (2nd, 4th) for warmth
 ///   • Dynamic grid-bias bloom adds touch sensitivity under hard playing
-///   • Inter-stage coupling HP at ~720 Hz (JCM800 22 nF coupling cap) tightens low-end
+///   • Inter-stage coupling HP at ~300 Hz (JCM800 22 nF cap into the following
+///     grid resistor, which corners far lower than the textbook 720 Hz figure)
+///     tightens low-end while keeping mid-neck fundamentals feeding stage 2
 ///   • Presence shelf in the power-amp NFB loop adds air and cut at 3.5 kHz
 pub struct Marshall {
     sr: f32,
@@ -251,7 +253,8 @@ impl Amplifier for Marshall {
         let bias = self.bloom.follow(x) * 0.06;
 
         // ── 8× oversampled nonlinear section ──────────────────────────────────
-        // The preamp gain is split across the two triodes (g1·g2 = pregain)
+        // The preamp gain is split across the two triodes. Note the constants do
+        // not cancel: g1·g2 = 1.4·1.6·pregain = 2.24·pregain, not `pregain`.
         // instead of slamming the first stage with all of it. One stage driven
         // 26× runs deep on its plateau and squares the wave — a square's
         // slowly-decaying h5/h7 series is the "cheap fizz" fingerprint; two

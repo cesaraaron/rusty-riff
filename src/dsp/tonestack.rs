@@ -253,3 +253,215 @@ impl ToneStack {
         y * self.makeup
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::f32::consts::PI;
+
+    const SR: f32 = 48_000.0;
+
+    /// Magnitude of the stack at `freq`, measured by running a sine through it.
+    ///
+    /// Measured rather than read from the coefficients on purpose: `peak_magnitude`
+    /// already walks the response analytically, so a test written against the same
+    /// maths would only be checking the arithmetic twice. This is the path the
+    /// audio thread actually takes, filter state and all.
+    fn gain(comp: Components, bass: f32, mid: f32, treble: f32, freq: f32) -> f32 {
+        let mut ts = ToneStack::new(SR, comp);
+        ts.update(bass, mid, treble);
+        // Settle the 3rd-order state before measuring; a 3rd-order IIR needs a few
+        // hundred milliseconds at 100 Hz to stop ringing.
+        let settle = (SR * 0.4) as usize;
+        for n in 0..settle {
+            ts.process((2.0 * PI * freq * n as f32 / SR).sin());
+        }
+        let n = (SR * 0.2) as usize;
+        let mut acc = 0.0f64;
+        for i in settle..settle + n {
+            let y = ts.process((2.0 * PI * freq * i as f32 / SR).sin());
+            acc += (y * y) as f64;
+        }
+        (acc / n as f64).sqrt() as f32
+    }
+
+    fn db(v: f32) -> f32 {
+        20.0 * v.max(1e-9).log10()
+    }
+
+    /// The defining FMV character: at neutral, the mids sit in a dip between the
+    /// low and high bands. Without this the stack is three loose biquads and the
+    /// whole point of modelling the real network is lost.
+    #[test]
+    fn neutral_has_the_mid_scoop() {
+        for (name, comp) in [
+            ("MARSHALL", Components::MARSHALL),
+            ("FENDER", Components::FENDER),
+            ("VOX", Components::VOX),
+        ] {
+            let lo = gain(comp, 0.5, 0.5, 0.5, 100.0);
+            let mid = gain(comp, 0.5, 0.5, 0.5, 650.0);
+            let hi = gain(comp, 0.5, 0.5, 0.5, 3_000.0);
+            assert!(
+                mid < lo && mid < hi,
+                "{name} lost its scoop at neutral: 100 Hz {lo:.3}, 650 Hz {mid:.3}, \\
+                 3 kHz {hi:.3}"
+            );
+            // Real stacks scoop several dB; "a dip" alone would pass on a 0.01 dB
+            // wiggle. The Marshall is the deepest of the three.
+            assert!(
+                db(lo / mid) > 3.0 && db(hi / mid) > 3.0,
+                "{name} scoop too shallow: {lo:.3} / {mid:.3} / {hi:.3}"
+            );
+        }
+    }
+
+    /// Each control must move its own band the right way, or the stack is inert.
+    ///
+    /// The mid pot is a **cut**, not a boost, and the sign is worth stating: turning
+    /// it up *shallows* the scoop (650 Hz: -14.8 dB at mid 0.1, -8.0 dB at mid
+    /// 0.9). That is how a real JCM800 mid pot behaves -- it does not add mids, it
+    /// removes the scoop -- and the first draft of this test asserted the opposite
+    /// because "mid up = more mid" reads more naturally than "mid up = less dip".
+    #[test]
+    fn each_pot_moves_its_own_band() {
+        let c = Components::MARSHALL;
+        assert!(
+            gain(c, 0.9, 0.5, 0.5, 100.0) > gain(c, 0.1, 0.5, 0.5, 100.0),
+            "bass pot does not raise the lows"
+        );
+        assert!(
+            gain(c, 0.5, 0.9, 0.5, 650.0) > gain(c, 0.5, 0.1, 0.5, 650.0),
+            "mid pot does not flatten the scoop"
+        );
+        assert!(
+            gain(c, 0.5, 0.5, 0.9, 4_000.0) > gain(c, 0.5, 0.5, 0.1, 4_000.0),
+            "treble pot does not raise the highs"
+        );
+    }
+
+    /// The interaction that makes an FMV stack an FMV stack rather than three
+    /// biquads: the pots share one network, so **brightening costs bass**.
+    ///
+    /// Measured, this is the loudest cross-term the stack has: 100 Hz drops from
+    /// -3.8 dB to -6.7 dB going from treble 0.1 to 0.9, about 3 dB. Loading the
+    /// shared network harder attenuates the low leg, as the real one does.
+    ///
+    /// The mids barely move in the same sweep (650 Hz shifts by under 0.5 dB), which
+    /// is why this asserts the bass and not the mids. The first draft guessed
+    /// "treble up pulls the mids down" from the module's prose and measured the
+    /// opposite sign.
+    #[test]
+    fn treble_up_costs_the_bass() {
+        let c = Components::MARSHALL;
+        let lo_flat = gain(c, 0.5, 0.5, 0.1, 100.0);
+        let lo_bright = gain(c, 0.5, 0.5, 0.9, 100.0);
+        let cost = db(lo_flat / lo_bright);
+        assert!(
+            cost > 1.5,
+            "brightening barely touched the bass: {cost:.2} dB"
+        );
+    }
+
+    /// Peak normalisation exists so the stack colours tone without moving the
+    /// amp's gain staging. The loudest band must land at unity for every knob
+    /// position, which is what `makeup` is for.
+    #[test]
+    fn peak_normalisation_keeps_the_loudest_band_at_unity() {
+        let probe = |bass, mid, treble| {
+            let mut ts = ToneStack::new(SR, Components::MARSHALL);
+            ts.update(bass, mid, treble);
+            let peak = ts.peak_magnitude() * ts.makeup;
+            // `makeup` is set from `peak_magnitude`, so this is 1.0 by
+            // construction — assert it anyway, because a later change that
+            // decouples the two would silently re-level every amp.
+            peak
+        };
+        for (b, m, t) in [(0.0, 0.0, 0.0), (0.5, 0.5, 0.5), (1.0, 1.0, 1.0)] {
+            let peak = probe(b, m, t);
+            assert!(
+                (peak - 1.0).abs() < 1e-3,
+                "stack at ({b}, {m}, {t}) peaks at {peak:.4}, not unity"
+            );
+        }
+    }
+
+    /// The pots clamp just short of the rails (a pot at exactly 0 degenerates the
+    /// network). Sweep the whole range and check the two things that would actually
+    /// be audible: nothing goes non-finite, and the impulse response *decays*.
+    ///
+    /// Stability is asserted as decay rather than as a ceiling on peak amplitude.
+    /// An earlier draft capped the impulse at 4.0 and failed at 6.5 -- but 6.5 is not
+    /// a fault. Peak-normalising a resonant 3rd-order network puts its loudest band
+    /// at unity, and the impulse overshoots that whenever the resonance is sharp
+    /// (bass at 0.9 does exactly this). A magnitude cap measures resonance, not
+    /// stability; "does the tail die" measures stability.
+    #[test]
+    fn extreme_pot_positions_stay_finite_and_decay() {
+        for comp in [
+            Components::MARSHALL,
+            Components::FENDER,
+            Components::VOX,
+            Components::HIWATT,
+        ] {
+            let mut ts = ToneStack::new(SR, comp);
+            for step in 0..=100 {
+                let p = step as f32 / 100.0;
+                // Cycle the three pots through the corners and the middle.
+                for (b, m, t) in [(p, p, p), (p, 1.0 - p, p), (1.0 - p, p, 1.0 - p)] {
+                    ts.update(b, m, t);
+                    let mut peak: f32 = 0.0;
+                    // One impulse, then let it ring out.
+                    for n in 0..8_000 {
+                        let x = ts.process(if n == 0 { 1.0 } else { 0.0 });
+                        assert!(
+                            x.is_finite(),
+                            "non-finite output at pot {p}: bass {b}, mid {m}, \
+                             treble {t}"
+                        );
+                        peak = peak.max(x.abs());
+                    }
+                    let mut tail: f32 = 0.0;
+                    for _ in 0..200 {
+                        tail = tail.max(ts.process(0.0).abs());
+                    }
+                    assert!(
+                        tail < peak.max(1e-6) * 1e-3,
+                        "impulse response did not decay (peak {peak:.3}, tail \
+                         {tail:.6}) at pot {p}: bass {b}, mid {m}, treble {t}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The four `Components` sets are genuinely different networks.
+    ///
+    /// Nine amps share only four stacks (the Mesa and the Supro both take
+    /// `FENDER`, deliberately — a Recto and a Supro are not the same
+    /// speaker-loaded voicing, but neither wants a Marshall scoop). Sharing is
+    /// fine; two `const`s quietly collapsing into the same numbers by copy-paste
+    /// is not, because it would silently flatten the voicing differences the rest
+    /// of the model depends on.
+    #[test]
+    fn the_component_sets_are_pairwise_distinct() {
+        let sets: [(&str, Components); 4] = [
+            ("MARSHALL", Components::MARSHALL),
+            ("FENDER", Components::FENDER),
+            ("VOX", Components::VOX),
+            ("HIWATT", Components::HIWATT),
+        ];
+        for (i, (name_a, a)) in sets.iter().enumerate() {
+            for (name_b, b) in sets.iter().skip(i + 1) {
+                let same = a.r1 == b.r1
+                    && a.r2 == b.r2
+                    && a.r3 == b.r3
+                    && a.r4 == b.r4
+                    && a.c1 == b.c1
+                    && a.c2 == b.c2
+                    && a.c3 == b.c3;
+                assert!(!same, "{name_a} and {name_b} are the same network");
+            }
+        }
+    }
+}

@@ -7,8 +7,13 @@ use crate::dsp::oversample::Oversampler8;
 use crate::dsp::tonestack::{Components, ToneStack};
 
 /// AC30 Top Boost front-panel controls (DSP order): Top Boost Volume, Bass,
-/// Treble, Cut. The Top Boost channel has no Mid or Presence; those are fixed
-/// internally.
+/// Treble, Cut. The Top Boost channel has no Mid or Presence control at all —
+/// this is a real trait of the channel, and it is why there is no presence shelf
+/// in the signal path. The model previously carried a `Biquad::high_shelf(sr,
+/// 4500.0, 0.0)` here, which is *exactly* unity at every frequency: with
+/// `gain_db = 0` the RBJ shelf reduces to `b0 = a0, b1 = a1, b2 = a2`. It was
+/// dead code that cost a biquad run per sample and read as though presence were
+/// modelled.
 pub const KNOBS: &[AmpKnob] = &[
     AmpKnob {
         label: "TOP BOOST",
@@ -35,7 +40,7 @@ pub const KNOBS: &[AmpKnob] = &[
 /// Vox AC30 (Top Boost) amplifier simulation.
 ///
 /// Signal path:
-///   DC block → input HP → [8× OS: stage-1 tube + inter-stage HP + stage-2 tube] → tone stack → power amp sag → presence
+///   DC block → input HP → [8× OS: stage-1 tube + inter-stage HP + stage-2 tube] → tone stack → power amp sag → cut → output transformer → speaker
 ///
 /// Character:
 ///   • 8× oversampling through the nonlinear gain stages keeps aliasing well above
@@ -74,9 +79,6 @@ pub struct Vox {
     // Passive FMV tone stack (base rate) — Vox values give a lighter mid scoop and
     // brighter treble than the Marshall's.
     tone: ToneStack,
-    // Presence — power-amp NFB characteristic (base rate). Fixed at 0 dB on the
-    // Top Boost channel; the amp's tone trim is the Cut control.
-    presence_shelf: Biquad,
     // AC30 "Cut" — a high-cut in the phase inverter, after the preamp. No control
     // on the Top Boost channel's mid or presence; this is the amp's tone trim.
     cut: Biquad,
@@ -121,7 +123,6 @@ impl Vox {
             // the AC30's EL84 pair breaks up smoothly rather than woolly.
             xfmr: OutputTransformer::new(sr, 175.0, 1.2, 0.03),
             tone: ToneStack::new(sr, Components::VOX),
-            presence_shelf: Biquad::high_shelf(sr, 4500.0, 0.0),
             // Cut wide open (transparent) until the knob is turned.
             cut: Biquad::lowpass(sr, 18_000.0, 0.707),
             cut_cache: Cached::new(),
@@ -223,9 +224,6 @@ impl Amplifier for Vox {
 
         // Speaker impedance interaction — dynamic low-end bloom driven by sag.
         let x = self.speaker.process(x, self.envelope);
-
-        // Presence: output transformer NFB shelf
-        let x = self.presence_shelf.process(x);
 
         // Output DC block: the asymmetric power-stage clip injects a small DC offset
         // and (like the Marshall) there is no power-section high-pass after it; a
