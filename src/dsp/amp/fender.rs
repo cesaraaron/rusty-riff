@@ -1,6 +1,6 @@
 use super::{
     AMP_MAX, AmpKnob, Amplifier, Bloom, BrightCap, CathodeBias, FrontEnd, GridBlock,
-    OutputTransformer, PowerOs, SpeakerLoad, ToneCache, VoiceBalance, sagged_rail, tube_clip_asym,
+    OutputTransformer, PowerOs, SpeakerLoad, ToneCache, TubeClip, VoiceBalance, sagged_rail,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::effects::{SpringReverb, Tremolo};
@@ -147,8 +147,9 @@ impl Fender {
         let (drive_up, rail) = sagged_rail(sag, 1.5);
         // `sag` is a rail voltage: as it falls the drive rises and the output
         // comes back down, so sag compresses *harder* under load. See `sagged_rail`.
-        self.os_power
-            .shape(x, |u| tube_clip_asym(u * drive_up) * rail * 0.72)
+        self.os_power.shape(x, |u| {
+            TubeClip::PUSH_PULL.shape(u * drive_up) * rail * 0.738
+        })
     }
 }
 
@@ -186,9 +187,9 @@ impl Amplifier for Fender {
         for (o, &u) in down.iter_mut().zip(up.iter()) {
             let u = self.pre_clip_hp.process(u);
             let d = self.grid.shift(self.cathode.shift((u + bias) * g1));
-            let s = tube_clip_asym(d) / g1.sqrt();
+            let s = TubeClip::V6_PREAMP.shape(d) / g1.sqrt();
             let s = self.stage_hp.process(s);
-            *o = tube_clip_asym(s * g2) / g2.sqrt();
+            *o = TubeClip::V6_PREAMP.shape(s * g2) / g2.sqrt();
         }
         let x = self.os.downsample(down);
         // ── end oversampled section ───────────────────────────────────────────

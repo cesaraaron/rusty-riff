@@ -1,7 +1,7 @@
 use super::{
     AMP_MAX, AmpKnob, Amplifier, Bloom, BrightCap, Cached, CathodeBias, DynamicPresence, FrontEnd,
-    GridBlock, OutputTransformer, PowerOs, SpeakerLoad, SupplyRipple, ToneCache, VoiceBalance,
-    sagged_rail, tube_clip_asym,
+    GridBlock, OutputTransformer, PowerOs, SpeakerLoad, SupplyRipple, ToneCache, TubeClip,
+    VoiceBalance, sagged_rail,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::oversample::Oversampler8;
@@ -175,7 +175,7 @@ impl Plexi {
         // `supply` is a rail voltage: as it falls the drive rises and the output
         // comes back down, so sag compresses *harder* under load. See `sagged_rail`.
         self.os_power
-            .shape(x, |u| tube_clip_asym(u * drive_up) * rail * 0.6)
+            .shape(x, |u| TubeClip::PUSH_PULL.shape(u * drive_up) * rail * 0.6)
     }
 }
 
@@ -215,9 +215,9 @@ impl Amplifier for Plexi {
         for (o, &u) in down.iter_mut().zip(up.iter()) {
             let u = self.pre_clip_hp.process(u);
             let d = self.grid.shift(self.cathode.shift((u + bias) * g1));
-            let s = tube_clip_asym(d) / g1.sqrt();
+            let s = TubeClip::AX7.shape(d) / g1.sqrt();
             let s = self.stage_hp.process(s);
-            *o = tube_clip_asym(s * g2) / g2.sqrt();
+            *o = TubeClip::AX7.shape(s * g2) / g2.sqrt();
         }
         let x = self.os.downsample(down);
         // ── end oversampled section ───────────────────────────────────────────

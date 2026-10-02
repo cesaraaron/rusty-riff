@@ -1,6 +1,6 @@
 use super::{
     AMP_MAX, AmpKnob, Amplifier, Bloom, BrightCap, Cached, CathodeBias, DynamicPresence, FrontEnd,
-    OutputTransformer, PowerOs, SpeakerLoad, ToneCache, VoiceBalance, sagged_rail, tube_clip_asym,
+    OutputTransformer, PowerOs, SpeakerLoad, ToneCache, TubeClip, VoiceBalance, sagged_rail,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::oversample::Oversampler8;
@@ -199,7 +199,7 @@ impl Hiwatt {
         // `sag` is a rail voltage: as it falls the drive rises and the output
         // comes back down, so sag compresses *harder* under load. See `sagged_rail`.
         self.os_power
-            .shape(x, |u| tube_clip_asym(u * drive_up) * rail * 0.7)
+            .shape(x, |u| TubeClip::PUSH_PULL.shape(u * drive_up) * rail * 0.73)
     }
 }
 
@@ -246,9 +246,9 @@ impl Amplifier for Hiwatt {
             // Dynamic cathode bias shifts the operating point under hard drive
             // before the stage-1 waveshaper; the inter-stage HP strips its DC.
             let d = self.cathode.shift((u + bias) * pregain);
-            let s = tube_clip_asym(d) / pregain.sqrt();
+            let s = TubeClip::AX7.shape(d) / pregain.sqrt();
             let s = self.stage_hp.process(s);
-            *o = tube_clip_asym(s * 2.6) / 2.6_f32.sqrt();
+            *o = TubeClip::AX7.shape(s * 2.6) / 2.6_f32.sqrt();
         }
         let x = self.os.downsample(down);
         // ── end oversampled section ───────────────────────────────────────────

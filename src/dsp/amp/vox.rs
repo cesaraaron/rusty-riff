@@ -1,6 +1,6 @@
 use super::{
     AMP_MAX, AmpKnob, Amplifier, Bloom, BrightCap, Cached, CathodeBias, FrontEnd,
-    OutputTransformer, PowerOs, SpeakerLoad, ToneCache, VoiceBalance, sagged_rail, tube_clip_asym,
+    OutputTransformer, PowerOs, SpeakerLoad, ToneCache, TubeClip, VoiceBalance, sagged_rail,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::oversample::Oversampler8;
@@ -161,8 +161,9 @@ impl Vox {
         let (drive_up, rail) = sagged_rail(sag, 2.5);
         // `sag` is a rail voltage: as it falls the drive rises and the output
         // comes back down, so sag compresses *harder* under load. See `sagged_rail`.
-        self.os_power
-            .shape(x, |u| tube_clip_asym(u * drive_up) * rail * 0.4)
+        self.os_power.shape(x, |u| {
+            TubeClip::PUSH_PULL.shape(u * drive_up) * rail * 0.413
+        })
     }
 }
 
@@ -200,9 +201,9 @@ impl Amplifier for Vox {
             // Dynamic cathode bias shifts the operating point under hard drive
             // before the stage-1 waveshaper; the inter-stage HP strips its DC.
             let d = self.cathode.shift((u + bias) * pregain);
-            let s = tube_clip_asym(d) / pregain.sqrt();
+            let s = TubeClip::EL84.shape(d) / pregain.sqrt();
             let s = self.stage_hp.process(s);
-            *o = tube_clip_asym(s * 3.0) / 3.0_f32.sqrt();
+            *o = TubeClip::EL84.shape(s * 3.0) / 3.0_f32.sqrt();
         }
         let x = self.os.downsample(down);
         // ── end oversampled section ───────────────────────────────────────────

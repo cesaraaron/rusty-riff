@@ -1693,3 +1693,88 @@ apart from one comment line, so a single line of drift between them would have
 silently changed one amp's harmonic fingerprint with nothing failing. There is now
 one `pub(crate)` definition. The Mesa's `silicon_clip_asym` stays separate — silicon
 really is linear until it nears a rail.
+
+### C4 — the amps finally have different harmonic fingerprints
+
+`tube_clip_asym` was one function with a hard-coded `1.10` negative-half
+asymmetry, shared by every tube model. Since an asymmetric transfer function is
+the *only* source of even harmonics in a stage, two amps sharing that constant
+shared their h2 exactly: a JCM800 and an AC30 differed in level and nothing else.
+C3 unified the seven byte-identical copies into one function; this makes that one
+function **parameterised**.
+
+**`TubeClip { asymmetry }`.** The curve family is unchanged, so drive calibration
+and level are preserved — only where the even harmonics come from moves.
+
+Per-tube preamp values, grounded in each valve's plate resistance:
+
+| tube | mu | asymmetry | models |
+| --- | --- | --- | --- |
+| 12AX7 | ~17 | 1.10 | Marshall, Plexi, Mesa, Hiwatt, Supro |
+| EL84 | ~10 | 1.05 | Vox |
+| 6V6/6L6 | ~10 | 1.07 | Tweed |
+| 6V6/6SL7 | ~10 | 1.06 | Fender |
+
+Low-mu valves compress earlier and asymmetrically *less*; the AC30's brightness is
+a high-frequency gain-staging fact, not an even-harmonic one.
+
+**The bigger change: push-pull power stages are no longer h2 sources.** Every one
+of these amps ends in a push-pull output transformer, which is a differential
+device — the two halves swing opposite ways through a shared magnetic path and the
+even-harmonic currents they generate largely cancel in the secondary. Real power
+amp output is odd-harmonic dominant. The old code ran the h2-rich preamp curve in
+the power stage too, putting a second independent even-harmonic source at the very
+end of the chain, so h2 grew far faster with drive than it should.
+
+Measured on a Marshall (h2/h1 at hard drive, and absolute h2 growth soft → hard):
+
+| power-stage asymmetry | h2/h1 | h2 growth |
+| --- | --- | --- |
+| 1.10 (before) | 0.0184 | 4.3x |
+| **1.05 (shipped)** | **0.0094** | **2.9x** |
+| 1.00 (ideal) | 0.0053 | 1.5x |
+
+**Why 1.05 and not the ideal 1.0.** Ideal cancellation is the right first-order
+physics and 1.0 halves the effect again, but it reads thin: valve pairs are never
+perfectly matched and transformer leakage inductance is real, so a measured tube amp
+*does* show even harmonics at the speaker. 1.05 keeps the preamp's legitimate
+touch bloom while cutting the power stage's spurious contribution roughly in half.
+Pre-existing h2 from the preamp is unaffected by any of these — a power stage can
+only fail to *generate* more, never remove what arrived.
+
+**Also closed (C5): the Mesa's power stage.** It used `silicon_clip_asym` — the
+diode exponential its own comment describes as a **preamp** curve. A Recto's
+discrete push-pull output hard-clips at the rail, so the power stage now uses
+`PUSH_PULL` and the diode curve stays in the preamp's third stage where it belongs.
+
+**Four stale trims and two bad gates followed from this, and each is recorded
+below rather than quietly adjusted.**
+
+- Mesa lost 3.75 dB (mid-band 0.0513 → 0.0333) because its power stage changed
+  shape; its output trim went 0.55 → 0.847. Vox/Hiwatt/Fender were lifted ~3% each
+  so the nine models sit in a 1.65x band (`amps_are_loudness_matched` allows 1.7x).
+- The ripple ghost-note floor moved 0.001 → 0.0004: ripple sidebands are an
+  even-order product, so with the output stage no longer generating its own even
+  harmonics the ghost notes sit slightly further under the note (0.00093).
+- `tube_amps_are_touch_sensitive` had to be rewritten **twice** across C3 and C4,
+  and both times the *test* was the thing that was wrong rather than the model —
+  see the note below.
+
+> **A test that was wrong twice, in opposite directions.** The original gate was
+> `h2/h1` rising 5%, which passed by exactly 12% because the *inverted* sag was
+> suppressing the power stage. C3 replaced it with absolute-h2 growth. C4 then made
+> that fall too, and my first replacement guard — "h2/h1 must not drop below 80% of
+> soft" — failed immediately on a Marshall going 0.0141 → 0.0094.
+>
+> That guard was the *same mistake again*: opening the gain legitimately grows odd
+> harmonics faster than even ones, so the ratio falls on a perfectly healthy amp
+> while the absolute even content grows 2.9x. The guard is now a **presence
+> floor** — the driven output must still carry real even-harmonic content
+> (`h2/h1 > 0.006`), not merely more of it than before. Both rewrites moved the
+> assertion toward the physical property instead of away from it.
+
+**Still open in C4:** the 3/2 power law (h2 ∝ drive², h3 ∝ drive³) is still only
+emergent rather than modelled, and `GridBlock` reduces gain on hard positives
+without ever clamping them, so there is still no conduction flat-top. Both are the
+natural next sub-step, and both belong in the preamp now that the power stage is
+not the dominant even-harmonic source.

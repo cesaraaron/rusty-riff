@@ -1,7 +1,7 @@
 use super::{
     AMP_MAX, AmpKnob, Amplifier, Bloom, BrightCap, Cached, CathodeBias, DynamicPresence, FrontEnd,
-    GridBlock, OutputTransformer, PowerOs, SpeakerLoad, SupplyRipple, ToneCache, VoiceBalance,
-    sagged_rail,
+    GridBlock, OutputTransformer, PowerOs, SpeakerLoad, SupplyRipple, ToneCache, TubeClip,
+    VoiceBalance, sagged_rail,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::oversample::Oversampler8;
@@ -194,8 +194,9 @@ impl Mesa {
         let (drive_up, rail) = sagged_rail(supply, 2.4);
         // `supply` is a rail voltage: as it falls the drive rises and the output
         // comes back down, so sag compresses *harder* under load. See `sagged_rail`.
-        self.os_power
-            .shape(x, |u| silicon_clip_asym(u * drive_up) * rail * 0.55)
+        self.os_power.shape(x, |u| {
+            TubeClip::PUSH_PULL.shape(u * drive_up) * rail * 0.847
+        })
     }
 }
 
@@ -241,9 +242,9 @@ impl Amplifier for Mesa {
             // Dynamic cathode bias on stage 1, plus hard grid-blocking on truly
             // slammed inputs (DC removed by the inter-stage HP).
             let d = self.grid.shift(self.cathode.shift((u + bias) * g1));
-            let s = tube_clip_asym(d) / g1.sqrt();
+            let s = TubeClip::AX7.shape(d) / g1.sqrt();
             let s = self.stage_hp_1.process(s);
-            let s = tube_clip_asym(s * g2) / g2.sqrt();
+            let s = TubeClip::AX7.shape(s * g2) / g2.sqrt();
             let s = self.stage_hp_2.process(s);
             *o = silicon_clip_asym(s * g3) / g3.sqrt();
         }
@@ -270,17 +271,6 @@ impl Amplifier for Mesa {
         // Output trim: level-match the Recto to the other models so switching
         // doesn't jump in volume (re-measured after the power-drive increase).
         x * master * 8.03
-    }
-}
-
-/// Asymmetric 12AX7 triode waveshaper (see marshall.rs for rationale).
-#[inline]
-fn tube_clip_asym(x: f32) -> f32 {
-    use std::f32::consts::FRAC_2_PI;
-    if x >= 0.0 {
-        FRAC_2_PI * x.atan()
-    } else {
-        FRAC_2_PI * (x * 1.1).atan()
     }
 }
 

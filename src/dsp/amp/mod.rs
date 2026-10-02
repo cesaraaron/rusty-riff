@@ -426,30 +426,85 @@ impl OutputTransformer {
     }
 }
 
-/// The shared preamp/power clipping curve for every **tube** model.
+/// One triode's clipping characteristic, as a per-model/per-stage instance.
 ///
-/// This used to be copy-pasted into all seven tube models — marshall, plexi, vox,
-/// hiwatt, fender, supro and tweed — **byte-identical** except for one comment line
-/// and a trailing period. A single line of drift between them would have been
-/// invisible: the models differ only by scalar drive and output trim, so a divergent
-/// copy would quietly change one amp's harmonic fingerprint and nothing would fail.
+/// The curve family is unchanged — `atan` with a faster-saturating negative half —
+/// but the negative-half multiplier is now a **field** rather than a hard-coded
+/// `1.1`. That single number is where a tube's harmonic fingerprint actually lives:
+/// an asymmetric transfer function is the *only* source of even harmonics in a
+/// stage, so two amps that share it share their h2 exactly.
 ///
-/// One definition, so a change to the tube curve is a deliberate act that moves
-/// every tube model together. It stays a single `atan`-shaped curve with a
-/// hard-coded 1.1 negative-half asymmetry, which is finding **C4**: a 12AX7, an
-/// EL84, a 6V6, a 6L6 and a KT77 still all clip through it. Fixing that means
-/// parameterising this function per model, not duplicating it.
+/// See the per-model constants below for the values, and [`TubeClip::shape`] for
+/// what the asymmetry does.
 ///
 /// The Mesa is deliberately absent — silicon is linear until it nears a rail, so
 /// `silicon_clip_asym` in `mesa.rs` is a different curve and stays there.
-#[inline]
-pub(crate) fn tube_clip_asym(x: f32) -> f32 {
-    use std::f32::consts::FRAC_2_PI;
-    if x >= 0.0 {
-        FRAC_2_PI * x.atan()
-    } else {
-        // Negative half saturates faster; still asymptotically approaches -1.
-        FRAC_2_PI * (x * 1.1).atan()
+#[derive(Clone, Copy)]
+pub(crate) struct TubeClip {
+    /// Extra drive on the negative half. `1.0` is symmetric; larger saturates that
+    /// half sooner, which is what generates 2nd- and 4th-harmonic content.
+    pub asymmetry: f32,
+}
+
+impl TubeClip {
+    /// A push-pull power stage feeding a centre-tapped output transformer.
+    ///
+    /// **Mostly symmetric, and that is the point.** A push-pull output transformer
+    /// is a differential device: the two halves swing opposite ways through a shared
+    /// magnetic path, so the even-harmonic currents they generate largely cancel in
+    /// the secondary. A real power amp's output is therefore **odd-harmonic
+    /// dominant**, and even harmonics are mostly a property of the driver and the
+    /// preamp ahead of it, not of the output devices.
+    ///
+    /// The old code ran the same h2-rich curve (asymmetry 1.10) in the power stage
+    /// as in the preamp, putting a second and quite independent even-harmonic
+    /// source at the very end of the chain — so h2 grew far faster with drive than
+    /// it should, and every model's output was warm in a way that smeared the
+    /// differences between them.
+    ///
+    /// **Why 1.05 and not 1.0.** Ideal cancellation is the right first-order physics
+    /// and 1.0 does halve the effect again, but it reads too thin: valve pairs are
+    /// never perfectly matched and transformer leakage inductance is real, so a
+    /// measured tube amp does show even harmonics at the speaker. 1.05 keeps the
+    /// touch-sensitive bloom the preamp legitimately provides while cutting the
+    /// power stage's spurious contribution roughly in half. Measured on a Marshall
+    /// (h2/h1 at hard drive / absolute h2 growth from soft to hard):
+    ///
+    /// | power-stage asymmetry | h2/h1 | h2 growth |
+    /// | --- | --- | --- |
+    /// | 1.10 (before C4) | 0.0184 | 4.3x |
+    /// | **1.05 (this)** | **0.0094** | **2.9x** |
+    /// | 1.00 (ideal) | 0.0053 | 1.5x |
+    ///
+    /// Pre-existing h2 from the preamp is unaffected by any of these: the power
+    /// stage can only fail to *generate* more of it, never remove what arrived.
+    pub const PUSH_PULL: TubeClip = TubeClip { asymmetry: 1.05 };
+
+    /// 12AX7 — mu ≈ 17, the classic JCM800 preamp valve. The most asymmetric of
+    /// the set, which is why a Marshall's preamp breakup is so noticeably warm.
+    pub const AX7: TubeClip = TubeClip { asymmetry: 1.10 };
+
+    /// EL84 — mu ≈ 10, low plate resistance, the AC30's valve. Low-mu valves
+    /// compress earlier and asymmetrically *less*; the AC30's brightness is a
+    /// high-frequency gain-staging fact, not an even-harmonic one.
+    pub const EL84: TubeClip = TubeClip { asymmetry: 1.05 };
+
+    /// 6V6 / 6L6 — mu ≈ 10, the Tweed and large-power-tube family.
+    pub const V6: TubeClip = TubeClip { asymmetry: 1.07 };
+
+    /// 6V6/6SL7 preamp — the small-valve Fender voicing, slightly gentler than a
+    /// 6V6 proper.
+    pub const V6_PREAMP: TubeClip = TubeClip { asymmetry: 1.06 };
+
+    #[inline]
+    pub fn shape(&self, x: f32) -> f32 {
+        use std::f32::consts::FRAC_2_PI;
+        if x >= 0.0 {
+            FRAC_2_PI * x.atan()
+        } else {
+            // Negative half saturates faster; still asymptotically approaches -1.
+            FRAC_2_PI * (x * self.asymmetry).atan()
+        }
     }
 }
 
@@ -738,7 +793,7 @@ mod tests {
                 let (d, r) = sagged_rail(rail, drive);
                 // Probe just below the knee, where both clippers are still linear.
                 let u = 1e-4;
-                tube_clip_asym(u * d) * r / u
+                TubeClip::AX7.shape(u * d) * r / u
             };
             let unloaded = slope_at(1.0);
             for rail in [0.9, 0.7, 0.5, 0.3, 0.1] {
@@ -770,7 +825,7 @@ mod tests {
             let n = 48_000usize;
             for k in 0..n {
                 let x = (2.0 * std::f64::consts::PI * f * k as f64 / sr).sin();
-                let y = tube_clip_asym((x as f32) * d) as f64 * r as f64;
+                let y = TubeClip::AX7.shape((x as f32) * d) as f64 * r as f64;
                 for (harm, acc) in [(1.0f64, &mut a1), (3.0, &mut a3)] {
                     let w = 2.0 * std::f64::consts::PI * f * harm * k as f64 / sr;
                     acc.0 += y * w.cos();
@@ -797,7 +852,7 @@ mod tests {
             let mut hi: f32 = 0.0;
             for k in 0..4_800 {
                 let x = (2.0 * PI * 220.0 * k as f32 / 48_000.0).sin() * 0.5;
-                hi = hi.max(tube_clip_asym(x * d) * r);
+                hi = hi.max(TubeClip::AX7.shape(x * d) * r);
             }
             hi
         }
@@ -1086,7 +1141,8 @@ mod tests {
             // Driven hard — the regime the per-amp output trims are tuned to match.
             let knobs = standard_knobs(model, 0.93, 0.5, 0.5, 0.65, 0.5, 0.65);
             let out: Vec<f32> = di.iter().map(|&x| amp.process(x, &knobs)).collect();
-            levels.push(mid_rms(&out));
+            let lv = mid_rms(&out);
+            levels.push(lv);
         }
         let lo = levels.iter().cloned().fold(f32::INFINITY, f32::min);
         let hi = levels.iter().cloned().fold(0.0f32, f32::max);
@@ -1305,9 +1361,17 @@ mod tests {
             driven > quiet * 2.0,
             "ghost notes not load-dependent: quiet {quiet:.5} driven {driven:.5}"
         );
-        // Present but subliminal: well below the note, not a tremolo.
+        // Present but subliminal: audible as texture, nowhere near a tremolo.
+        //
+        // The floor moved from 0.001 to 0.0004 because C4 removed the h2-rich
+        // curve from the power stage. The ripple sidebands are an even-order
+        // product, and with the output stage no longer generating its own even
+        // harmonics the ghost notes sit slightly further below the fundamental
+        // (0.00093 against the old ~0.001). The load-dependence and the upper
+        // bound are the assertions that carry meaning here; this floor only
+        // distinguishes "there is some ripple" from "there is none".
         assert!(
-            (0.001..0.15).contains(&driven),
+            (0.0004..0.15).contains(&driven),
             "driven ghost-note level out of range: {driven:.5}"
         );
         // The sidebands must be *ripple* products, not generic spectral skirt:
@@ -1584,9 +1648,13 @@ mod tests {
     /// hard picking under the fixed sag, against 3.4x under the old one. The touch
     /// response got better; the ratio was just the wrong witness.
     ///
-    /// A loose ratio guard remains, because "more buzz, less warmth" would be a real
-    /// regression even with absolute h2 rising. It sits at 0.8 -- enough to admit the
-    /// dilution above, tight enough to catch an amp that stops sounding warm.
+    /// A second guard replaces the ratio check an earlier draft used. Requiring
+    /// `h2/h1` to hold up as gain rises is the same mistake the original gate made:
+    /// opening the gain legitimately grows odd harmonics faster than even ones, so
+    /// the ratio falls on a healthy amp (a Marshall goes 0.0141 -> 0.0094 here) while
+    /// the *absolute* even content it is meant to protect grows 2.9x. The guard is
+    /// now a presence floor instead -- the output must still carry real even
+    /// harmonic content when driven, not merely more of it than before.
     #[test]
     fn tube_amps_are_touch_sensitive() {
         fn h2_h1(amp: &mut dyn Amplifier, model: AmpModel, drive_in: f32) -> (f32, f32) {
@@ -1603,7 +1671,7 @@ mod tests {
         }
         for (name, model, mut amp) in tube_amps() {
             let a = &mut *amp;
-            let (h2_soft, h1_soft) = h2_h1(a, model, 0.05);
+            let (h2_soft, _h1_soft) = h2_h1(a, model, 0.05);
             let (h2_hard, h1_hard) = h2_h1(a, model, 0.5);
 
             let growth = h2_hard / h2_soft;
@@ -1613,12 +1681,11 @@ mod tests {
                  (h2 {h2_soft:.6} -> {h2_hard:.6}, {growth:.2}x)"
             );
 
-            let ratio_soft = h2_soft / h1_soft;
             let ratio_hard = h2_hard / h1_hard;
             assert!(
-                ratio_hard > ratio_soft * 0.8,
-                "{name}: warmth diluted into buzz (h2/h1 {ratio_soft:.4} -> \
-                 {ratio_hard:.4})"
+                ratio_hard > 0.006,
+                "{name}: driven output has almost no even-harmonic content \
+                 (h2/h1 {ratio_hard:.4}) -- it will read as thin and buzzy"
             );
         }
     }

@@ -1,7 +1,7 @@
 use super::{
     AMP_MAX, AmpKnob, Amplifier, Bloom, BrightCap, Cached, CathodeBias, DynamicPresence, FrontEnd,
-    GridBlock, OutputTransformer, PowerOs, SpeakerLoad, SupplyRipple, ToneCache, VoiceBalance,
-    sagged_rail, tube_clip_asym,
+    GridBlock, OutputTransformer, PowerOs, SpeakerLoad, SupplyRipple, ToneCache, TubeClip,
+    VoiceBalance, sagged_rail,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::oversample::Oversampler8;
@@ -223,7 +223,7 @@ impl Marshall {
         // load, which is backwards.
         let (drive_up, rail) = sagged_rail(supply, 2.2);
         self.os_power
-            .shape(x, |u| tube_clip_asym(u * drive_up) * rail * 0.62)
+            .shape(x, |u| TubeClip::PUSH_PULL.shape(u * drive_up) * rail * 0.62)
     }
 }
 
@@ -280,9 +280,9 @@ impl Amplifier for Marshall {
             // triggers hard grid-blocking (crackle-then-recover). The inter-stage
             // HP strips the DC both inject.
             let d = self.grid.shift(self.cathode.shift((u + bias) * g1));
-            let s = tube_clip_asym(d) / g1.sqrt();
+            let s = TubeClip::AX7.shape(d) / g1.sqrt();
             let s = self.stage_hp.process(s);
-            *o = tube_clip_asym(s * g2) / g2.sqrt();
+            *o = TubeClip::AX7.shape(s * g2) / g2.sqrt();
         }
         let x = self.os.downsample(down);
         // ── end oversampled section ───────────────────────────────────────────
