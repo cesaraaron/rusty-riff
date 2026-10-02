@@ -1,6 +1,6 @@
 use super::{
     AMP_MAX, AmpKnob, Amplifier, Bloom, BrightCap, Cached, CathodeBias, DynamicPresence, FrontEnd,
-    OutputTransformer, PowerOs, SpeakerLoad, ToneCache, VoiceBalance,
+    OutputTransformer, PowerOs, SpeakerLoad, ToneCache, VoiceBalance, sagged_rail, tube_clip_asym,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::oversample::Oversampler8;
@@ -195,8 +195,11 @@ impl Hiwatt {
         // Modest drive (1.8) and a healthy output scale keep the amp on the round,
         // clean part of the curve until it is genuinely pushed; the clip runs
         // at 8×.
+        let (drive_up, rail) = sagged_rail(sag, 1.8);
+        // `sag` is a rail voltage: as it falls the drive rises and the output
+        // comes back down, so sag compresses *harder* under load. See `sagged_rail`.
         self.os_power
-            .shape(x, |u| tube_clip_asym(u * sag * 1.8) * 0.7)
+            .shape(x, |u| tube_clip_asym(u * drive_up) * rail * 0.7)
     }
 }
 
@@ -274,17 +277,5 @@ impl Amplifier for Hiwatt {
         // Output trim: level-matched to the other models so switching amps doesn't
         // jump in volume. Lands the DR103 mid-band alongside the Vox/Mesa/Randall.
         x * master * 14.33
-    }
-}
-
-/// Asymmetric 12AX7 triode waveshaper (see marshall.rs for rationale).
-#[inline]
-fn tube_clip_asym(x: f32) -> f32 {
-    use std::f32::consts::FRAC_2_PI;
-    if x >= 0.0 {
-        FRAC_2_PI * x.atan()
-    } else {
-        // Negative half saturates faster; still asymptotically approaches -1
-        FRAC_2_PI * (x * 1.1).atan()
     }
 }

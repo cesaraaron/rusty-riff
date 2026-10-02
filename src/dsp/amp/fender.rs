@@ -1,6 +1,6 @@
 use super::{
     AMP_MAX, AmpKnob, Amplifier, Bloom, BrightCap, CathodeBias, FrontEnd, GridBlock,
-    OutputTransformer, PowerOs, SpeakerLoad, ToneCache, VoiceBalance,
+    OutputTransformer, PowerOs, SpeakerLoad, ToneCache, VoiceBalance, sagged_rail, tube_clip_asym,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::effects::{SpringReverb, Tremolo};
@@ -144,8 +144,11 @@ impl Fender {
         self.envelope += coeff * (abs_x - self.envelope);
         let sag = 1.0 / (1.0 + self.envelope * 0.25);
         // Power clipper at 8× (sag held per sample).
+        let (drive_up, rail) = sagged_rail(sag, 1.5);
+        // `sag` is a rail voltage: as it falls the drive rises and the output
+        // comes back down, so sag compresses *harder* under load. See `sagged_rail`.
         self.os_power
-            .shape(x, |u| tube_clip_asym(u * sag * 1.5) * 0.72)
+            .shape(x, |u| tube_clip_asym(u * drive_up) * rail * 0.72)
     }
 }
 
@@ -209,16 +212,5 @@ impl Amplifier for Fender {
 
         // Fixed output trim (level-matched to the other models).
         x * 10.12
-    }
-}
-
-/// Asymmetric triode waveshaper (see marshall.rs for rationale).
-#[inline]
-fn tube_clip_asym(x: f32) -> f32 {
-    use std::f32::consts::FRAC_2_PI;
-    if x >= 0.0 {
-        FRAC_2_PI * x.atan()
-    } else {
-        FRAC_2_PI * (x * 1.1).atan()
     }
 }

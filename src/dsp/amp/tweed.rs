@@ -1,6 +1,7 @@
 use super::{
     AMP_MAX, AmpKnob, Amplifier, Bloom, BrightCap, Cached, CathodeBias, FrontEnd, GridBlock,
-    OutputTransformer, PowerOs, SpeakerLoad, SupplyRipple, VoiceBalance,
+    OutputTransformer, PowerOs, SpeakerLoad, SupplyRipple, VoiceBalance, sagged_rail,
+    tube_clip_asym,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::oversample::Oversampler8;
@@ -116,8 +117,11 @@ impl Tweed {
         let sag = 1.0 / (1.0 + self.envelope * 1.1);
         let supply = self.ripple.gain(sag, self.envelope);
         // Power clipper at 8× (supply held per sample).
+        let (drive_up, rail) = sagged_rail(supply, 1.8);
+        // `supply` is a rail voltage: as it falls the drive rises and the output
+        // comes back down, so sag compresses *harder* under load. See `sagged_rail`.
         self.os_power
-            .shape(x, |u| tube_clip_asym(u * supply * 1.8) * 0.66)
+            .shape(x, |u| tube_clip_asym(u * drive_up) * rail * 0.66)
     }
 }
 
@@ -162,16 +166,5 @@ impl Amplifier for Tweed {
         let x = self.out_hp.process(x);
 
         x * 2.32
-    }
-}
-
-/// Asymmetric triode waveshaper (see marshall.rs for rationale).
-#[inline]
-fn tube_clip_asym(x: f32) -> f32 {
-    use std::f32::consts::FRAC_2_PI;
-    if x >= 0.0 {
-        FRAC_2_PI * x.atan()
-    } else {
-        FRAC_2_PI * (x * 1.1).atan()
     }
 }

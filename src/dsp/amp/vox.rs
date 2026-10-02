@@ -1,6 +1,6 @@
 use super::{
     AMP_MAX, AmpKnob, Amplifier, Bloom, BrightCap, Cached, CathodeBias, FrontEnd,
-    OutputTransformer, PowerOs, SpeakerLoad, ToneCache, VoiceBalance,
+    OutputTransformer, PowerOs, SpeakerLoad, ToneCache, VoiceBalance, sagged_rail, tube_clip_asym,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::oversample::Oversampler8;
@@ -158,8 +158,11 @@ impl Vox {
         self.envelope += coeff * (abs_x - self.envelope);
         let sag = 1.0 / (1.0 + self.envelope * 0.75);
         // Power clipper at 8× (sag held per sample).
+        let (drive_up, rail) = sagged_rail(sag, 2.5);
+        // `sag` is a rail voltage: as it falls the drive rises and the output
+        // comes back down, so sag compresses *harder* under load. See `sagged_rail`.
         self.os_power
-            .shape(x, |u| tube_clip_asym(u * sag * 2.5) * 0.4)
+            .shape(x, |u| tube_clip_asym(u * drive_up) * rail * 0.4)
     }
 }
 
@@ -233,17 +236,5 @@ impl Amplifier for Vox {
         // Output trim: the AC30 has no master volume (the Top Boost Volume is the
         // gain), so this fixed trim level-matches it to the other models.
         x * 10.03
-    }
-}
-
-/// Asymmetric 12AX7 triode waveshaper (see marshall.rs for rationale).
-#[inline]
-fn tube_clip_asym(x: f32) -> f32 {
-    use std::f32::consts::FRAC_2_PI;
-    if x >= 0.0 {
-        FRAC_2_PI * x.atan()
-    } else {
-        // Negative half saturates faster; still asymptotically approaches -1
-        FRAC_2_PI * (x * 1.1).atan()
     }
 }

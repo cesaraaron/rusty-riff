@@ -1,6 +1,7 @@
 use super::{
     AMP_MAX, AmpKnob, Amplifier, Bloom, BrightCap, Cached, CathodeBias, DynamicPresence, FrontEnd,
     GridBlock, OutputTransformer, PowerOs, SpeakerLoad, SupplyRipple, ToneCache, VoiceBalance,
+    sagged_rail, tube_clip_asym,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::oversample::Oversampler8;
@@ -215,8 +216,14 @@ impl Marshall {
         // curve's knee, which adds tail compression without losing the note's
         // touch-sensitive even-harmonic growth. Pushing it much higher would
         // flatten the asymmetry and make the amp feel less responsive.
+        //
+        // `supply` is a rail voltage, so it goes through `sagged_rail`: as the
+        // rails fall the drive *rises* and the output comes back down. See
+        // `sagged_rail` — the old `clip(u * supply * 2.2)` reduced clipping under
+        // load, which is backwards.
+        let (drive_up, rail) = sagged_rail(supply, 2.2);
         self.os_power
-            .shape(x, |u| tube_clip_asym(u * supply * 2.2) * 0.62)
+            .shape(x, |u| tube_clip_asym(u * drive_up) * rail * 0.62)
     }
 }
 
@@ -305,21 +312,5 @@ impl Amplifier for Marshall {
         // Output trim: level-matches the JCM800 to the other models so switching
         // doesn't jump in volume (re-measured after the power-drive increase).
         x * master * 6.73
-    }
-}
-
-/// Asymmetric 12AX7 triode waveshaper.
-///
-/// Positive half: atan soft-clip (triode toward cutoff — gentle knee).
-/// Negative half: atan with 1.1× input scale (toward plate saturation — clips sooner).
-/// The asymmetry produces 2nd-harmonic content that gives tube amps their warmth.
-#[inline]
-fn tube_clip_asym(x: f32) -> f32 {
-    use std::f32::consts::FRAC_2_PI;
-    if x >= 0.0 {
-        FRAC_2_PI * x.atan()
-    } else {
-        // Negative half saturates faster; still asymptotically approaches -1
-        FRAC_2_PI * (x * 1.1).atan()
     }
 }

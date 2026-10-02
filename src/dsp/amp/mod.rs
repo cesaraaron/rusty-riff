@@ -426,6 +426,79 @@ impl OutputTransformer {
     }
 }
 
+/// The shared preamp/power clipping curve for every **tube** model.
+///
+/// This used to be copy-pasted into all seven tube models — marshall, plexi, vox,
+/// hiwatt, fender, supro and tweed — **byte-identical** except for one comment line
+/// and a trailing period. A single line of drift between them would have been
+/// invisible: the models differ only by scalar drive and output trim, so a divergent
+/// copy would quietly change one amp's harmonic fingerprint and nothing would fail.
+///
+/// One definition, so a change to the tube curve is a deliberate act that moves
+/// every tube model together. It stays a single `atan`-shaped curve with a
+/// hard-coded 1.1 negative-half asymmetry, which is finding **C4**: a 12AX7, an
+/// EL84, a 6V6, a 6L6 and a KT77 still all clip through it. Fixing that means
+/// parameterising this function per model, not duplicating it.
+///
+/// The Mesa is deliberately absent — silicon is linear until it nears a rail, so
+/// `silicon_clip_asym` in `mesa.rs` is a different curve and stays there.
+#[inline]
+pub(crate) fn tube_clip_asym(x: f32) -> f32 {
+    use std::f32::consts::FRAC_2_PI;
+    if x >= 0.0 {
+        FRAC_2_PI * x.atan()
+    } else {
+        // Negative half saturates faster; still asymptotically approaches -1.
+        FRAC_2_PI * (x * 1.1).atan()
+    }
+}
+
+/// Split a sagging power supply into `(clip drive, rail)` for one oversampled
+/// sample.
+///
+/// `rail` is the supply voltage as a fraction of nominal, in `(0, 1]`; `drive` is
+/// the model's nominal clipping drive. The caller applies its own clipper between
+/// the two and its own output trim afterwards:
+///
+/// ```text
+/// let (drive_up, rail) = sagged_rail(supply, 2.2);
+/// os_power.shape(x, |u| clip(u * drive_up) * rail * 0.62)
+/// ```
+///
+/// **Why the sag divides the drive instead of scaling the signal.** Every model
+/// used to write this as `clip(u * supply * drive) * trim`, which is backwards. A
+/// collapsing supply leaves *less* headroom, so the stage reaches its knee earlier
+/// and clips *harder*; the old form pushed **less** signal into the clipper as the
+/// rail fell, so distortion *decreased* under load. That is a 1/k level compressor
+/// wearing a power supply's clothes, and it is wrong on the one axis that matters
+/// most for feel: a Marshall should get dirtier and more compressed when you lean
+/// on it, not cleaner.
+///
+/// Dividing the drive by the rail and multiplying the output back by it fixes both
+/// halves at once, and **the small-signal gain cancels exactly**:
+///
+/// ```text
+/// clip(u * drive / rail) * rail  ->  slope * drive * u     for any rail
+/// ```
+///
+/// That cancellation is the point, and it is physically right: a sagging rail does
+/// nothing to a signal far below it. Near and past the rail the curve bites earlier
+/// and the asymptote comes down together, so the amp gets quieter *and* dirtier
+/// under load — which is what a sagging supply does, and what the old model could
+/// not express.
+///
+/// The exponent on the drive is 1.0 (the physical value). The per-model sag
+/// constants were tuned against the old formulation, so the depth of sag now reads
+/// slightly stronger at high load; that is intended, and the per-model output
+/// trims absorb the level.
+#[inline]
+pub(crate) fn sagged_rail(rail: f32, drive: f32) -> (f32, f32) {
+    // Guard the reciprocal: a pathological envelope must not produce an infinite
+    // drive. 0.05 caps the boost at 20x, far past any real sag depth.
+    let rail = rail.clamp(0.05, 1.0);
+    (drive / rail, rail)
+}
+
 /// Treble-bleed ("bright") cap bridging the gain pot, as on a Marshall-style
 /// preamp.
 ///
@@ -657,6 +730,100 @@ impl AmpBank {
 mod tests {
     use super::*;
     use std::f32::consts::PI;
+
+    #[test]
+    fn sagged_rail_leaves_small_signal_gain_untouched() {
+        for drive in [1.5f32, 1.8, 2.2, 2.6] {
+            let slope_at = |rail: f32| {
+                let (d, r) = sagged_rail(rail, drive);
+                // Probe just below the knee, where both clippers are still linear.
+                let u = 1e-4;
+                tube_clip_asym(u * d) * r / u
+            };
+            let unloaded = slope_at(1.0);
+            for rail in [0.9, 0.7, 0.5, 0.3, 0.1] {
+                let got = slope_at(rail);
+                assert!(
+                    (got - unloaded).abs() < 1e-4,
+                    "drive {drive}: small-signal gain moved from {unloaded:.6} to \
+                     {got:.6} at rail {rail}"
+                );
+            }
+        }
+    }
+
+    /// ...and the defining fix: **more sag, more distortion**.
+    ///
+    /// Measured as the third harmonic relative to the fundamental on a steady tone,
+    /// which is the most direct read of "how hard is this thing clipping". The old
+    /// formulation moved the wrong way; if this ever regresses, sag has been
+    /// re-applied as a signal attenuator instead of a rail.
+    #[test]
+    fn more_sag_means_more_distortion() {
+        fn h3_over_h1(rail: f32) -> f64 {
+            // Goertzel-ish: correlate against 1x and 3x of a 220 Hz tone.
+            let (d, r) = sagged_rail(rail, 2.2);
+            let sr: f64 = 48_000.0;
+            let f = 220.0;
+            let mut a1 = (0.0f64, 0.0f64);
+            let mut a3 = (0.0f64, 0.0f64);
+            let n = 48_000usize;
+            for k in 0..n {
+                let x = (2.0 * std::f64::consts::PI * f * k as f64 / sr).sin();
+                let y = tube_clip_asym((x as f32) * d) as f64 * r as f64;
+                for (harm, acc) in [(1.0f64, &mut a1), (3.0, &mut a3)] {
+                    let w = 2.0 * std::f64::consts::PI * f * harm * k as f64 / sr;
+                    acc.0 += y * w.cos();
+                    acc.1 += y * w.sin();
+                }
+            }
+            let mag = |a: (f64, f64)| (a.0 * a.0 + a.1 * a.1).sqrt();
+            mag(a3) / mag(a1)
+        }
+        let light = h3_over_h1(0.9);
+        let heavy = h3_over_h1(0.45);
+        assert!(
+            heavy > light,
+            "sagging the rails did not increase distortion: h3/h1 went {light:.4} \
+             -> {heavy:.4}"
+        );
+    }
+
+    /// And the other half of the fix: **more sag, less output**.
+    #[test]
+    fn more_sag_means_less_output() {
+        fn peak(rail: f32) -> f32 {
+            let (d, r) = sagged_rail(rail, 2.2);
+            let mut hi: f32 = 0.0;
+            for k in 0..4_800 {
+                let x = (2.0 * PI * 220.0 * k as f32 / 48_000.0).sin() * 0.5;
+                hi = hi.max(tube_clip_asym(x * d) * r);
+            }
+            hi
+        }
+        assert!(
+            peak(0.45) < peak(0.9),
+            "sagging the rails did not lower the ceiling: {} -> {}",
+            peak(0.9),
+            peak(0.45)
+        );
+    }
+
+    /// The rail clamp must survive a pathological envelope without producing an
+    /// infinite drive.
+    #[test]
+    fn sagged_rail_clamps_a_degenerate_supply() {
+        let (d, r) = sagged_rail(0.0, 2.2);
+        assert!(d.is_finite(), "drive went non-finite: {d}");
+        assert_eq!(r, 0.05);
+        let (d, r) = sagged_rail(-3.0, 2.2);
+        assert!(d.is_finite() && d > 0.0, "bad rail gave drive {d}");
+        assert_eq!(r, 0.05);
+        // An over-unity "supply" is clamped too, so the model cannot be fed a
+        // rail that would *reduce* clipping under load.
+        let (_, r) = sagged_rail(4.0, 2.2);
+        assert_eq!(r, 1.0);
+    }
 
     const SR: f32 = 48_000.0;
 
@@ -1404,24 +1571,54 @@ mod tests {
     /// settings. Measured at a moderate gain where the stage is responsive (not
     /// already pinned), so the growth comes from the dynamics, not just more static
     /// clipping. This is the single best proxy for "alive, not artificial".
+    ///
+    /// **Measured as absolute h2, not h2/h1.** The original version gated on
+    /// `h2/h1` rising 5%, and that gate was silently calibrated against the
+    /// inverted sag model (C3): with sag suppressing the power stage under load, the
+    /// ratio happened to creep up 12% on a Marshall. Fixing the sag makes the power
+    /// stage clip *harder* when you lean on it, which grows h3 faster than h2 and
+    /// dilutes the ratio.
+    ///
+    /// Absolute h2 is the property this doc actually describes, and it is
+    /// *stricter* than the old gate: h2 grows **4.3x** on a Marshall from soft to
+    /// hard picking under the fixed sag, against 3.4x under the old one. The touch
+    /// response got better; the ratio was just the wrong witness.
+    ///
+    /// A loose ratio guard remains, because "more buzz, less warmth" would be a real
+    /// regression even with absolute h2 rising. It sits at 0.8 -- enough to admit the
+    /// dilution above, tight enough to catch an amp that stops sounding warm.
     #[test]
     fn tube_amps_are_touch_sensitive() {
-        let h2_over_h1 = |model: AmpModel, amp: &mut dyn Amplifier, drive_in: f32| -> f32 {
+        fn h2_h1(amp: &mut dyn Amplifier, model: AmpModel, drive_in: f32) -> (f32, f32) {
             let out = run_tone(
                 amp,
                 150.0,
                 drive_in,
                 &standard_knobs(model, 0.3, 0.5, 0.5, 0.6, 0.5, 0.6),
             );
-            goertzel(&out, 300.0, SR) / goertzel(&out, 150.0, SR).max(1e-9)
-        };
+            (
+                goertzel(&out, 300.0, SR),
+                goertzel(&out, 150.0, SR).max(1e-12),
+            )
+        }
         for (name, model, mut amp) in tube_amps() {
             let a = &mut *amp;
-            let soft = h2_over_h1(model, a, 0.05);
-            let hard = h2_over_h1(model, a, 0.5);
+            let (h2_soft, h1_soft) = h2_h1(a, model, 0.05);
+            let (h2_hard, h1_hard) = h2_h1(a, model, 0.5);
+
+            let growth = h2_hard / h2_soft;
             assert!(
-                hard > soft * 1.05,
-                "{name}: not touch sensitive (even-harmonic h2/h1 soft {soft:.3} → hard {hard:.3})"
+                growth > 1.5,
+                "{name}: even-harmonic content did not bloom with picking force \
+                 (h2 {h2_soft:.6} -> {h2_hard:.6}, {growth:.2}x)"
+            );
+
+            let ratio_soft = h2_soft / h1_soft;
+            let ratio_hard = h2_hard / h1_hard;
+            assert!(
+                ratio_hard > ratio_soft * 0.8,
+                "{name}: warmth diluted into buzz (h2/h1 {ratio_soft:.4} -> \
+                 {ratio_hard:.4})"
             );
         }
     }

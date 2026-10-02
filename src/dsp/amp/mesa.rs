@@ -1,6 +1,7 @@
 use super::{
     AMP_MAX, AmpKnob, Amplifier, Bloom, BrightCap, Cached, CathodeBias, DynamicPresence, FrontEnd,
     GridBlock, OutputTransformer, PowerOs, SpeakerLoad, SupplyRipple, ToneCache, VoiceBalance,
+    sagged_rail,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::oversample::Oversampler8;
@@ -190,8 +191,11 @@ impl Mesa {
         // sustain without flattening the attack; the gentler curve preserves
         // the Recto's tight, percussive feel while still compressing the note.
         // Clipper at 8× (supply held per sample).
+        let (drive_up, rail) = sagged_rail(supply, 2.4);
+        // `supply` is a rail voltage: as it falls the drive rises and the output
+        // comes back down, so sag compresses *harder* under load. See `sagged_rail`.
         self.os_power
-            .shape(x, |u| silicon_clip_asym(u * supply * 2.4) * 0.55)
+            .shape(x, |u| silicon_clip_asym(u * drive_up) * rail * 0.55)
     }
 }
 

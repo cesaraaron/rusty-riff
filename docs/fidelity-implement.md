@@ -1632,3 +1632,64 @@ nonlinearity still at base rate (every other one runs at 8×); there is no hum o
 noise generator anywhere, so a silent input produces bit-exact zero out of all nine
 models; Randall is architecturally different from the other eight and much thinner;
 and `SpeakerLoad` is passed the level envelope while its parameter is named `sag`.
+
+### C3 — supply sag was inverted: a sagging amp clipped *less*
+
+Every tube model computed its power stage as `clip(u * supply * drive)`, where
+`supply < 1` under load. That feeds **less** signal into the clipper as the rails
+sag, so distortion **decreased** when you leaned on the amp. A real sagging
+supply leaves *less headroom*, reaches its knee earlier, and clips **harder** —
+the old model was a 1/k level compressor wearing a power supply's clothes, and
+backwards on the one axis that matters most for feel.
+
+**Fix.** `sagged_rail` (`amp/mod.rs`) splits the supply into a `(clip drive, rail)`
+pair: the drive is divided by the rail and the output multiplied back by it. The
+small-signal gain then **cancels exactly** — `clip(u * drive / rail) * rail` has
+slope `drive` for *any* rail — which is physically right, because a sagging rail
+does nothing to a signal far below it. Near and past the rail the curve bites
+earlier and the asymptote comes down together, so the amp gets quieter *and*
+dirtier under load. Applied to all seven tube models plus the Mesa's silicon stage.
+
+**Separated from a zero-risk step.** Unifying the seven byte-identical
+`tube_clip_asym` copies first, on its own, left the baseline **bit-identical** —
+which confirms both that unification is safe and that the harness notices when
+something does move. The sag fix alone then produced 8 tolerance violations
+across 3 of 8 presets.
+
+| | change |
+| --- | --- |
+| eagles_hotel_california_solo | +0.59 dB LUFS, up to 0.93 dB at 3.6 kHz |
+| led_zeppelin_stairway_solo | +0.16 dB LUFS, 0.46 dB at 444 Hz |
+| pink_floyd_time_solo | +0.12 dB LUFS |
+
+The other five presets do not load the power stage hard enough for sag to bite, and
+are untouched — a useful reminder that the baseline is not uniformly sensitive.
+Loudness **rises** slightly under load because a more-clipped waveform has more RMS
+at the same peak; `amps_are_loudness_matched` still passes without any trim change.
+
+> **A test that was quietly calibrated against the bug.** `tube_amps_are_touch_sensitive`
+> gated on `h2/h1` rising 5% — and passed, under the old model, by exactly 12% on a
+> Marshall. That margin was an artefact: with sag *suppressing* the power stage
+> under load, the ratio crept up for the wrong reason. Fixing the sag makes the
+> power stage clip harder when you lean on it, h3 grows faster than h2, and the
+> ratio goes flat (−1%) — so the test failed even though the thing it cares about
+> got **better**:
+>
+> | Marshall, soft → hard picking | old sag | fixed sag |
+> | --- | --- | --- |
+> | h2/h1 | 0.0186 → 0.0208 | 0.0186 → 0.0184 |
+> | **absolute h2 growth** | **3.4×** | **4.3×** |
+> | h3/h1 | 0.0080 → 0.1673 | 0.0081 → 0.1567 |
+>
+> h3/h1 is essentially unchanged, so the fix did **not** over-drive the stage into a
+> buzzbox. The test now asserts the property its own doc describes — absolute even-
+> harmonic bloom, required to grow 1.5× — which is *stricter* than the old 1.05
+> ratio gate, plus a loose 0.8 ratio guard so "more buzz, less warmth" still fails.
+> This is the C4 warning made concrete: touch sensitivity has to come from the
+> mechanism, and a ratio tuned until it passed was hiding a model defect.
+
+**Also closed: the seven copies of `tube_clip_asym`.** They were byte-identical
+apart from one comment line, so a single line of drift between them would have
+silently changed one amp's harmonic fingerprint with nothing failing. There is now
+one `pub(crate)` definition. The Mesa's `silicon_clip_asym` stays separate — silicon
+really is linear until it nears a rail.
