@@ -1839,3 +1839,59 @@ has almost no authority left. Shipping a parameter and a per-sample division for
 Honest status: the 3/2 law needs a **topology** change to model properly — an
 operating point that shifts with level in front of a non-saturating element — not a
 tuning constant. Recorded here rather than left as an unexamined line item.
+
+### C1 — built and measured, then deliberately **not** shipped
+
+`gain` on every model is a compression control, not a gain control. Each stage was
+`shape(x * g) / g.sqrt()`, whose small-signal gain is `0.6366 * sqrt(g)` and whose
+**saturated output falls as `1/sqrt(g)`** — so turning gain up clipped more *and* got
+quieter. A hand-computed Marshall had ~0.8 dB of level authority across the whole
+knob, non-monotonic, with nowhere for the master pot to go.
+
+**The fix works.** `TubeClip::stage(x, k)` drives a stage for a designed
+small-signal voltage gain `k`, dividing out the curve's own insertion loss
+(`INSERTION_LOSS = 2/π ≈ −3.9 dB`) so the ceiling is the fixed ±1 rail rather than
+a function of the drive setting. Splitting that gain across a cascade
+(`split_gain`, `split_gain3`) replaces the old `g1·g2 = 2.24·pregain` accident with
+an exact total, and the per-model coefficient `6.0 / pregain_max` puts the top of
+the knob well past the clipping rail.
+
+Converted all nine models (Randall's three solid-state curves have unit small-signal
+slope, so they need no insertion compensation — only the `1/sqrt(g)` removed).
+Measured gain authority, 220 Hz at unity master, dBFS RMS:
+
+| model | gain 0 | 0.25 | 0.5 | 0.75 | 1.0 | authority |
+| --- | --- | --- | --- | --- | --- | --- |
+| Marshall | −40.1 | −20.1 | −15.4 | −13.1 | −11.9 | **28.2 dB** |
+| Plexi | −25.2 | −9.3 | −5.6 | −4.1 | −3.4 | **21.8 dB** |
+| Vox | −30.7 | −12.2 | −7.4 | −4.7 | −2.9 | **27.8 dB** |
+
+All monotonic, against 0.8 dB non-monotonic before. The joint output-trim pass also
+turned out well: the nine models went from a 1.65× loudness spread to **1.005×**
+(0.0620–0.0622 mid-band RMS), because the old trims had been absorbing the insertion
+loss C1 now divides out.
+
+**So why it is not in the tree.** Moving every amp's operating point changed the
+harmonic balance in a way I could not fully account for. On a Marshall at identical
+settings, `distortion_is_harmonic_not_aliased_hash` went from
+`(h2+h3)/h1 = 0.221` to **0.071** — h2 unchanged (0.0176 → 0.0185) but **h3 more
+than halved** (0.103 → 0.056), and `h3/h1` sat at ~0.05 *regardless of input
+amplitude*, which is not how a clipping stage behaves. I did not find the cause.
+
+Three possibilities remain open: a limiter-like behaviour somewhere in the output
+path that only shows once the preamp's ceiling rises from `1/√g` to 1; the passive
+tone stack and `VoiceBalance` shelving away odd harmonics that are now much larger
+at the input; or the preamp simply no longer being the dominant distortion source,
+moving character into the power stage in a way the metrics do not describe.
+
+Shipping that unverified would mean every bundled artist preset changes by a large
+and unexplained amount. C1 and C2 are exactly the sub-steps the plan flags as
+needing **a second listening pass**, and listening is the one thing I cannot do
+here. Reverted rather than committed; the baseline is untouched and the tree is back
+at `53f506c`.
+
+**To pick this up:** the mechanism is sound and the authority numbers are real. What
+it needs is (1) the h3 investigation above, (2) a listening pass over the artist
+presets before and after, and (3) a decision on whether `VoiceBalance` should be
+re-tuned — its fixed shelves exist to absorb exactly the insertion loss C1 removes,
+so they become redundant at best and wrong at worst.
