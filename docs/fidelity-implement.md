@@ -1778,3 +1778,64 @@ emergent rather than modelled, and `GridBlock` reduces gain on hard positives
 without ever clamping them, so there is still no conduction flat-top. Both are the
 natural next sub-step, and both belong in the preamp now that the power stage is
 not the dominant even-harmonic source.
+
+### C4b — grid conduction gets a flat top, and the 3/2 law turns out to be partly unmodellable here
+
+Two items were left open by C4. One shipped; the other was measured, found not to
+be reachable through this architecture, and **deliberately not shipped**.
+
+**Shipped: the grid-conduction flat top.** `GridBlock` reduced gain on hard
+positives but never clamped them, so there was no conduction limit — the finding's
+"reduces gain on hard positives but never clamps them". A real grid does not stop
+the anode dead by tilting the gain: driven past the conduction point it draws
+current, the anode can no longer follow, and the transfer function goes **flat**.
+
+So `shift` now ends in `clamp(-ceiling, ceiling)`, with the ceiling derived from the
+stage's own conduction threshold (`thresh * 2.5`) rather than a new per-model
+constant — the models already encode their operating point (thresholds 1.8–2.6).
+It runs inside the 8× oversampled section, so the new corner does not alias.
+
+Measured against the clamp disabled (Marshall, 220 Hz at 0.7):
+
+| | peak | h3 |
+| --- | --- | --- |
+| gain 0.75, clamp on | 0.6559 | 0.0980 |
+| gain 0.75, clamp off | 0.6567 | 0.0961 |
+| gain 1.00, clamp on | 0.6401 | 0.1006 |
+| gain 1.00, clamp off | 0.6439 | 0.0965 |
+
+Peak down, odd harmonics up ~4% at maximum gain — the right direction, and
+subtle, which is what grid conduction in a preamp actually is. **The bundled
+baseline did not move**, because those presets never slam a preamp hard enough to
+reach the ceiling; it is a max-gain and hot-signal mechanism.
+
+**Not shipped: the 3/2 power law.** The finding asks for h2 ∝ drive², h3 ∝ drive³.
+Measured on a Marshall before changing anything (h2/h1 and h3/h1 against input
+level):
+
+| drive | h2/h1 | h3/h1 |
+| --- | --- | --- |
+| 0.02 | 0.0134 | 0.0010 |
+| 0.1 | 0.0165 | 0.0291 |
+| 0.2 | 0.0203 | 0.0771 |
+| 0.5 | 0.0095 | 0.1575 |
+| 0.7 | 0.0523 | 0.1774 |
+
+Absolute h2 grows about **linearly** in drive (fitted exponent ≈ 1.07), not
+quadratically, and the ratio *falls* because h3 grows 180x while h2 grows 4x. So
+"no 3/2 law" is partly a true finding and partly an **inherent limit of the
+architecture**: a memoryless saturating clipper cannot produce unbounded even
+harmonic growth, because the harmonics are bounded by the waveform reaching its
+rails. Real 3/2 behaviour holds in the overload region *before* hard saturation.
+
+I implemented the obvious mechanism anyway — `asymmetry_hot`, making the clipper's
+curvature asymmetry itself grow with the local drive fraction — and **measured its
+leverage before keeping it**: raising the hot asymmetry from 1.34 to 2.5 moved h2/h1
+by **3%** (0.0521 → 0.0536), and at any physically sane value it was within noise
+of no change at all. The preamp sits so deep in saturation that the asymmetry term
+has almost no authority left. Shipping a parameter and a per-sample division for a
+3% effect would be decoration, so it was reverted.
+
+Honest status: the 3/2 law needs a **topology** change to model properly — an
+operating point that shifts with level in front of a non-saturating element — not a
+tuning constant. Recorded here rather than left as an unexamined line item.

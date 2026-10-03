@@ -302,7 +302,16 @@ pub(crate) struct GridBlock {
     recover: f32,
     depth: f32,
     thresh: f32,
+    /// Anode voltage ceiling — see [`GridBlock::shift`].
+    ceiling: f32,
 }
+
+/// How far past its conduction threshold the anode still follows the grid.
+///
+/// Past this the transfer function goes dead flat. Expressed as a multiple of the
+/// stage's own threshold so it needs no per-model tuning: at 2.5x it sits well
+/// clear of normal operation and only engages once the stage is genuinely slammed.
+const GRID_CEILING_MULT: f32 = 2.5;
 
 /// The quadratic charge target is capped so a sustained max-gain signal shifts
 /// the operating point by a bounded amount instead of choking the stage dead.
@@ -319,6 +328,7 @@ impl GridBlock {
             recover: 1.0 - (-1.0 / (recover_ms * 0.001 * sr)).exp(),
             depth,
             thresh,
+            ceiling: thresh * GRID_CEILING_MULT,
         }
     }
 
@@ -333,7 +343,21 @@ impl GridBlock {
             self.recover
         };
         self.bias += c * (target - self.bias);
-        x - self.bias * self.depth
+        let shifted = x - self.bias * self.depth;
+        // **Grid conduction.** The bias shift above *tilts* the gain down. A real
+        // grid does not stop the anode dead that way: driven past the conduction
+        // point it starts drawing current, the anode can no longer follow it, and
+        // the transfer function goes **flat** — a hard ceiling rather than a tilt.
+        //
+        // That is what the "slam" at the top of a cranked preamp actually is: the
+        // peaks stop rising while the valleys keep swinging, so the stage sounds
+        // hard-edged and compressed rather than merely louder. With only the
+        // gain-reduction arm, a hard-driven Marshall kept folding its peaks back in
+        // smoothly, which is the smooth "hiss" of an overdriven solid state and not
+        // the grainy crunch of a valve stage being pushed into conduction.
+        //
+        // Runs inside the 8x oversampled section, so the new corner does not alias.
+        shifted.clamp(-self.ceiling, self.ceiling)
     }
 }
 
@@ -441,8 +465,9 @@ impl OutputTransformer {
 /// `silicon_clip_asym` in `mesa.rs` is a different curve and stays there.
 #[derive(Clone, Copy)]
 pub(crate) struct TubeClip {
-    /// Extra drive on the negative half. `1.0` is symmetric; larger saturates that
-    /// half sooner, which is what generates 2nd- and 4th-harmonic content.
+    /// Curvature asymmetry at the quiescent operating point. `1.0` is symmetric;
+    /// larger saturates the negative half sooner, which is what generates 2nd- and
+    /// 4th-harmonic content.
     pub asymmetry: f32,
 }
 
@@ -1386,6 +1411,64 @@ mod tests {
         assert!(
             sb > ctl * 2.0,
             "no distinct ripple sidebands: sb {sb:.6} vs control {ctl:.6}"
+        );
+    }
+
+    /// Grid conduction must produce a real **flat top**, not just a gain tilt.
+    ///
+    /// The old `GridBlock` only reduced gain on hard positives, so a slammed stage
+    /// kept folding its peaks back in smoothly — the soft "hiss" of an overdriven
+    /// solid state rather than the grainy crunch of a valve driven into conduction.
+    /// A real grid draws current past the conduction point and the anode stops
+    /// following, so the peaks should stop rising *dead flat* while the valleys keep
+    /// swinging.
+    ///
+    /// Asserted directly on the block rather than through an amp, so the property
+    /// cannot be met by some other stage's saturation.
+    #[test]
+    fn grid_conduction_flattens_the_peaks() {
+        let mut gb = GridBlock::new(SR, 0.25, 30.0, 0.22, 2.6);
+        let ceiling = 2.6 * GRID_CEILING_MULT;
+        assert!(
+            ceiling > 2.6,
+            "the ceiling must sit above the conduction threshold"
+        );
+
+        // A steady level that drives the stage hard, so the bias has charged.
+        let level = ceiling * 4.0;
+        for _ in 0..4_000 {
+            gb.shift(level);
+        }
+        // Anything the bias shift leaves *above* the ceiling must come out
+        // identical — that is the flat top. The bias only removes
+        // `GRID_BLOCK_CAP * depth` = 0.44, so the probe has to start above
+        // `ceiling + 0.44` rather than merely above `ceiling`.
+        let bias_offset = GRID_BLOCK_CAP * 0.22;
+        let first = gb.shift(ceiling + bias_offset + 0.05);
+        let mid = gb.shift(ceiling * 2.0);
+        let far = gb.shift(ceiling * 5.0);
+        assert!(
+            (first - mid).abs() < 1e-4 && (mid - far).abs() < 1e-4,
+            "peaks above the ceiling are not flat: {first:.5} / {mid:.5} / \
+             {far:.5} against a ceiling of {ceiling:.5}"
+        );
+        assert!(
+            (mid - ceiling).abs() < 1e-4,
+            "the flat top should sit exactly on the anode ceiling: {mid:.5} vs \
+             {ceiling:.5}"
+        );
+
+        // And it must still be transparent in ordinary playing, or every preset
+        // gains a hard clip it never had.
+        let mut gb = GridBlock::new(SR, 0.25, 30.0, 0.22, 2.6);
+        let mut worst = 0.0f32;
+        for i in 0..(SR as usize / 20) {
+            let x = (2.0 * PI * 220.0 * i as f32 / SR).sin() * 1.5; // under thresh
+            worst = worst.max((gb.shift(x) - x).abs());
+        }
+        assert!(
+            worst < 0.05,
+            "grid conduction is engaging below threshold: {worst:.4}"
         );
     }
 
