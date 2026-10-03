@@ -1,6 +1,7 @@
 use super::{
     AMP_MAX, AmpKnob, Amplifier, Bloom, BrightCap, Cached, CathodeBias, FrontEnd,
     OutputTransformer, PowerOs, SpeakerLoad, ToneCache, TubeClip, VoiceBalance, sagged_rail,
+    split_gain,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::oversample::Oversampler8;
@@ -14,6 +15,10 @@ use crate::dsp::tonestack::{Components, ToneStack};
 /// `gain_db = 0` the RBJ shelf reduces to `b0 = a0, b1 = a1, b2 = a2`. It was
 /// dead code that cost a biquad run per sample and read as though presence were
 /// modelled.
+/// `6.0 / pregain_max` puts the top of the gain knob well past the stage's clipping
+/// rail, so the knob spans clean to slammed on every model.
+const PREAMP_GAIN_COEFF: f32 = 6.0 / 224.0;
+
 pub const KNOBS: &[AmpKnob] = &[
     AmpKnob {
         label: "TOP BOOST",
@@ -199,7 +204,7 @@ impl Amplifier for Vox {
         // Moderate max gain (32×) vs the Marshall's 39×/Mesa's 30× — the AC30 is a
         // lower-headroom vintage amp that chimes clean and breaks up gracefully
         // rather than a dedicated high-gain machine.
-        let pregain = 1.0 + gain * 32.0;
+        let pregain = 1.0 + gain * 224.0;
         // Dynamic grid-bias offset (removed downstream by the inter-stage HP).
         let bias = self.bloom.follow(x) * 0.07;
 
@@ -210,10 +215,15 @@ impl Amplifier for Vox {
             let u = self.pre_clip_hp.process(u); // cut sub-bass before clipping
             // Dynamic cathode bias shifts the operating point under hard drive
             // before the stage-1 waveshaper; the inter-stage HP strips its DC.
-            let d = self.cathode.shift((u + bias) * pregain);
-            let s = TubeClip::EL84.shape(d) / pregain.sqrt();
+            let d = self.cathode.shift(u + bias);
+            let (k1, k2) = split_gain(PREAMP_GAIN_COEFF * pregain, 0.62, 1.0, 1.0);
+            let s = TubeClip::EL84.stage(d, k1);
             let s = self.stage_hp.process(s);
-            *o = TubeClip::EL84.shape(s * 3.0) / 3.0_f32.sqrt();
+            // The second stage's share is fixed relative to the first (was a
+            // hard-coded 3.0), kept here so the pair still sums to the
+            // designed total.
+            let _ = k2;
+            *o = TubeClip::EL84.stage(s, k2);
         }
         let x = self.os.downsample(down);
         // ── end oversampled section ───────────────────────────────────────────
@@ -246,6 +256,6 @@ impl Amplifier for Vox {
 
         // Output trim: the AC30 has no master volume (the Top Boost Volume is the
         // gain), so this fixed trim level-matches it to the other models.
-        x * 10.03
+        x * 6.34
     }
 }

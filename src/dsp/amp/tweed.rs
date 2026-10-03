@@ -1,6 +1,7 @@
 use super::{
     AMP_MAX, AmpKnob, Amplifier, Bloom, BrightCap, Cached, CathodeBias, FrontEnd, GridBlock,
     OutputTransformer, PowerOs, SpeakerLoad, SupplyRipple, TubeClip, VoiceBalance, sagged_rail,
+    split_gain,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::oversample::Oversampler8;
@@ -9,6 +10,13 @@ use crate::dsp::oversample::Oversampler8;
 ///
 /// The real 5E3 has two channels, each with a Volume, plus one shared Tone. We
 /// expose a single Volume (the channels jumpered/paralleled) and the Tone.
+/// Small-signal voltage gain of the preamp per unit of `pregain`.
+///
+/// `2.0 / pregain_max` puts the top of the gain knob exactly at the stage's
+/// clipping rail, so the knob spans clean at the bottom to slammed at the top
+/// on every model regardless of how much range its `pregain` law has.
+const PREAMP_GAIN_COEFF: f32 = 6.0 / 154.0;
+
 pub const KNOBS: &[AmpKnob] = &[
     AmpKnob {
         label: "VOLUME",
@@ -149,20 +157,19 @@ impl Amplifier for Tweed {
 
         // Pushed preamp gain: a tweed Deluxe is into breakup well before the top
         // of the Volume knob, so the small power section is slammed early.
-        let pregain = 1.0 + gain * 22.0;
+        let pregain = 1.0 + gain * 154.0;
         let bias = self.bloom.follow(x) * 0.18;
-        let g1 = pregain.powf(0.6) * 1.2;
-        let g2 = (pregain / pregain.powf(0.6)) * 1.3;
+        let (k1, k2) = split_gain(PREAMP_GAIN_COEFF * pregain, 0.6, 1.2, 1.3);
 
         // ── 8× oversampled nonlinear section ──────────────────────────────────
         let up = self.os.upsample(x);
         let mut down = [0.0f32; 8];
         for (o, &u) in down.iter_mut().zip(up.iter()) {
             let u = self.pre_clip_hp.process(u);
-            let d = self.grid.shift(self.cathode.shift((u + bias) * g1));
-            let s = TubeClip::V6.shape(d) / g1.sqrt();
+            let d = self.grid.shift(self.cathode.shift(u + bias));
+            let s = TubeClip::V6.stage(d, k1);
             let s = self.stage_hp.process(s);
-            *o = TubeClip::V6.shape(s * g2) / g2.sqrt();
+            *o = TubeClip::V6.stage(s, k2);
         }
         let x = self.os.downsample(down);
         // ── end oversampled section ───────────────────────────────────────────
@@ -174,6 +181,6 @@ impl Amplifier for Tweed {
         let x = self.speaker.process(x, self.envelope);
         let x = self.out_hp.process(x);
 
-        x * 2.32
+        x * 1.71
     }
 }

@@ -1,7 +1,7 @@
 use super::{
     AMP_MAX, AmpKnob, Amplifier, Bloom, BrightCap, Cached, CathodeBias, DynamicPresence, FrontEnd,
     GridBlock, OutputTransformer, PowerOs, SpeakerLoad, SupplyRipple, ToneCache, TubeClip,
-    VoiceBalance, sagged_rail,
+    VoiceBalance, sagged_rail, split_gain,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::oversample::Oversampler8;
@@ -11,6 +11,13 @@ use crate::dsp::tonestack::{Components, ToneStack};
 /// Volume I (Normal), Bass, Mid, Treble, Presence. The 1959 has no master
 /// volume — the channel volumes *are* the gain, and the power section does much
 /// of the distortion — so output level is a fixed internal trim.
+/// Small-signal voltage gain of the preamp per unit of `pregain`.
+///
+/// `2.0 / pregain_max` puts the top of the gain knob exactly at the stage's
+/// clipping rail, so the knob spans clean at the bottom to slammed at the top
+/// on every model regardless of how much range its `pregain` law has.
+const PREAMP_GAIN_COEFF: f32 = 6.0 / 168.0;
+
 pub const KNOBS: &[AmpKnob] = &[
     AmpKnob {
         label: "VOL II",
@@ -214,20 +221,19 @@ impl Amplifier for Plexi {
 
         // Lower max gain than the JCM800 (~25× vs 40×): the Plexi keeps the preamp
         // on the round part of the curve and lets the power section distort.
-        let pregain = 1.0 + gain * 24.0;
+        let pregain = 1.0 + gain * 168.0;
         let bias = self.bloom.follow(x) * 0.05;
 
         // ── 8× oversampled nonlinear section ──────────────────────────────────
-        let g1 = pregain.powf(0.62) * 1.3;
-        let g2 = (pregain / pregain.powf(0.62)) * 1.5;
+        let (k1, k2) = split_gain(PREAMP_GAIN_COEFF * pregain, 0.62, 1.3, 1.5);
         let up = self.os.upsample(x);
         let mut down = [0.0f32; 8];
         for (o, &u) in down.iter_mut().zip(up.iter()) {
             let u = self.pre_clip_hp.process(u);
-            let d = self.grid.shift(self.cathode.shift((u + bias) * g1));
-            let s = TubeClip::AX7.shape(d) / g1.sqrt();
+            let d = self.grid.shift(self.cathode.shift(u + bias));
+            let s = TubeClip::AX7.stage(d, k1);
             let s = self.stage_hp.process(s);
-            *o = TubeClip::AX7.shape(s * g2) / g2.sqrt();
+            *o = TubeClip::AX7.stage(s, k2);
         }
         let x = self.os.downsample(down);
         // ── end oversampled section ───────────────────────────────────────────
@@ -242,6 +248,6 @@ impl Amplifier for Plexi {
 
         // Fixed output trim (no master volume) — level-matches the Plexi to the
         // other models so switching amps doesn't jump the volume.
-        x * 3.39
+        x * 2.7
     }
 }

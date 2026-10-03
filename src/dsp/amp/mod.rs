@@ -559,6 +559,76 @@ impl TubeClip {
             FRAC_2_PI * (x * self.asymmetry).atan()
         }
     }
+
+    /// Drive this stage for a designed small-signal voltage gain of `k`, clipping
+    /// against a fixed ±1 rail.
+    ///
+    /// **This is gain staging.** It divides out the curve's own insertion loss
+    /// ([`INSERTION_LOSS`], about −3.9 dB) so the gain you ask for is the gain you
+    /// get, and — critically — it makes the *ceiling* a property of the rail rather
+    /// than of the drive setting.
+    ///
+    /// The old form everywhere in this tree was `shape(x * g) / g.sqrt()`, which has
+    /// small-signal gain `0.6366 * sqrt(g)` and saturated output `1/sqrt(g)`. Both
+    /// facts together meant turning the gain up made a stage clip *more* and get
+    /// *quieter*, so a Marshall had ~0.8 dB of level authority across the whole knob
+    /// and it was non-monotonic. That is a compression control wearing a gain
+    /// knob's label, and it left the master pot nowhere to go.
+    ///
+    /// Here, small-signal gain is exactly `k` and the ceiling is always ±1, so
+    /// `gain` means gain and `master` has real range to work with.
+    #[inline]
+    pub fn stage(&self, x: f32, k: f32) -> f32 {
+        self.shape(x * k / INSERTION_LOSS)
+    }
+}
+
+/// The `atan` clipping curve's small-signal slope, `2/π` — about −3.9 dB.
+///
+/// Two cascaded stages therefore cost −7.9 dB, which used to be absorbed by fixed
+/// `VoiceBalance` shelves of up to +9 dB that the user could not dial out and that
+/// partially cancelled their own bass and treble moves. [`TubeClip::stage`] divides
+/// this out explicitly instead.
+pub(crate) const INSERTION_LOSS: f32 = std::f32::consts::FRAC_2_PI;
+
+/// Split a preamp's voltage gain across two triodes without changing the total.
+///
+/// The exponent sets how front-loaded the cascade is (`0.6` puts more on the first
+/// stage than the second, matching how a real gain-staged preamp is laid out), and
+/// the constants keep each stage off its own clipper's deep-saturation plateau,
+/// where the harmonic series turns into the slow-decaying "cheap fizz" of a
+/// square-ish wave. Normalised so `k1 * k2 == total` exactly.
+pub(crate) fn split_gain(total: f32, p: f32, c1: f32, c2: f32) -> (f32, f32) {
+    let norm = (c1 * c2).sqrt();
+    let (a, b) = (c1 / norm, c2 / norm);
+    let k1 = total.powf(p) * a;
+    let k2 = (total / total.powf(p)) * b;
+    (k1, k2)
+}
+
+/// Three-stage form of [`split_gain`].
+///
+/// The exponents must sum to 1 so `k1 * k2 * k3 == total`. The Mesa uses this for
+/// its three-triode preamp, where the last stage is the hotter silicon inverter.
+pub(crate) fn split_gain3(
+    total: f32,
+    p1: f32,
+    c1: f32,
+    p2: f32,
+    c2: f32,
+    p3: f32,
+    c3: f32,
+) -> (f32, f32, f32) {
+    debug_assert!(
+        (p1 + p2 + p3 - 1.0).abs() < 1e-4,
+        "the stage exponents must sum to 1 so the total gain is preserved"
+    );
+    let norm = (c1 * c2 * c3).cbrt();
+    let (a, b, c) = (c1 / norm, c2 / norm, c3 / norm);
+    let k1 = total.powf(p1) * a;
+    let k2 = total.powf(p2) * b;
+    let k3 = total.powf(p3) * c;
+    (k1, k2, k3)
 }
 
 /// Split a sagging power supply into `(clip drive, rail)` for one oversampled
@@ -934,6 +1004,62 @@ mod tests {
     use super::*;
     use crate::dsp::CabModel;
     use std::f32::consts::PI;
+
+    #[test]
+    fn the_gain_knob_has_real_and_monotonic_level_authority() {
+        fn level_in_db(model: AmpModel, gain: f32) -> f32 {
+            let mut amp: Box<dyn Amplifier> = match model {
+                AmpModel::Marshall => Box::new(Marshall::new(SR)),
+                AmpModel::Plexi => Box::new(Plexi::new(SR)),
+                AmpModel::Vox => Box::new(Vox::new(SR)),
+                AmpModel::Mesa => Box::new(Mesa::new(SR)),
+                AmpModel::Hiwatt => Box::new(Hiwatt::new(SR)),
+                AmpModel::Fender => Box::new(Fender::new(SR)),
+                AmpModel::Supro => Box::new(Supro::new(SR)),
+                AmpModel::Tweed => Box::new(Tweed::new(SR)),
+                AmpModel::Randall => Box::new(Randall::new(SR)),
+            };
+            let knobs = standard_knobs(model, gain, 0.5, 0.5, 0.6, 0.5, 0.6);
+            let out: Vec<f32> = (0..(SR as usize * 2))
+                .map(|n| amp.process((2.0 * PI * 220.0 * n as f32 / SR).sin() * 0.5, &knobs))
+                .collect();
+            let tail = &out[out.len() / 2..];
+            let r = (tail.iter().map(|&v| (v * v) as f64).sum::<f64>() / tail.len() as f64).sqrt();
+            20.0 * (r as f32).max(1e-9).log10()
+        }
+
+        for (name, model) in [
+            ("Marshall", AmpModel::Marshall),
+            ("Plexi", AmpModel::Plexi),
+            ("Vox", AmpModel::Vox),
+            ("Mesa", AmpModel::Mesa),
+            ("Hiwatt", AmpModel::Hiwatt),
+            ("Fender", AmpModel::Fender),
+            ("Supro", AmpModel::Supro),
+            ("Tweed", AmpModel::Tweed),
+            ("Randall", AmpModel::Randall),
+        ] {
+            let db: Vec<f32> = [0.0, 0.25, 0.5, 0.75, 1.0]
+                .iter()
+                .map(|&g| level_in_db(model, g))
+                .collect();
+
+            let authority = db[4] - db[0];
+            assert!(
+                authority > 12.0,
+                "{name}: the gain knob only has {authority:.1} dB of level authority \
+                 ({db:?}) -- it is still a compression control, not a gain control"
+            );
+            for (i, w) in db.windows(2).enumerate() {
+                assert!(
+                    w[1] > w[0] - 0.05,
+                    "{name}: level is non-monotonic between gain {} and {} ({db:?})",
+                    [0.0, 0.25, 0.5, 0.75, 1.0][i],
+                    [0.0, 0.25, 0.5, 0.75, 1.0][i + 1],
+                );
+            }
+        }
+    }
 
     #[test]
     fn sagged_rail_leaves_small_signal_gain_untouched() {

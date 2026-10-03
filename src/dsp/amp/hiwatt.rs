@@ -1,6 +1,7 @@
 use super::{
     AMP_MAX, AmpKnob, Amplifier, Bloom, BrightCap, Cached, CathodeBias, DynamicPresence, FrontEnd,
     OutputTransformer, PowerOs, SpeakerLoad, ToneCache, TubeClip, VoiceBalance, sagged_rail,
+    split_gain,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::oversample::Oversampler8;
@@ -8,6 +9,10 @@ use crate::dsp::tonestack::{Components, ToneStack};
 
 /// DR103 front-panel controls (DSP order): Brilliant Volume, Normal Volume,
 /// Bass, Treble, Middle, Presence, Master.
+/// `6.0 / pregain_max` puts the top of the gain knob well past the stage's clipping
+/// rail, so the knob spans clean to slammed on every model.
+const PREAMP_GAIN_COEFF: f32 = 6.0 / 238.0;
+
 pub const KNOBS: &[AmpKnob] = &[
     AmpKnob {
         label: "BRILL",
@@ -242,7 +247,7 @@ impl Amplifier for Hiwatt {
         // Max gain 34× — enough preamp range to break up and stay touch-sensitive
         // when pushed, while the stiff power section keeps the amp clean and tight
         // at stage volume.
-        let pregain = 1.0 + gain * 34.0;
+        let pregain = 1.0 + gain * 238.0;
         // Dynamic grid-bias offset (removed downstream by the inter-stage HP).
         // A touch deeper than the Marshall's: the DR103's clean preamp needs the
         // operating-point drift to stay touch-responsive without hard clipping.
@@ -255,10 +260,15 @@ impl Amplifier for Hiwatt {
             let u = self.pre_clip_hp.process(u); // cut sub-bass before clipping
             // Dynamic cathode bias shifts the operating point under hard drive
             // before the stage-1 waveshaper; the inter-stage HP strips its DC.
-            let d = self.cathode.shift((u + bias) * pregain);
-            let s = TubeClip::AX7.shape(d) / pregain.sqrt();
+            let d = self.cathode.shift(u + bias);
+            let (k1, k2) = split_gain(PREAMP_GAIN_COEFF * pregain, 0.62, 1.0, 1.0);
+            let s = TubeClip::AX7.stage(d, k1);
             let s = self.stage_hp.process(s);
-            *o = TubeClip::AX7.shape(s * 2.6) / 2.6_f32.sqrt();
+            // The second stage's share is fixed relative to the first (was a
+            // hard-coded 2.6), kept here so the pair still sums to the
+            // designed total.
+            let _ = k2;
+            *o = TubeClip::AX7.stage(s, k2);
         }
         let x = self.os.downsample(down);
         // ── end oversampled section ───────────────────────────────────────────
@@ -286,6 +296,6 @@ impl Amplifier for Hiwatt {
 
         // Output trim: level-matched to the other models so switching amps doesn't
         // jump in volume. Lands the DR103 mid-band alongside the Vox/Mesa/Randall.
-        x * master * 14.33
+        x * master * 6.72
     }
 }

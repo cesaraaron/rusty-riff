@@ -1,11 +1,20 @@
 use super::{
     AMP_MAX, AmpKnob, Amplifier, Bloom, Cached, FrontEnd, PowerOs, SpeakerLoad, ToneCache,
-    VoiceBalance,
+    VoiceBalance, split_gain,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::oversample::Oversampler8;
 
 /// Warhead front-panel controls, in the order `process` decodes them.
+/// `6.0 / pregain_max` puts the top of the gain knob well past the stage's clipping
+/// rail, so the knob spans clean to slammed on every model.
+const PREAMP_GAIN_COEFF: f32 = 6.0 / 238.0;
+
+/// The final op-amp limiter's share of the preamp gain. Fixed, as before: this
+/// stage is a safety rail, not a gain stage, and its job is to catch the peaks
+/// the two gain stages ahead of it produced.
+const RAIL_LIMITER_GAIN: f32 = 2.2;
+
 pub const KNOBS: &[AmpKnob] = &[
     AmpKnob {
         label: "GAIN",
@@ -168,7 +177,7 @@ impl Amplifier for Randall {
 
         let x = self.front.process(sample);
 
-        let pregain = 1.0 + gain * 34.0;
+        let pregain = 1.0 + gain * 238.0;
         // The bloom is kept light and fast so the Randall does not carry the
         // previous note's attack into the next hit, keeping each note's attack
         // consistent.
@@ -179,19 +188,23 @@ impl Amplifier for Randall {
         // harmonics do not overpower the fundamental. The gain split is still
         // more aggressive than the tube amps, which preserves the Randall's
         // buzzy, solid-state edge without over-squaring the waveform.
-        let g1 = pregain.powf(0.7) * 1.55;
-        let g2 = (pregain / pregain.powf(0.7)) * 2.4;
         let up = self.os.upsample(x);
         let mut down = [0.0f32; 8];
         for (o, &u) in down.iter_mut().zip(up.iter()) {
             let u = self.pre_clip_hp.process(u); // cut sub-bass before FET stage
-            let s = fet_clip_asym((u + bias) * g1) / g1.sqrt();
+            // Explicit gain staging, same discipline as `TubeClip::stage`: a
+            // designed small-signal voltage gain per stage and a ceiling set by
+            // each clipper rather than by the drive. All three Warhead curves have
+            // unit small-signal slope, so unlike the tube stages there is no
+            // insertion loss to divide out here.
+            let (k1, k2) = split_gain(PREAMP_GAIN_COEFF * pregain, 0.7, 1.55, 2.4);
+            let s = fet_clip_asym((u + bias) * k1);
             let s = self.stage_hp_1.process(s);
-            let s = bjt_clip(s * g2) / g2.sqrt();
+            let s = bjt_clip(s * k2);
             let s = self.stage_hp_2.process(s);
             // The rail stage stays at a moderate drive so it adds grit rather than
             // turning the third clipper into a second brickwall over the BJT.
-            *o = rail_clip(s * 2.2) / 2.2_f32.sqrt();
+            *o = rail_clip(s * RAIL_LIMITER_GAIN);
         }
         let x = self.os.downsample(down);
         // ── end oversampled section ───────────────────────────────────────────
@@ -222,7 +235,7 @@ impl Amplifier for Randall {
         // breakup + mic saturation), and starving it buries E2's fundamental
         // under overtones (`fundamental_is_not_buried_under_overtones`) and
         // breaks the DS-chain level match. Re-tuning it means re-tuning the cab.
-        x * master * 1.10
+        x * master * 0.853
     }
 }
 

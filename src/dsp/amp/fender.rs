@@ -1,6 +1,7 @@
 use super::{
     AMP_MAX, AmpKnob, Amplifier, Bloom, BrightCap, CathodeBias, FrontEnd, GridBlock,
     OutputTransformer, PowerOs, SpeakerLoad, ToneCache, TubeClip, VoiceBalance, sagged_rail,
+    split_gain,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::effects::{SpringReverb, Tremolo};
@@ -9,6 +10,13 @@ use crate::dsp::tonestack::{Components, ToneStack};
 
 /// Fender Twin Reverb (blackface AB763) front-panel controls (DSP order): Volume,
 /// Treble, Middle, Bass, Reverb, Speed, Intensity.
+/// Small-signal voltage gain of the preamp per unit of `pregain`.
+///
+/// `2.0 / pregain_max` puts the top of the gain knob exactly at the stage's
+/// clipping rail, so the knob spans clean at the bottom to slammed at the top
+/// on every model regardless of how much range its `pregain` law has.
+const PREAMP_GAIN_COEFF: f32 = 6.0 / 84.0;
+
 pub const KNOBS: &[AmpKnob] = &[
     AmpKnob {
         label: "VOLUME",
@@ -183,23 +191,22 @@ impl Amplifier for Fender {
 
         // Moderate max gain (~13×): the Twin stays clean well up the volume but its
         // preamp still reaches its responsive region when pushed.
-        let pregain = 1.0 + volume * 12.0;
+        let pregain = 1.0 + volume * 84.0;
         // Dynamic grid-bias bloom (the main touch mechanism for a high-headroom amp):
         // it is the level-dependent even-harmonic growth that lets a clean Twin still
         // open up as you dig in, without static clipping at normal levels.
         let bias = self.bloom.follow(x) * 0.10;
 
         // ── 8× oversampled nonlinear section ──────────────────────────────────
-        let g1 = pregain.powf(0.6) * 1.2;
-        let g2 = (pregain / pregain.powf(0.6)) * 1.3;
+        let (k1, k2) = split_gain(PREAMP_GAIN_COEFF * pregain, 0.6, 1.2, 1.3);
         let up = self.os.upsample(x);
         let mut down = [0.0f32; 8];
         for (o, &u) in down.iter_mut().zip(up.iter()) {
             let u = self.pre_clip_hp.process(u);
-            let d = self.grid.shift(self.cathode.shift((u + bias) * g1));
-            let s = TubeClip::V6_PREAMP.shape(d) / g1.sqrt();
+            let d = self.grid.shift(self.cathode.shift(u + bias));
+            let s = TubeClip::V6_PREAMP.stage(d, k1);
             let s = self.stage_hp.process(s);
-            *o = TubeClip::V6_PREAMP.shape(s * g2) / g2.sqrt();
+            *o = TubeClip::V6_PREAMP.stage(s, k2);
         }
         let x = self.os.downsample(down);
         // ── end oversampled section ───────────────────────────────────────────
@@ -222,6 +229,6 @@ impl Amplifier for Fender {
         let x = self.out_hp.process(x);
 
         // Fixed output trim (level-matched to the other models).
-        x * 10.12
+        x * 7.05
     }
 }

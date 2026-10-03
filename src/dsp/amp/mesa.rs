@@ -1,13 +1,17 @@
 use super::{
     AMP_MAX, AmpKnob, Amplifier, Bloom, BrightCap, Cached, CathodeBias, DynamicPresence, FrontEnd,
-    GridBlock, OutputTransformer, PowerOs, SpeakerLoad, SupplyRipple, ToneCache, TubeClip,
-    VoiceBalance, sagged_rail,
+    GridBlock, INSERTION_LOSS, OutputTransformer, PowerOs, SpeakerLoad, SupplyRipple, ToneCache,
+    TubeClip, VoiceBalance, sagged_rail, split_gain3,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::oversample::Oversampler8;
 use crate::dsp::tonestack::{Components, ToneStack};
 
 /// Dual Rectifier front-panel controls, in the order `process` decodes them.
+/// `6.0 / pregain_max` puts the top of the gain knob well past the stage's clipping
+/// rail, so the knob spans clean to slammed on every model.
+const PREAMP_GAIN_COEFF: f32 = 6.0 / 210.0;
+
 pub const KNOBS: &[AmpKnob] = &[
     AmpKnob {
         label: "GAIN",
@@ -231,7 +235,7 @@ impl Amplifier for Mesa {
         // Bright cap across the gain pot (see BrightCap).
         let x = self.bright.process(x, gain);
 
-        let pregain = 1.0 + gain * 30.0;
+        let pregain = 1.0 + gain * 210.0;
         // The bloom amount is kept light so the first stage adds touch-sensitive
         // compression without smearing the note attack or making successive hits
         // feel inconsistent.
@@ -242,21 +246,24 @@ impl Amplifier for Mesa {
         // burying the fundamental under its own overtones. The final silicon stage
         // is still hotter than the tube amp stages, which gives the Recto its
         // modern aggression without letting any one stage run too deep.
-        let g1 = pregain.powf(0.62) * 1.4;
-        let g2 = pregain.powf(0.22) * 1.8;
-        let g3 = (pregain / (pregain.powf(0.62) * pregain.powf(0.22))) * 1.3;
+        // Three-stage cascade. `split_gain3` keeps the total exact while the
+        // exponents keep the front stages ahead of the last one, which is how a real
+        // gain-staged preamp is laid out and what keeps any single stage off its own
+        // clipper's deep-saturation plateau.
+        let (k1, k2, k3) =
+            split_gain3(PREAMP_GAIN_COEFF * pregain, 0.62, 1.4, 0.22, 1.8, 0.16, 1.3);
         let up = self.os.upsample(x);
         let mut down = [0.0f32; 8];
         for (o, &u) in down.iter_mut().zip(up.iter()) {
             let u = self.pre_clip_hp.process(u); // cut sub-bass before clipping
             // Dynamic cathode bias on stage 1, plus hard grid-blocking on truly
             // slammed inputs (DC removed by the inter-stage HP).
-            let d = self.grid.shift(self.cathode.shift((u + bias) * g1));
-            let s = TubeClip::AX7.shape(d) / g1.sqrt();
+            let d = self.grid.shift(self.cathode.shift(u + bias));
+            let s = TubeClip::AX7.stage(d, k1);
             let s = self.stage_hp_1.process(s);
-            let s = TubeClip::AX7.shape(s * g2) / g2.sqrt();
+            let s = TubeClip::AX7.stage(s, k2);
             let s = self.stage_hp_2.process(s);
-            *o = silicon_clip_asym(s * g3) / g3.sqrt();
+            *o = silicon_stage(s, k3);
         }
         let x = self.os.downsample(down);
         // ── end oversampled section ───────────────────────────────────────────
@@ -280,8 +287,18 @@ impl Amplifier for Mesa {
 
         // Output trim: level-match the Recto to the other models so switching
         // doesn't jump in volume (re-measured after the power-drive increase).
-        x * master * 8.03
+        x * master * 6.577
     }
+}
+
+/// Drive the silicon inverter stage for a designed small-signal voltage gain `k`.
+///
+/// The same explicit gain staging as [`TubeClip::stage`], for the Mesa's third
+/// preamp stage — a silicon inverter rather than a triode, so it keeps its own
+/// curve but borrows the staging discipline.
+#[inline]
+fn silicon_stage(x: f32, k: f32) -> f32 {
+    silicon_clip_asym(x * k / INSERTION_LOSS)
 }
 
 /// Asymmetric silicon diode clipper.

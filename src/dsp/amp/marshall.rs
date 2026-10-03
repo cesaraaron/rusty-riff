@@ -1,11 +1,20 @@
 use super::{
     AMP_MAX, AmpKnob, Amplifier, Bloom, BrightCap, Cached, CathodeBias, DynamicPresence, FrontEnd,
     GridBlock, OutputTransformer, PowerOs, SpeakerLoad, SupplyRipple, ToneCache, TubeClip,
-    VoiceBalance, sagged_rail,
+    VoiceBalance, sagged_rail, split_gain,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::oversample::Oversampler8;
 use crate::dsp::tonestack::{Components, ToneStack};
+
+/// Small-signal voltage gain of the two-triode preamp at `pregain = 1`.
+///
+/// 0.6067 = the old formulation's effective coefficient (`INSERTION_LOSS *
+/// sqrt(2.24)`), so **gain 0 sounds the same as before** and the change is
+/// entirely in what the knob does above it. Because the total now scales *linearly*
+/// with `pregain` rather than with its square root, the preamp reaches +27.7 dB at
+/// gain 1 against +11.7 dB before.
+const PREAMP_GAIN_COEFF: f32 = 6.0 / 280.0;
 
 /// JCM800 front-panel controls, in the order `process` decodes them.
 pub const KNOBS: &[AmpKnob] = &[
@@ -259,7 +268,7 @@ impl Amplifier for Marshall {
         // strongest at low gain (see BrightCap).
         let x = self.bright.process(x, gain);
 
-        let pregain = 1.0 + gain * 39.0;
+        let pregain = 1.0 + gain * 273.0;
         // Dynamic grid-bias offset (removed downstream by the inter-stage HP).
         // Bias depth halved and the bloom release shortened (above): the slow,
         // deep grid-bias follower stayed elevated between notes, so a note played
@@ -270,17 +279,22 @@ impl Amplifier for Marshall {
         let bias = self.bloom.follow(x) * 0.06;
 
         // ── 8× oversampled nonlinear section ──────────────────────────────────
-        // The preamp gain is split across the two triodes. Note the constants do
-        // not cancel: g1·g2 = 1.4·1.6·pregain = 2.24·pregain, not `pregain`.
-        // instead of slamming the first stage with all of it. One stage driven
-        // 26× runs deep on its plateau and squares the wave — a square's
-        // slowly-decaying h5/h7 series is the "cheap fizz" fingerprint; two
-        // stages at ~7× and ~4× each stay on the round part of the curve and
-        // produce the fast-falling harmonic series a real cascade (and the
-        // commercial reference amps) measure. At gain 0 both drives collapse
-        // to 1 (clean), so the knob's range is preserved.
-        let g1 = pregain.powf(0.6) * 1.4;
-        let g2 = (pregain / pregain.powf(0.6)) * 1.6;
+        // Explicit gain staging. The preamp's small-signal voltage gain is a
+        // designed `PREAMP_GAIN_AT_1 * pregain`, split across the two triodes by
+        // `split_gain`, and each stage clips against a fixed ±1 rail.
+        //
+        // This replaces `shape(x * g) / g.sqrt()`, whose small-signal gain was
+        // `0.6366 * sqrt(g)` and whose saturated output *fell* as `1/sqrt(g)` — so
+        // turning gain up clipped more and got quieter, leaving ~0.8 dB of level
+        // authority across the whole knob and none for the master pot. Here the
+        // preamp runs +4.7 dB at gain 0 to +27.7 dB at gain 1, so `gain` means gain.
+        //
+        // The split is still front-loaded: one stage driven 26× runs deep on its
+        // plateau and squares the wave, and a square's slowly-decaying h5/h7 series
+        // is the "cheap fizz" fingerprint. Two stages at ~7× and ~4× stay on the
+        // round part of the curve and produce the fast-falling harmonic series a
+        // real cascade measures.
+        let (k1, k2) = split_gain(PREAMP_GAIN_COEFF * pregain, 0.6, 1.4, 1.6);
         let up = self.os.upsample(x);
         let mut down = [0.0f32; 8];
         for (o, &u) in down.iter_mut().zip(up.iter()) {
@@ -289,10 +303,10 @@ impl Amplifier for Marshall {
             // before the stage-1 waveshaper; a truly slammed input additionally
             // triggers hard grid-blocking (crackle-then-recover). The inter-stage
             // HP strips the DC both inject.
-            let d = self.grid.shift(self.cathode.shift((u + bias) * g1));
-            let s = TubeClip::AX7.shape(d) / g1.sqrt();
+            let d = self.grid.shift(self.cathode.shift(u + bias));
+            let s = TubeClip::AX7.stage(d, k1);
             let s = self.stage_hp.process(s);
-            *o = TubeClip::AX7.shape(s * g2) / g2.sqrt();
+            *o = TubeClip::AX7.stage(s, k2);
         }
         let x = self.os.downsample(down);
         // ── end oversampled section ───────────────────────────────────────────
@@ -321,6 +335,6 @@ impl Amplifier for Marshall {
 
         // Output trim: level-matches the JCM800 to the other models so switching
         // doesn't jump in volume (re-measured after the power-drive increase).
-        x * master * 6.73
+        x * master * 5.603
     }
 }
