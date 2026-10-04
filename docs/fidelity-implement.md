@@ -2035,3 +2035,40 @@ no individual metric is large.
 is 0.9975 — transparent to within 0.25%. Wrapping it would cost 4x on a stage that
 cannot alias audibly. Left alone deliberately, and recorded here so it does not read
 as an oversight.
+
+### D6 — the cab's latency is now a number instead of a private constant
+
+`FftConvolver` is overlap-save, so the first output lands one full `P`-sample block
+late: **128 samples, 2.67 ms at 48 kHz and 2.90 ms at 44.1 kHz**. `P` was private to
+`conv.rs`, so nothing outside the convolver could even name the number. It is now
+`pub const P` plus a `pub const fn latency()`, with a test pinning it to both rates.
+
+**The finding's headline claim turned out to be wrong, and I checked rather than
+shipping it.** It says the built-in↔AU A/B is misaligned by 2.67 ms because
+`comp_delay` delays the built-in path by the AU's full latency "without subtracting
+the built-in cab's own 128 samples". I implemented that subtraction — and then
+traced both cases:
+
+- **amp-only AU** (`skip_cab == false`): our cab runs on the AU's output, so the
+  **same** 128 samples are added to *both* the AU path and the built-in path. They
+  are common to the two and **cancel in the difference**.
+- **full-rig AU** (`skip_cab == true`): our cab does not run at all and the built-in
+  amp is bypassed too, so the AU's reported latency already covers its own cab and
+  mic.
+
+So `delay = amp_external_latency` was correct in both cases, and subtracting
+`conv::latency()` would be wrong in both. Reverted, with the reasoning left in the
+code — it reads exactly like an omission otherwise, and the next person would make
+the same subtraction I did.
+
+The finding's other two consequences are real but are not bugs:
+
+- **Every export starts with 128 zeros.** Real, and worth knowing: the preroll feeds
+  *silence*, so the convolver emits 128 zeros before the first recorded sample. It
+  is a constant 2.67 ms offset on a rendered file, applied consistently to every take
+  and to the offline harness (which prerolls the same way), so trimming it would
+  shift every render by 2.67 ms and re-bless the entire baseline to no end. Left
+  alone deliberately.
+- **No UI readout.** `ui/amp_plugins.rs` already displays a *host plugin's* latency,
+  so the machinery is there; showing the built-in cab's 2.67 ms is a small UI addition
+  still to do.

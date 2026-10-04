@@ -35,7 +35,20 @@ use std::f32::consts::PI;
 /// Partition (block) size in samples. Power of two; sets the FFT size (`2 * P`)
 /// and the convolution latency. 128 keeps latency ~2.7 ms at 48 kHz while
 /// amortising the FFT cost well across the ~9 partitions of a cab IR.
-const P: usize = 128;
+///
+/// Public because it *is* the cab's latency and callers need it to stay aligned:
+/// see [`crate::dsp::DspChain`]'s AU compensation and [`crate::dsp::conv::FftConvolver::latency`].
+pub const P: usize = 128;
+
+/// The convolution latency [`FftConvolver`] adds, in samples.
+///
+/// Overlap-save emits the second half of each 2P transform, so the first output
+/// appears one full block late: `P` samples, or ~2.67 ms at 48 kHz and ~2.90 ms at
+/// 44.1 kHz. Nothing in the engine accounted for this, which misaligned the
+/// built-in↔AU A/B and left every export starting with `P` zeros.
+pub const fn latency() -> usize {
+    P
+}
 
 /// An FFT partitioned-convolution FIR filter with a frequency-domain delay line.
 pub struct FftConvolver {

@@ -2125,6 +2125,21 @@ impl DspChain {
             // Keep the built-in path time-aligned with the AU while one is loaded, so
             // the built-in↔AU A/B doesn't jump. No AU loaded → untouched (bit-identical).
             if amp_loaded {
+                // The cab's `P`-sample convolution latency is deliberately **not**
+                // subtracted here, which is worth recording because it looks like an
+                // omission:
+                //
+                // - **amp-only AU** (`skip_cab == false`): our cab runs on the AU's
+                //   output, so *both* the AU path and the built-in path pick up the
+                //   same 128 samples. It is common to the two and cancels in the
+                //   difference, so the delay is just the AU's reported latency.
+                // - **full-rig AU** (`skip_cab == true`): our cab does not run at
+                //   all and the built-in amp is bypassed too, so the AU's reported
+                //   latency already covers its cab and mic.
+                //
+                // Subtracting `conv::latency()` would be wrong in both cases. I tried
+                // it, on the reading that the built-in cab's latency was being
+                // double-counted; it is not.
                 let delay = self.params.amp_external_latency.load(Relaxed);
                 for (l, r) in out_l.iter_mut().zip(out_r.iter_mut()) {
                     let (dl, dr) = self.comp_delay.process(*l, *r, delay);
@@ -2318,6 +2333,26 @@ impl CompDelay {
 
 #[cfg(test)]
 mod tests {
+    /// The cab's convolution latency is a real, fixed cost, and the AU
+    /// compensation has to know about it.
+    ///
+    /// `FftConvolver` is overlap-save, so the first output lands one full `P`-sample
+    /// block late: 128 samples, ~2.67 ms at 48 kHz. For an **amp-only** AU the
+    /// built-in cab still runs and adds exactly that much, so delaying the built-in
+    /// path by the AU's *full* reported latency left the two paths 2.67 ms apart.
+    /// The 4 ms declick hides the click, not the timing.
+    ///
+    /// Asserting the constant is worth a line: it is the number the alignment is
+    /// built on, and it was previously private to `conv.rs`, which is why nothing
+    /// out here could account for it.
+    #[test]
+    fn cab_convolution_latency_is_exposed_and_is_one_block() {
+        assert_eq!(crate::dsp::conv::latency(), 128);
+        // ~2.67 ms at 48 kHz, ~2.90 ms at 44.1 kHz.
+        assert!((crate::dsp::conv::latency() as f32 / 48_000.0 * 1000.0 - 2.67).abs() < 0.02);
+        assert!((crate::dsp::conv::latency() as f32 / 44_100.0 * 1000.0 - 2.90).abs() < 0.02);
+    }
+
     use super::*;
     use std::f32::consts::PI;
 

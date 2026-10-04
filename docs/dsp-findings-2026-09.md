@@ -660,7 +660,7 @@ in a reading of `process`. The declick ramp is also in (worst step across a swit
 hard-cut, 8.2x), reusing `BYPASS_DECLICK_SECS` from B1. Both cabs run for the 6 ms
 fade, which also stops the outgoing one going stale while it fades.
 
-## D6 — Cab latency is invisible · **GAP**
+## D6 — Cab latency is invisible · **GAP — PARTLY FIXED, headline claim was wrong**
 
 The convolver adds exactly **128 samples (2.67 ms @48k, 2.90 ms @44.1k)** and it
 is exposed nowhere. `const P: usize = 128` is **private** (`conv.rs:38`); there
@@ -675,8 +675,20 @@ latency. Three consequences:
 3. **No user-visible latency readout**, despite the machinery existing and
    `ui/amp_plugins.rs:386` already showing a *host plugin's* `latency_ms`.
 
-**Fix.** `pub const` / `latency()` accessor; subtract in `comp_delay`; trim or
-account for in export; show in the UI.
+**PARTLY DONE.** `P` is now `pub` with a `pub const fn latency()` and a test pinning
+128 / 2.67 ms / 2.90 ms.
+
+**The claimed misalignment does not exist.** It says `comp_delay` fails to subtract
+the cab's 128 samples. Traced both cases: for an amp-only AU our cab runs on the
+AU's output, so both paths carry the same 128 samples and they cancel in the
+difference; for a full-rig AU the cab is skipped entirely and the AU's reported
+latency already covers its own cab. `delay = amp_external_latency` is correct in
+both. I implemented the subtraction, found it wrong, and reverted it with the
+reasoning left in the code so nobody repeats it.
+
+Still open: the UI readout, and the export's 128 leading zeros — the latter is a
+consistent 2.67 ms offset on every render, so trimming it would re-bless everything
+for no benefit.
 
 ## D7 — Smaller cab items · **DEFECT / RISK**
 
