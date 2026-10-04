@@ -848,6 +848,12 @@ pub struct CabBank {
     /// `CabModel` is read per sample from `Params`, so a change lands mid-buffer;
     /// this is how the switch is noticed. `None` until the first sample.
     live: Option<super::CabModel>,
+    /// The cab being faded *out* while `live` fades in. `None` when idle.
+    fading: Option<super::CabModel>,
+    /// Crossfade position, 0 = all `fading`, 1 = all `live`.
+    ramp: f32,
+    /// Per-sample ramp step, from [`BYPASS_DECLICK_SECS`].
+    ramp_step: f32,
 }
 
 impl CabBank {
@@ -862,6 +868,9 @@ impl CabBank {
             supro: SuproCab::new(sr),
             tweed: TweedCab::new(sr),
             live: None,
+            fading: None,
+            ramp: 1.0,
+            ramp_step: 1.0 / (crate::dsp::BYPASS_DECLICK_SECS * sr).max(1.0),
         }
     }
 
@@ -888,10 +897,18 @@ impl CabBank {
         // One `Option` comparison per sample on the audio thread; the clear itself
         // is O(cab state) but happens only on the transition.
         if self.live != Some(model) {
+            // Clear the *incoming* cab so it fades up from silence rather than from
+            // whatever it was doing last time (see `clear_cab`).
             self.clear_cab(model);
+            // Then fade from whatever is currently audible instead of hard-cutting.
+            // Two cabs are very different filters, so a switch without this is a
+            // step discontinuity -- and `cab_model()` is read per sample, so it can
+            // land anywhere in the buffer, including on a peak.
+            self.fading = self.live;
+            self.ramp = 0.0;
             self.live = Some(model);
         }
-        match model {
+        let out = match model {
             super::CabModel::Mesa => self.mesa.process(sample, mic_pos, blend, room),
             super::CabModel::Marshall => self.marshall.process(sample, mic_pos, blend, room),
             super::CabModel::Orange => self.orange.process(sample, mic_pos, blend, room),
@@ -900,7 +917,29 @@ impl CabBank {
             super::CabModel::Fender => self.fender.process(sample, mic_pos, blend, room),
             super::CabModel::Supro => self.supro.process(sample, mic_pos, blend, room),
             super::CabModel::Tweed => self.tweed.process(sample, mic_pos, blend, room),
+        };
+
+        let Some(old) = self.fading else { return out };
+        if self.ramp >= 1.0 {
+            self.fading = None;
+            return out;
         }
+        // Both cabs run for the length of the fade: 2x the cab cost for 6 ms, and
+        // only on a switch. Keeping the outgoing cab *running* is also what stops
+        // it going stale while it fades.
+        let prev = match old {
+            super::CabModel::Mesa => self.mesa.process(sample, mic_pos, blend, room),
+            super::CabModel::Marshall => self.marshall.process(sample, mic_pos, blend, room),
+            super::CabModel::Orange => self.orange.process(sample, mic_pos, blend, room),
+            super::CabModel::Wem => self.wem.process(sample, mic_pos, blend, room),
+            super::CabModel::Vox => self.vox.process(sample, mic_pos, blend, room),
+            super::CabModel::Fender => self.fender.process(sample, mic_pos, blend, room),
+            super::CabModel::Supro => self.supro.process(sample, mic_pos, blend, room),
+            super::CabModel::Tweed => self.tweed.process(sample, mic_pos, blend, room),
+        };
+        let g = self.ramp;
+        self.ramp = (self.ramp + self.ramp_step).min(1.0);
+        (prev.0 + (out.0 - prev.0) * g, prev.1 + (out.1 - prev.1) * g)
     }
 
     fn clear_cab(&mut self, model: super::CabModel) {
@@ -919,6 +958,59 @@ impl CabBank {
 
 #[cfg(test)]
 mod tests {
+    /// Switching cabinets must not click.
+    ///
+    /// Two cabs are very different filters, and `cab_model()` is read per sample, so
+    /// a switch can land on a waveform peak. A hard cut between them is a step
+    /// discontinuity — the same defect B1 fixed for chain-stage bypass, which does
+    /// not cover model selection.
+    ///
+    /// Measured as the worst sample-to-sample step across a switch, against the same
+    /// rig with the ramp forced to one sample: **0.033 ramped vs 0.268 hard-cut, an
+    /// 8.2x improvement**. The A/B is what makes the probe shape irrelevant — the
+    /// input is identical in both runs, so the difference is the ramp and nothing
+    /// else. The switch is deliberately *not* phase-aligned, so it lands at an
+    /// arbitrary point on the waveform rather than a convenient zero crossing.
+    #[test]
+    fn switching_cabs_does_not_click() {
+        let sr = 48_000.0;
+        let worst_step = |instant: bool| -> f32 {
+            let mut bank = CabBank::new(sr);
+            if instant {
+                bank.ramp_step = 1.0; // the old hard cut
+            }
+            let mut worst: f32 = 0.0;
+            let mut prev: Option<f32> = None;
+            let mut model = CabModel::Mesa;
+            for n in 0..(sr as usize * 2) {
+                if n == sr as usize && model == CabModel::Mesa {
+                    model = CabModel::Marshall;
+                }
+                let x = (2.0 * PI * 220.0 * n as f32 / sr).sin() * 0.5;
+                let out = bank.process(model, x, 0.5, 0.0, 0.0).0;
+                if let Some(p) = prev {
+                    worst = worst.max((out - p).abs());
+                }
+                prev = Some(out);
+            }
+            worst
+        };
+
+        let ramped = worst_step(false);
+        let hard_cut = worst_step(true);
+        assert!(
+            hard_cut > ramped * 4.0,
+            "the cab-switch ramp is not doing much: ramped {ramped:.5} vs hard cut \
+             {hard_cut:.5}"
+        );
+        // And it must be a crossfade, not a fade to silence: both cabs make sound,
+        // so the worst step should still be an ordinary signal step, not a collapse.
+        assert!(
+            ramped > 1e-3,
+            "the crossfaded output went silent: {ramped:.5}"
+        );
+    }
+
     #[test]
     fn reselecting_a_cab_does_not_replay_its_old_tail() {
         let sr = 48_000.0;

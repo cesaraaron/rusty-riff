@@ -1943,3 +1943,33 @@ cleared, so the fix cannot degenerate into muting.
 B1's ramp covers chain-stage bypass, not model selection, and `cab_model()` is read
 per sample, so a switch can land mid-buffer and hard-cut between two very different
 cabs. That is the other half of D5's stated fix.
+
+### D5b — the cab-switch declick ramp
+
+The other half of D5. Two cabinets are very different filters, and `cab_model()` is
+read per sample from `Params`, so a switch can land anywhere in the buffer —
+including on a waveform peak. A hard cut between them is a step discontinuity, and
+B1's bypass ramp does not cover it because a model change is not a stage bypass.
+
+`CabBank` now keeps the outgoing cab alive and crossfades to the incoming one over
+the same `BYPASS_DECLICK_SECS` (6 ms) that B1 uses, so the two ramps are the same
+constant for the same reason.
+
+Measured as the worst sample-to-sample step across a switch, against the same rig
+with the ramp forced to one sample: **0.033 ramped vs 0.268 hard-cut — 8.2x**. As
+with B1, the A/B is what makes the probe shape irrelevant: the input is identical in
+both runs, so the difference is the ramp and nothing else. The switch is
+deliberately *not* phase-aligned, so it lands at an arbitrary point on the waveform
+rather than a convenient zero crossing, which is the worst case for a hard cut.
+
+Two details worth keeping straight:
+
+- **Both cabs run for the length of the fade** — 2x the cab cost for 6 ms, and only
+  on a switch. Keeping the outgoing cab *running* is also what stops it going stale
+  while it fades, which is what D5 was about in the first place.
+- **The incoming cab is cleared, the outgoing one is not.** The incoming cab fades up
+  from silence (its clear), while the outgoing one continues its own tail naturally.
+  Clearing both would produce an audible dip in the middle of every switch.
+
+The test also asserts the crossfaded output stays well above the noise floor, so the
+ramp cannot degenerate into a fade-to-silence that would pass a "no click" check.

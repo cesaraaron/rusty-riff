@@ -1476,7 +1476,7 @@ const DECLICK_SECS: f32 = 0.004;
 /// longer: a bypass step can be larger than a path switch (a flanger's wet can
 /// be an order of magnitude above its dry), so the ramp has more ground to
 /// cover. Still far below the ~20 ms where a fade starts to read as a swell.
-const BYPASS_DECLICK_SECS: f32 = 0.006;
+pub(crate) const BYPASS_DECLICK_SECS: f32 = 0.006;
 
 pub struct DspChain {
     ng: NoiseGate,

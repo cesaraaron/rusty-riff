@@ -630,7 +630,7 @@ produces HF images.
 **Fix.** Wrap the drive stage in `Oversampler4`; rewrite the alias test with an
 HF-rich input (bright amp into the cab, sweeping or multi-tone).
 
-## D5 — Cab re-selection re-emits stale convolution · **DEFECT — FIXED**
+## D5 — Cab re-selection re-emits stale convolution · **DEFECT — FIXED (incl. ramp)**
 
 `CabBank` (`cab/mod.rs:778-823`) keeps all 8 cabs alive so state survives model
 switches — but the **inactive** cab's `FftConvolver` is never advanced *nor*
@@ -654,9 +654,9 @@ the incoming one on every transition, via new `clear()` methods down to
 `FftConvolver`. The subtle part was that clearing the *time-domain* buffers is not
 enough — the frequency-domain delay line (`x_re`/`x_im`, a ring of `k` past input
 spectra) is what actually carries the ~93 ms of foreign input, and it is invisible
-in a reading of `process`. Still open: there is no declick ramp for a cab *switch*
-(B1's ramp covers chain-stage bypass, not model selection), and `cab_model()` is
-still read per sample.
+in a reading of `process`. The declick ramp is also in (worst step across a switch: 0.033 ramped vs 0.268
+hard-cut, 8.2x), reusing `BYPASS_DECLICK_SECS` from B1. Both cabs run for the 6 ms
+fade, which also stops the outgoing one going stale while it fades.
 
 ## D6 — Cab latency is invisible · **GAP**
 
