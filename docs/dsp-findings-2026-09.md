@@ -605,7 +605,7 @@ downstream of the choice:
 perceived level), add an 8-cab loudness test, and give `ExternalIrCab` a
 matching level so the paths are interchangeable.
 
-## D4 — The cab's nonlinearities are not oversampled · **DEFECT**
+## D4 — The cab's nonlinearities are not oversampled · **DEFECT — FIXED (drive stage)**
 
 `rg oversampl src/dsp/cab/` returns nothing. The cab contains **five** nonlinear
 or time-varying elements, all at base rate (`cab/mod.rs`):
@@ -627,8 +627,10 @@ The Doppler delay line is also only 8 samples (0.17 ms @48k) and is
 length-modulated by a base-rate signal — a linear time-varying filter, which
 produces HF images.
 
-**Fix.** Wrap the drive stage in `Oversampler4`; rewrite the alias test with an
-HF-rich input (bright amp into the cab, sweeping or multi-tone).
+**DONE.** The drive stage runs at `Oversampler4`: the 7 kHz -> 1 kHz fold-back went
+from **0.43 to 0.00011** of the fundamental (−72 dB), and the alias test's bounds went
+from descriptive (0.50) to a real gate (0.005). `mic_sat` was left at base rate on
+purpose — it is transparent to 0.25% at full scale. See `fidelity-implement.md`.
 
 ## D5 — Cab re-selection re-emits stale convolution · **DEFECT — FIXED (incl. ramp)**
 

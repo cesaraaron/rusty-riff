@@ -103,6 +103,15 @@ impl<const N: usize> Oversampler<N> {
     /// decimate back down. This is the canonical "oversample a clipper" loop, so
     /// the drive pedals share it instead of each repeating the up/map/down dance.
     #[inline]
+    /// Zero both mirrored histories, so the interpolator and decimator start from
+    /// silence instead of replaying whatever passed through before.
+    pub fn reset(&mut self) {
+        self.up_hist.fill(0.0);
+        self.dn_hist.fill(0.0);
+        self.up_pos = 0;
+        self.dn_pos = 0;
+    }
+
     pub fn process<F: FnMut(f32) -> f32>(&mut self, x: f32, mut f: F) -> f32 {
         let up = self.upsample(x);
         let mut down = [0.0f32; N];

@@ -1973,3 +1973,65 @@ Two details worth keeping straight:
 
 The test also asserts the crossfaded output stays well above the noise floor, so the
 ramp cannot degenerate into a fade-to-silence that would pass a "no click" check.
+
+### D4 — the cab's drive stage ran at base rate and folded bright tones down an octave
+
+The speaker drive stage — motor droop, cone breakup, thermal power compression and
+Doppler FM — is four mechanisms, all nonlinear or time-varying, and all of them ran
+at base rate. The audible consequence was measured and is severe: **a 7 kHz tone
+folded down to 1 kHz at 0.43 of the fundamental**, so a bright amp produced a
+*pitched* artifact an octave below the note instead of just some fizz.
+
+**Fix.** The stage now runs at `Oversampler4`. 4x rather than the amps' 8x because
+its own bandwidth is bounded — the cone displacement low-pass and the short Doppler
+delay both sit well below Nyquist, whereas the amps take a full-bandwidth DI.
+
+Measured on that same 7 kHz probe, fold-back product as a fraction of the
+fundamental:
+
+| | before | after |
+| --- | --- | --- |
+| 1 kHz (in band) | 0.43 | **0.00011** |
+| 6 kHz | — | 0.00039 |
+| 8 kHz | — | 0.00041 |
+| 13 kHz | — | 0.00003 |
+
+**−72 dB on the audible one.** `hf_input_folds_back_into_the_passband_documented`
+was written to *measure* this defect, so its bounds were loose enough to pass
+against it (0.50 in band, 0.02 out). It is now a real gate at 0.005 / 0.001 — about
+45x tighter than the measured result, so it will catch a regression without being
+brittle.
+
+**Two bugs of my own, caught by the baseline rather than by reasoning.** Both were
+in adapting base-rate quantities to the oversampled stage, and both are the kind of
+thing that sounds plausible in review:
+
+1. **The Doppler delay silently became a quarter of its length.** `DOPPLER_BASE`
+   and `DOPPLER_DEPTH` are in *samples*, so running the stage at 4x made the
+   fractional delay 4x shorter — a completely different comb. The buffer also had to
+   grow from 8 to 16 to hold the scaled maximum. This one shifted the whole spectrum
+   by ~0.5 dB and is why there is now a `DRIVE_OS_RATE` constant whose doc says
+   outright that base-rate sample counts must be scaled by it.
+2. **The compression envelope was fed an interpolated subsample.** The follower is
+   millisecond-scale, so it has to update at base rate — but with the loop running
+   at 4x the obvious wiring fed it one of the interpolator's phases, which is a
+   *different point on the waveform* than the base-rate sample. The thermal
+   compression amount therefore shifted and the level moved. It now takes the mean
+   of the four subsample magnitudes and is applied one sample late, which is
+   inaudible against a millisecond time constant.
+
+**Cost: none measurable.** `examples/bench` reads **5.54%** of the 10 ms realtime
+budget on the heaviest preset, against 5.64% before this change — inside run-to-run
+noise. The windowed-sinc filters are short relative to the work they replace.
+
+**Baseline re-blessed.** 61 metrics moved, all between 0.2 and 1.2 dB and
+**bidirectional** across 111 Hz – 7.1 kHz, with no loudness or crest violation —
+which is the signature of a genuine aliasing fix rather than a miswire: energy that
+used to fold *onto* a probe frequency now stays where it belongs, so some bins rise
+and some fall. Worth a listen, since the character is slightly different even though
+no individual metric is large.
+
+**Not oversampled: `mic_sat`.** It is `(x * 0.12).tanh() / 0.12`, which at full scale
+is 0.9975 — transparent to within 0.25%. Wrapping it would cost 4x on a stage that
+cannot alias audibly. Left alone deliberately, and recorded here so it does not read
+as an oversight.

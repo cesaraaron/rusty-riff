@@ -11,6 +11,7 @@ pub mod wem;
 
 use crate::dsp::biquad::Biquad;
 use crate::dsp::conv::FftConvolver;
+use crate::dsp::oversample::Oversampler4;
 
 pub use external::{ExternalIrCab, LIVE_MAX_IR_LEN, LoadedIr, MAX_IR_LEN, load_ir};
 pub use fender::FenderCab;
@@ -166,13 +167,25 @@ const SPKR_SENS: f32 = 3.5;
 /// before the mic picks the sound up: displacement-driven motor droop, stateless
 /// [`cone_breakup`] saturation, voice-coil thermal power compression, and
 /// displacement-driven Doppler FM on the radiated output.
+/// The rate the speaker drive stage runs at. See [`SpeakerDrive::process`].
+///
+/// Anything expressed in **base-rate samples** inside that stage has to be scaled
+/// by this, or it silently becomes `N` times shorter. The Doppler delay is the
+/// case that bites.
+const DRIVE_OS_RATE: f32 = 4.0;
+
 struct SpeakerDrive {
     env: f32,
     atk: f32,
     rel: f32,
     disp_lp: Biquad,
-    dop_buf: [f32; 8],
+    /// Sized for [`DRIVE_OS_RATE`] x the longest Doppler delay in base-rate
+    /// samples: `(DOPPLER_BASE + DOPPLER_DEPTH * 1.5) * 4` ~ 10.7, rounded up.
+    dop_buf: [f32; 16],
     dop_pos: usize,
+    /// The drive stage runs at 4x because every interesting part of it is
+    /// nonlinear or time-varying. See [`SpeakerDrive::process`].
+    os: Oversampler4,
 }
 
 impl SpeakerDrive {
@@ -184,6 +197,7 @@ impl SpeakerDrive {
         self.disp_lp.clear();
         self.dop_buf.fill(0.0);
         self.dop_pos = 0;
+        self.os.reset();
     }
 
     fn new(sr: f32) -> Self {
@@ -193,44 +207,86 @@ impl SpeakerDrive {
             atk: coeff(PC_ATK_MS),
             rel: coeff(PC_REL_MS),
             disp_lp: Biquad::lowpass(sr, DISP_FC, DISP_Q),
-            dop_buf: [0.0; 8],
+            dop_buf: [0.0; 16],
             dop_pos: 0,
+            os: Oversampler4::new(sr),
         }
     }
 
     /// Motor droop → cone breakup → thermal power compression → Doppler FM.
     /// The compression envelope tracks the signal with a fast-ish attack and slow
     /// release (so transients pass and only sustained level compresses).
+    ///
+    /// **Runs at 4x.** Every mechanism in this stage is either a hard nonlinearity
+    /// or a time-varying one, and at base rate they all fold back:
+    ///
+    /// - `cone_breakup` is a `tanh` fed from `SPKR_SENS = 3.5`, so a hot amp drives
+    ///   it to ~4 and it behaves as a near-hard clipper. Its harmonics alias
+    ///   straight down: measured, a 7 kHz tone folds to 1 kHz at **0.43** of the
+    ///   fundamental — an audible pitched artifact out of a bright amp.
+    /// - Motor droop and thermal compression are `1/(1+k·d²)` and `1/(1+k·over)`,
+    ///   both strongly level-dependent gains.
+    /// - The Doppler delay is *fractionally* modulated, which is a linear
+    ///   time-varying filter and generates HF images on its own.
+    ///
+    /// 4x rather than 8x because the drive stage's own bandwidth is limited — the
+    /// cone displacement low-pass and the 8-sample delay sit well below Nyquist, so
+    /// the images that survive are already low. The amps use 8x because their input
+    /// is a raw DI with full-bandwidth harmonics.
+    ///
+    /// The compression envelope is updated once per **base** sample and held across
+    /// the four subsamples: its time constants are milliseconds, so running it at
+    /// 4x would change its attack and release by 4x. This is the same reasoning the
+    /// amps use for `supply`.
     #[inline]
     fn process(&mut self, x: f32) -> f32 {
         // Shift the operating point to the amps' real output range (undone at
         // the end, so the stage stays unit-gain for small signals).
         let x = x * SPKR_SENS;
-        // Instantaneous cone displacement (bounded so a hot amp can't blow up
-        // the droop/Doppler maths).
-        let d = self.disp_lp.process(x).clamp(-1.5, 1.5);
+        // Thermal compression from the *previous* sample's envelope. The follower is
+        // millisecond-scale, so one sample of delay against it is inaudible — and it
+        // has to be a sample of delay, because the value has to exist before the
+        // subsample loop that needs it.
+        let over = (self.env - PC_THRESHOLD).max(0.0);
+        let up = self.os.upsample(x);
+        let mut down = [0.0f32; 4];
+        let mut mag_sum = 0.0f32;
+        for (o, &u) in down.iter_mut().zip(up.iter()) {
+            // Instantaneous cone displacement (bounded so a hot amp can't blow up
+            // the droop/Doppler maths).
+            let d = self.disp_lp.process(u).clamp(-1.5, 1.5);
 
-        // Motor (Bl) droop: displacement-synchronous gain on the whole signal.
-        let x = x / (1.0 + BL_DROOP_K * d * d);
+            // Motor (Bl) droop: displacement-synchronous gain on the whole signal.
+            let y = u / (1.0 + BL_DROOP_K * d * d);
 
-        let x = cone_breakup(x);
-        let a = x.abs();
+            let y = cone_breakup(y);
+            mag_sum += y.abs();
+            let y = y / (1.0 + PC_RATIO_K * over);
+
+            // Doppler: read the output through a short delay line whose length is
+            // modulated by displacement (linear interpolation; sub-sample swing).
+            self.dop_buf[self.dop_pos] = y;
+            let len = self.dop_buf.len();
+            // Base-rate samples -> oversampled samples. Without this the delay is
+            // 4x shorter at 4x rate, which is a completely different sound.
+            let delay = (DOPPLER_BASE + DOPPLER_DEPTH * d) * DRIVE_OS_RATE;
+            let ipart = delay as usize;
+            let frac = delay - ipart as f32;
+            let i0 = (self.dop_pos + len - ipart) % len;
+            let i1 = (self.dop_pos + len - ipart - 1) % len;
+            self.dop_pos = (self.dop_pos + 1) % len;
+            *o = self.dop_buf[i0] * (1.0 - frac) + self.dop_buf[i1] * frac;
+        }
+        // Envelope follower, base rate, fed the mean of the four subsample
+        // magnitudes. Feeding it a single subsample instead is subtly wrong: the
+        // interpolator's phases are different points on the waveform than the
+        // base-rate sample, so the follower would track a slightly different signal
+        // and shift the thermal compression — which moves the level and the whole
+        // spectrum, not just the aliasing.
+        let a = mag_sum * 0.25;
         let coeff = if a > self.env { self.atk } else { self.rel };
         self.env += (a - self.env) * coeff;
-        let over = (self.env - PC_THRESHOLD).max(0.0);
-        let x = x / (1.0 + PC_RATIO_K * over);
-
-        // Doppler: read the output through a short delay line whose length is
-        // modulated by displacement (linear interpolation; sub-sample swing).
-        self.dop_buf[self.dop_pos] = x;
-        let len = self.dop_buf.len();
-        let delay = DOPPLER_BASE + DOPPLER_DEPTH * d;
-        let ipart = delay as usize;
-        let frac = delay - ipart as f32;
-        let i0 = (self.dop_pos + len - ipart) % len;
-        let i1 = (self.dop_pos + len - ipart - 1) % len;
-        self.dop_pos = (self.dop_pos + 1) % len;
-        (self.dop_buf[i0] * (1.0 - frac) + self.dop_buf[i1] * frac) / SPKR_SENS
+        self.os.downsample(down) / SPKR_SENS
     }
 }
 
@@ -958,19 +1014,6 @@ impl CabBank {
 
 #[cfg(test)]
 mod tests {
-    /// Switching cabinets must not click.
-    ///
-    /// Two cabs are very different filters, and `cab_model()` is read per sample, so
-    /// a switch can land on a waveform peak. A hard cut between them is a step
-    /// discontinuity — the same defect B1 fixed for chain-stage bypass, which does
-    /// not cover model selection.
-    ///
-    /// Measured as the worst sample-to-sample step across a switch, against the same
-    /// rig with the ramp forced to one sample: **0.033 ramped vs 0.268 hard-cut, an
-    /// 8.2x improvement**. The A/B is what makes the probe shape irrelevant — the
-    /// input is identical in both runs, so the difference is the ramp and nothing
-    /// else. The switch is deliberately *not* phase-aligned, so it lands at an
-    /// arbitrary point on the waveform rather than a convenient zero crossing.
     #[test]
     fn switching_cabs_does_not_click() {
         let sr = 48_000.0;
@@ -1401,13 +1444,28 @@ mod tests {
                     }
                 });
 
+        // **Regression bound, not a description.** This test was written as a
+        // measurement — it recorded that a 7 kHz tone folds to 1 kHz at 0.43 of the
+        // fundamental — and the bounds were set loose enough to pass against the
+        // defect it was documenting. Now that the drive stage runs at 4x (D4) the
+        // bound is the actual gate.
+        //
+        // 0.50 → 0.005 for the in-band product, and the measured result is
+        // **0.00011** — a 72 dB improvement. The fold-back at 1 kHz is the one you
+        // can actually hear: it turns a bright tone into a pitched tone an octave
+        // down. 0.005 of the fundamental is ≈ −46 dB.
         assert!(
-            in_band < 0.50,
-            "in-band fold-back grew to {in_band:.4} of the fundamental (was 0.43)"
+            in_band < 0.005,
+            "in-band fold-back is {in_band:.4} of the fundamental — the 7 kHz tone \
+             is still aliasing down to 1 kHz (pre-D4 it was 0.43)"
         );
+        // 0.02 → 0.001 out of band, measured 0.00041. 6/8/13/15 kHz products are far
+        // more attenuated by the cab's own rolloff; the point is they must not come
+        // back.
         assert!(
-            out_of_band < 0.02,
-            "out-of-band fold-back grew to {out_of_band:.4} of the fundamental (was 0.010)"
+            out_of_band < 0.001,
+            "out-of-band fold-back grew to {out_of_band:.4} of the fundamental \
+             (pre-D4 it was 0.010)"
         );
     }
 
