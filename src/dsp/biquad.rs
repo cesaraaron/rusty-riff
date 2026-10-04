@@ -180,6 +180,16 @@ impl Biquad {
 
     // ── High shelf ───────────────────────────────────────────────────────────
 
+    /// Zero the delay line without touching the coefficients.
+    ///
+    /// Needed wherever a filter's *history* is stale rather than its tuning — most
+    /// importantly the cabinets, which all eight instances are kept alive so their
+    /// state survives a model switch. See `CabBank`.
+    pub fn clear(&mut self) {
+        self.z1 = 0.0;
+        self.z2 = 0.0;
+    }
+
     pub fn high_shelf(sr: f32, freq: f32, gain_db: f32) -> Self {
         let mut b = Self::unity();
         b.init_coeffs(Self::high_shelf_coeffs(sr, freq, gain_db));

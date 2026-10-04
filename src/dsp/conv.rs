@@ -159,6 +159,31 @@ impl FftConvolver {
         y
     }
 
+    /// Zero the input history, the pending output and the frequency-domain delay
+    /// line, keeping the loaded IR.
+    ///
+    /// Without this, a convolver that has been sitting idle re-emits whatever was
+    /// in `out_buf` when it was last advanced: `process` returns `out_buf[fill]`
+    /// *before* computing the next block, so an untouched convolver replays up to
+    /// `P` stale samples and then convolves a delay line full of foreign input.
+    /// See `CabBank`.
+    pub fn clear(&mut self) {
+        // The frequency-domain delay line first: this is the one that actually
+        // matters. It is a ring of `k` past *input spectra*, so forgetting it leaves
+        // the convolver summing the previous input's spectrum against the IR for a
+        // further `ir_len` (~93 ms) no matter how clean the time-domain buffers are.
+        self.x_re.fill(0.0);
+        self.x_im.fill(0.0);
+        self.fdl_pos = 0;
+        self.in_buf.fill(0.0);
+        self.out_buf.fill(0.0);
+        self.acc_re.fill(0.0);
+        self.acc_im.fill(0.0);
+        self.sre.fill(0.0);
+        self.sim.fill(0.0);
+        self.fill = 0;
+    }
+
     /// Run one block of overlap-save: FFT the 2P input window, accumulate the
     /// frequency-domain delay line against the IR spectra, inverse-FFT, and keep
     /// the alias-free second half as the next output block.

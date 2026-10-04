@@ -94,6 +94,11 @@ struct Comb {
 }
 
 impl Comb {
+    fn clear(&mut self) {
+        self.buf.fill(0.0);
+        self.pos = 0;
+    }
+
     fn new(sr: f32, max_ms: f32) -> Self {
         let n = (sr * max_ms / 1000.0) as usize + 2;
         Self {
@@ -171,6 +176,16 @@ struct SpeakerDrive {
 }
 
 impl SpeakerDrive {
+    /// Zero every piece of state that would otherwise carry over from a previous
+    /// selection: the envelope follower, the cone displacement low-pass and the
+    /// 8-sample Doppler delay.
+    fn clear(&mut self) {
+        self.env = 0.0;
+        self.disp_lp.clear();
+        self.dop_buf.fill(0.0);
+        self.dop_pos = 0;
+    }
+
     fn new(sr: f32) -> Self {
         let coeff = |ms: f32| 1.0 - (-1.0 / (sr * ms / 1000.0)).exp();
         Self {
@@ -287,6 +302,12 @@ struct ConeSpread {
 }
 
 impl ConeSpread {
+    fn clear(&mut self) {
+        self.buf.fill(0.0);
+        self.pos = 0;
+        self.lp.clear();
+    }
+
     fn new(sr: f32, layout: CabLayout) -> Self {
         let path = |cone_dist: f32| (cone_dist * cone_dist + MIC_DIST_M * MIC_DIST_M).sqrt();
         let delay = |p: f32| ((p - MIC_DIST_M) / SOUND_SPEED_M_S * sr) as usize;
@@ -426,6 +447,13 @@ struct GrilleEcho {
 }
 
 impl GrilleEcho {
+    fn clear(&mut self) {
+        self.buf.fill(0.0);
+        self.pos = 0;
+        self.grille_hp.clear();
+        self.dust_hp.clear();
+    }
+
     fn new(sr: f32) -> Self {
         let samples = |m: f32| m / SOUND_SPEED_M_S * sr;
         let d_grille = samples(2.0 * GRILLE_STANDOFF_M);
@@ -558,6 +586,11 @@ struct MicBlend {
 }
 
 impl MicBlend {
+    fn clear(&mut self) {
+        self.conv_l.clear();
+        self.conv_r.clear();
+    }
+
     fn new(irs: [Vec<f32>; 6]) -> Self {
         let [close_l, close_r, ribbon_l, ribbon_r, room_l, room_r] = irs;
         let cap = close_l.len() + 1;
@@ -620,6 +653,12 @@ struct MicChannel {
 }
 
 impl MicChannel {
+    fn clear(&mut self) {
+        self.prox.clear();
+        self.shelf.clear();
+        self.comb.clear();
+    }
+
     fn new(sr: f32) -> Self {
         Self {
             prox: Biquad::low_shelf(sr, PROX_FREQ, 0.0),
@@ -663,6 +702,12 @@ pub(crate) struct MicPosition {
 }
 
 impl MicPosition {
+    fn clear(&mut self) {
+        self.l.clear();
+        self.r.clear();
+        self.last_pos = 0.0;
+    }
+
     pub(crate) fn new(sr: f32) -> Self {
         Self {
             sr,
@@ -756,6 +801,19 @@ impl BlendedCab {
         }
     }
 
+    /// Zero every piece of state, keeping the loaded IRs and tuning.
+    ///
+    /// Called when a cabinet is *selected*, because all eight are kept alive so
+    /// their state would otherwise survive a model switch — and that stale state is
+    /// the bug. See [`CabBank`].
+    pub fn clear(&mut self) {
+        self.speaker.clear();
+        self.spread.clear();
+        self.grille.clear();
+        self.blend.clear();
+        self.mic.clear();
+    }
+
     /// Set the per-cab output level trim (see the `level` field).
     pub fn set_level(&mut self, level: f32) {
         self.level = level;
@@ -785,6 +843,11 @@ pub struct CabBank {
     fender: FenderCab,
     supro: SuproCab,
     tweed: TweedCab,
+    /// The cab that processed the previous sample.
+    ///
+    /// `CabModel` is read per sample from `Params`, so a change lands mid-buffer;
+    /// this is how the switch is noticed. `None` until the first sample.
+    live: Option<super::CabModel>,
 }
 
 impl CabBank {
@@ -798,6 +861,7 @@ impl CabBank {
             fender: FenderCab::new(sr),
             supro: SuproCab::new(sr),
             tweed: TweedCab::new(sr),
+            live: None,
         }
     }
 
@@ -810,6 +874,23 @@ impl CabBank {
         blend: f32,
         room: f32,
     ) -> (f32, f32) {
+        // **Clear on selection.** All eight cabs stay alive so their filter state
+        // survives a switch, but that is exactly the defect: an inactive cab is
+        // neither advanced nor reset, so `FftConvolver::process` keeps returning
+        // the `out_buf` it filled while it *was* live — a hard switch replays up to
+        // 128 stale samples (2.7 ms at 48 kHz) and then convolves a delay line full
+        // of the previous cabinet for a further `ir_len` (~93 ms).
+        //
+        // Mesa -> Marshall -> Mesa used to audibly re-emit the first cab's tail
+        // twice. Clearing the incoming cab makes a switch start from silence, which
+        // is what a freshly-selected cab should do.
+        //
+        // One `Option` comparison per sample on the audio thread; the clear itself
+        // is O(cab state) but happens only on the transition.
+        if self.live != Some(model) {
+            self.clear_cab(model);
+            self.live = Some(model);
+        }
         match model {
             super::CabModel::Mesa => self.mesa.process(sample, mic_pos, blend, room),
             super::CabModel::Marshall => self.marshall.process(sample, mic_pos, blend, room),
@@ -821,10 +902,90 @@ impl CabBank {
             super::CabModel::Tweed => self.tweed.process(sample, mic_pos, blend, room),
         }
     }
+
+    fn clear_cab(&mut self, model: super::CabModel) {
+        match model {
+            super::CabModel::Mesa => self.mesa.clear(),
+            super::CabModel::Marshall => self.marshall.clear(),
+            super::CabModel::Orange => self.orange.clear(),
+            super::CabModel::Wem => self.wem.clear(),
+            super::CabModel::Vox => self.vox.clear(),
+            super::CabModel::Fender => self.fender.clear(),
+            super::CabModel::Supro => self.supro.clear(),
+            super::CabModel::Tweed => self.tweed.clear(),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn reselecting_a_cab_does_not_replay_its_old_tail() {
+        let sr = 48_000.0;
+        let mut bank = CabBank::new(sr);
+        // `input` of 0.0 drives silence through the cab — which is the whole point:
+        // with a silent input *any* output is stale state leaking through, so the
+        // test does not have to guess how much of a live signal is "real".
+        let run = |bank: &mut CabBank, model: CabModel, n: usize, input: bool| -> Vec<f32> {
+            (0..n)
+                .map(|i| {
+                    let x = if input {
+                        (2.0 * PI * 110.0 * i as f32 / sr).sin() * 0.5
+                    } else {
+                        0.0
+                    };
+                    bank.process(model, x, 0.5, 0.0, 0.0).0
+                })
+                .collect()
+        };
+
+        // Warm the Mesa with real signal so it has plenty of state.
+        let first = run(&mut bank, CabModel::Mesa, 8_000, true);
+        assert!(
+            first.iter().filter(|&&v| v.abs() > 1e-4).count() > 100,
+            "the Mesa produced no output to begin with"
+        );
+
+        // Switch away and come back — both times in silence.
+        let _ = run(&mut bank, CabModel::Marshall, 4_000, false);
+        let again = run(&mut bank, CabModel::Mesa, 8_000, false);
+
+        // The first `ir_len` after re-selection must be clean. Generous bound:
+        // the partition is 128 samples and the IRs run to ~93 ms.
+        let quiet = 4_448; // 92.7 ms at 48 kHz
+        let leaked = again[..quiet].iter().fold(0.0f32, |m, &v| m.max(v.abs()));
+        assert!(
+            leaked < 1e-6,
+            "re-selecting the Mesa replayed stale output: peak {leaked:.6} over the \
+             first {quiet} samples after the switch"
+        );
+    }
+
+    /// And the switch must not just be quiet — it must still make sound.
+    #[test]
+    fn a_cleared_cab_still_produces_output() {
+        let sr = 48_000.0;
+        let mut bank = CabBank::new(sr);
+        for model in [
+            CabModel::Mesa,
+            CabModel::Marshall,
+            CabModel::Vox,
+            CabModel::Tweed,
+        ] {
+            let out: Vec<f32> = (0..8_000)
+                .map(|i| {
+                    let x = (2.0 * PI * 110.0 * i as f32 / sr).sin() * 0.5;
+                    bank.process(model, x, 0.5, 0.0, 0.0).0
+                })
+                .collect();
+            let tail = &out[4_000..];
+            let peak = tail.iter().fold(0.0f32, |m, &v| m.max(v.abs()));
+            assert!(
+                peak > 1e-4,
+                "{model:?} went silent after a clear (peak {peak:.6})"
+            );
+        }
+    }
     use super::*;
     use crate::dsp::CabModel;
     use std::f32::consts::PI;

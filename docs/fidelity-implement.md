@@ -1895,3 +1895,51 @@ it needs is (1) the h3 investigation above, (2) a listening pass over the artist
 presets before and after, and (3) a decision on whether `VoiceBalance` should be
 re-tuned — its fixed shelves exist to absorb exactly the insertion loss C1 removes,
 so they become redundant at best and wrong at worst.
+
+### D5 — re-selecting a cab replayed the old cabinet's tail
+
+`CabBank` keeps all eight cabs alive so their state survives a model switch. That
+*is* the bug: an inactive cab is neither advanced nor reset, and
+`FftConvolver::process` returns `out_buf[fill]` **before** computing the next
+block, so a cab that has been sitting idle keeps emitting whatever it last
+computed. Mesa → Marshall → Mesa audibly re-emitted the first cab's tail twice —
+~128 stale samples (2.7 ms) immediately, then a stale `fill` phase, then the
+frequency-domain delay line still summing the first cab's input against the IR for
+a further `ir_len` (~93 ms).
+
+**Fix.** `CabBank` now tracks which cab is live and clears the incoming one on each
+transition — one `Option` comparison per sample on the audio thread, with the clear
+itself happening only on the transition. `clear()` was added down the chain:
+`Biquad::clear` (state only, coefficients kept), `FftConvolver::clear`, and
+`clear` on `Comb`, `MicChannel`, `SpeakerDrive`, `ConeSpread`, `GrilleEcho`,
+`MicPosition`, `MicBlend`, `BlendedCab`, and each of the eight cab wrappers. One
+`BlendedCab::clear()` covers all eight, since they are all thin wrappers.
+
+> **The part that a careful reading misses.** The obvious fix — zero the time-domain
+> buffers — is not enough, and the test proves it rather than the reasoning.
+>
+> | | peak after 8000 samples of **silence** |
+> | --- | --- |
+> | no clear | 0.555 (the cab's legitimate tail) |
+> | `clear()` zeroing `in_buf`/`out_buf`/`acc_*`/scratch | **0.212** |
+> | also zeroing the frequency-domain delay line | **0.000** |
+>
+> `FftConvolver`'s `process` path reads `in_buf`, `out_buf`, `fill` and the
+> accumulator — all of which I zeroed first — so the residual looked impossible.
+> The state that actually carries the old cabinet is `x_re`/`x_im`, a ring of `k`
+> **past input spectra** with its own `fdl_pos`. Nothing in the `process` function
+> names them, so they read as configuration next to the IR spectra `h_re`/`h_im`.
+> Zeroing them (and resetting `fdl_pos`) is what finally silences it: 0.212 → 0.
+
+The tests deliberately drive **silence** after the switch. An earlier draft fed a
+live 220 Hz sine and measured 0.68 of output, which looked like a failure but was
+simply the new cab responding correctly — with a live input there is no way to
+separate "stale" from "fresh" by magnitude. With silence, any output at all is
+stale by definition, so the assertion needs no judgement about how much of a live
+signal is real. A second test confirms each cab still produces output after being
+cleared, so the fix cannot degenerate into muting.
+
+**Still open on cab switching:** there is no declick ramp for a cab *model* change.
+B1's ramp covers chain-stage bypass, not model selection, and `cab_model()` is read
+per sample, so a switch can land mid-buffer and hard-cut between two very different
+cabs. That is the other half of D5's stated fix.

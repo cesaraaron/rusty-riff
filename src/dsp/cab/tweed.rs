@@ -115,6 +115,12 @@ const ROOM_TEX_R: Texture = Texture {
 };
 
 impl TweedCab {
+    /// Zero all state (see [`BlendedCab::clear`]). Called by `CabBank`
+    /// when this cab is selected.
+    pub fn clear(&mut self) {
+        self.inner.clear();
+    }
+
     pub fn new(sr: f32) -> Self {
         let len = ir::ir_len(sr);
         let synth = |v: &mut dyn FnMut(f32) -> f32, t: &Texture| ir::synth(sr, len, v, t);
