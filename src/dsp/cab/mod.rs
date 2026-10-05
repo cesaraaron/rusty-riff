@@ -639,7 +639,27 @@ struct MicBlend {
     scratch_r: Vec<f32>,
     last_blend: f32,
     last_room: f32,
+    /// Samples until another recombine is permitted — see [`MIC_BLEND_RECOMBINE_INTERVAL`].
+    cooldown: u32,
 }
+
+/// How often [`MicBlend`] may recombine its taps, in samples.
+///
+/// `recombine` is 2x~4.5k multiply-adds plus two `FftConvolver::load`s (~70
+/// FFT(256) in total) — measured at 0.3–0.5 ms, or **12–19% of a 128-frame block
+/// budget in a single call**. It only runs when a blend knob moves, so it is free
+/// in normal playing, but a fast sweep across a knob arrives as a burst of
+/// parameter changes and would otherwise bunch that cost into consecutive samples.
+///
+/// 128 is one block, so the worst case is one recombine per block and the added
+/// latency on a knob move is at most 2.7 ms — well below where a mic-blend sweep
+/// reads as lag.
+///
+/// **This is a mitigation, not the fix.** The real answer is to recombine on the
+/// control thread and hand the finished taps over, so no FFT ever runs on the audio
+/// thread at all. That needs the blend knobs pushed rather than polled, which is a
+/// UI-side change; until then this bounds the damage.
+const MIC_BLEND_RECOMBINE_INTERVAL: u32 = 128;
 
 impl MicBlend {
     fn clear(&mut self) {
@@ -648,13 +668,28 @@ impl MicBlend {
     }
 
     fn new(irs: [Vec<f32>; 6]) -> Self {
-        let [close_l, close_r, ribbon_l, ribbon_r, room_l, room_r] = irs;
-        let cap = close_l.len() + 1;
+        let [mut close_l, mut close_r, ribbon_l, ribbon_r, room_l, room_r] = irs;
+        // Every IR in a blend must be the same length: they are summed sample by
+        // sample into one tap vector, and `recombine` walks that vector. Truncating
+        // to the shortest is the only choice that cannot lose content from the
+        // longest in a way that matters -- a few trailing zeros of one mic against
+        // another's tail is inaudible, whereas an out-of-bounds read on the audio
+        // thread is a crash.
+        let len = close_l
+            .len()
+            .min(close_r.len())
+            .min(ribbon_l.len())
+            .min(ribbon_r.len())
+            .min(room_l.len())
+            .min(room_r.len());
+        close_l.truncate(len);
+        close_r.truncate(len);
+        let cap = len + 1;
         let mut blend = Self {
             conv_l: FftConvolver::new(cap),
             conv_r: FftConvolver::new(cap),
-            scratch_l: vec![0.0; close_l.len()],
-            scratch_r: vec![0.0; close_r.len()],
+            scratch_l: vec![0.0; len],
+            scratch_r: vec![0.0; len],
             close_l,
             close_r,
             ribbon_l,
@@ -663,6 +698,7 @@ impl MicBlend {
             room_r,
             last_blend: -1.0,
             last_room: -1.0,
+            cooldown: 0,
         };
         blend.recombine(0.0, 0.0);
         blend
@@ -671,8 +707,15 @@ impl MicBlend {
     /// Reload the convolver taps if the blend changed. `blend` 0 = close dynamic …
     /// 1 = ribbon; `room` 0–1 = ambient room amount.
     fn set(&mut self, blend: f32, room: f32) {
+        // Rate limit: see `MIC_BLEND_RECOMBINE_INTERVAL`. Checked before the change
+        // test so the countdown runs even while nothing is moving.
+        if self.cooldown > 0 {
+            self.cooldown -= 1;
+            return;
+        }
         if (blend - self.last_blend).abs() > 0.001 || (room - self.last_room).abs() > 0.001 {
             self.recombine(blend, room);
+            self.cooldown = MIC_BLEND_RECOMBINE_INTERVAL;
         }
     }
 
@@ -680,11 +723,22 @@ impl MicBlend {
         let wc = 1.0 - blend; // close dynamic weight
         let wr = blend; // ribbon weight
         let wroom = room * 0.9; // room ambience: real captures carry ~25% late energy
+        // Zero-padded reads, not indexing. `scratch` is sized from `close_l.len()`
+        // and this used to index `ribbon_l` / `room_l` with that same bound, so a
+        // shorter ribbon or room IR would **panic on the audio thread**. The IRs are
+        // generated rather than loaded, so their lengths agreeing is an accident of
+        // the generator rather than a contract -- and `external.rs` can load
+        // arbitrary IRs. `new` normalises the lengths, and this is the belt to that
+        // braces: a short IR contributes silence rather than an out-of-bounds read.
         for (i, s) in self.scratch_l.iter_mut().enumerate() {
-            *s = wc * self.close_l[i] + wr * self.ribbon_l[i] + wroom * self.room_l[i];
+            *s = wc * self.close_l[i]
+                + wr * self.ribbon_l.get(i).copied().unwrap_or(0.0)
+                + wroom * self.room_l.get(i).copied().unwrap_or(0.0);
         }
         for (i, s) in self.scratch_r.iter_mut().enumerate() {
-            *s = wc * self.close_r[i] + wr * self.ribbon_r[i] + wroom * self.room_r[i];
+            *s = wc * self.close_r[i]
+                + wr * self.ribbon_r.get(i).copied().unwrap_or(0.0)
+                + wroom * self.room_r.get(i).copied().unwrap_or(0.0);
         }
         self.conv_l.load(&self.scratch_l);
         self.conv_r.load(&self.scratch_r);
@@ -1014,6 +1068,86 @@ impl CabBank {
 
 #[cfg(test)]
 mod tests {
+    /// A ragged set of per-mic IRs must not panic on the audio thread.
+    ///
+    /// `recombine` sums three IRs sample by sample into one tap vector and used to
+    /// walk that vector with `close_l.len()` as the bound for all three. The IRs are
+    /// generated so their lengths agree in practice, which is why this never fired —
+    /// but `external.rs` can load arbitrary IRs, and an out-of-bounds read on the
+    /// audio thread is a crash rather than a bad sound.
+    #[test]
+    fn ragged_mic_irs_do_not_panic() {
+        // Deliberately mismatched: the room IR is much shorter than the close one.
+        let mk = |n: usize, seed: f32| -> Vec<f32> {
+            (0..n)
+                .map(|i| (-(i as f32) * 0.01).exp() * (seed * i as f32).sin() * 0.1)
+                .collect()
+        };
+        let irs = [
+            mk(2048, 0.01),
+            mk(2048, 0.011), // close
+            mk(1500, 0.02),
+            mk(1500, 0.021), // ribbon (short)
+            mk(300, 0.03),
+            mk(300, 0.031), // room (very short)
+        ];
+        let mut blend = MicBlend::new(irs);
+        // Drive it across the whole knob range, both axes, so every recombine runs.
+        for step in 0..=20 {
+            let t = step as f32 / 20.0;
+            for _ in 0..200 {
+                let out = blend.process(t);
+                assert!(
+                    out.0.is_finite() && out.1.is_finite(),
+                    "non-finite output at blend {t}"
+                );
+            }
+            blend.set(t, 1.0 - t);
+        }
+    }
+
+    /// A knob sweep must not bunch a recombine into consecutive samples.
+    ///
+    /// `recombine` is ~0.3-0.5 ms (12-19% of a 128-frame block) and only runs when
+    /// a blend parameter changes, so it is free in normal playing — but a fast sweep
+    /// delivers a burst of changes. Assert the rate limit actually holds.
+    #[test]
+    fn mic_blend_recompute_is_rate_limited() {
+        let irs = [
+            vec![0.0f32; 1024],
+            vec![0.0; 1024],
+            vec![0.0; 1024],
+            vec![0.0; 1024],
+            vec![0.0; 1024],
+            vec![0.0; 1024],
+        ];
+        let mut blend = MicBlend::new(irs);
+        let mut recomputes = 0u32;
+        let mut last = (0.0f32, 0.0f32);
+        // A hard sweep: a new value every single sample, worst case.
+        let call = |b: &mut MicBlend, v: f32, last: &mut (f32, f32), n: &mut u32| {
+            if (v - last.0).abs() > 0.001 {
+                let before = b.last_blend;
+                b.set(v, 0.0);
+                if b.last_blend != before {
+                    *n += 1;
+                }
+                *last = (v, 0.0);
+            }
+        };
+        for i in 0..2_048 {
+            let v = (i as f32 * 0.01).sin().abs();
+            call(&mut blend, v, &mut last, &mut recomputes);
+        }
+        let max_allowed = 2_048 / MIC_BLEND_RECOMBINE_INTERVAL as usize + 2;
+        assert!(
+            recomputes as usize <= max_allowed,
+            "a fast sweep caused {recomputes} recombines in 2048 samples; at most \
+             {max_allowed} are allowed (one per {MIC_BLEND_RECOMBINE_INTERVAL})"
+        );
+        assert!(recomputes > 0, "the sweep never recombined at all");
+    }
+
     #[test]
     fn switching_cabs_does_not_click() {
         let sr = 48_000.0;

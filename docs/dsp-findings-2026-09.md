@@ -690,13 +690,15 @@ Still open: the UI readout, and the export's 128 leading zeros — the latter is
 consistent 2.67 ms offset on every render, so trimming it would re-bless everything
 for no benefit.
 
-## D7 — Smaller cab items · **DEFECT / RISK**
+## D7 — Smaller cab items · **DEFECT / RISK — first 3 fixed**
 
 - `cab/mod.rs:592-606` `MicBlend::recombine` runs on the **audio thread** and
   does 2×4458 multiply-adds plus `2K` forward FFT(256) — **~70 FFT(256) ≈
   0.3–0.5 ms**, 12–19% of a 128-frame budget in a single call. Bounded today
   (UI steps 0.05, no MIDI target), but with no rate limit or per-block dedupe.
-  **Hoist to the control thread.**
+  **Hoist to the control thread.** *(partly done: now rate-limited to one per
+  128-sample block, which bounds the worst case but does not move the work off the
+  audio thread)*
 - `cab/mod.rs:592` indexes `ribbon_l`/`room_l` with `close_l.len()` as the
   bound. A ragged IR would **panic on the audio thread**.
 - `ir.rs:138-146` calls `exp()` and `sin()` per mode per sample —

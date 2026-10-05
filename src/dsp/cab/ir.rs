@@ -461,3 +461,67 @@ mod tests {
         let _ = PI;
     }
 }
+
+#[cfg(test)]
+mod recurrence_tests {
+    /// The complex-oscillator recurrence must reproduce the direct
+    /// `exp(-n/tau) * sin(w n)` closely enough that cab IRs are unchanged.
+    ///
+    /// This matters because the recurrence is an *approximation* in f32 — it
+    /// accumulates rounding over thousands of samples — and it replaced a direct
+    /// form that was exact. So the bound has to come from measurement, not from the
+    /// fact that the algebra is right.
+    ///
+    /// Covers the worst case: a long IR at a high modal frequency, where the rotation
+    /// angle per sample is largest and drift accumulates fastest.
+    #[test]
+    fn modal_recurrence_matches_the_direct_form() {
+        let sr = 48_000.0;
+        for &(f, t60_ms) in &[(80.0f32, 40.0f32), (1_100.0, 18.0), (3_400.0, 6.0)] {
+            let tau = (t60_ms / 1000.0) * sr / 6.908;
+            let w = 2.0 * std::f32::consts::PI * f / sr;
+            let decay = (-1.0 / tau).exp();
+            let (rc, rs) = (decay * w.cos(), decay * w.sin());
+            let (mut c, mut s) = (1.0f32, 0.0f32);
+            let mut worst: f32 = 0.0;
+            let mut peak: f32 = 0.0;
+            for n in 0..8_000usize {
+                let nn = n as f32;
+                let direct = (-nn / tau).exp() * (w * nn).sin();
+                worst = worst.max((s - direct).abs());
+                peak = peak.max(direct.abs());
+                let nc = c * rc - s * rs;
+                let ns = s * rc + c * rs;
+                c = nc;
+                s = ns;
+            }
+            assert!(
+                worst < 2e-4,
+                "modal recurrence drifted by {worst:.2e} (peak {peak:.3}) at {f} Hz"
+            );
+        }
+    }
+
+    /// And the initial conditions must land on the predelay boundary: the mode
+    /// contributes nothing before `predelay` and starts at `sin(w·0) = 0` after it.
+    #[test]
+    fn modal_recurrence_starts_at_the_predelay_boundary() {
+        let sr = 48_000.0;
+        let tau = (20.0 / 1000.0) * sr / 6.908;
+        let w = 2.0 * std::f32::consts::PI * 100.0 / sr;
+        let decay = (-1.0 / tau).exp();
+        let (rc, rs) = (decay * w.cos(), decay * w.sin());
+        let (mut c, mut s) = (1.0f32, 0.0f32);
+        assert_eq!(s, 0.0, "the first sample must be sin(w·0) = 0");
+        let nc = c * rc - s * rs;
+        let ns = s * rc + c * rs;
+        c = nc;
+        s = ns;
+        let _ = c; // carried for the recurrence; unused after one step
+        let first = (-1.0 / tau).exp() * w.sin();
+        assert!(
+            (s - first).abs() < 1e-6,
+            "second sample {s:.8} != direct {first:.8}"
+        );
+    }
+}

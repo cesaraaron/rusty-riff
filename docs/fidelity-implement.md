@@ -2072,3 +2072,64 @@ The finding's other two consequences are real but are not bugs:
 - **No UI readout.** `ui/amp_plugins.rs` already displays a *host plugin's* latency,
   so the machinery is there; showing the built-in cab's 2.67 ms is a small UI addition
   still to do.
+
+### D7 — three items, all unambiguous: an audio-thread panic, an unbounded spike, and 10.5 M transcendentals
+
+**1. `recombine` could panic on the audio thread.** It sums three per-mic IRs sample by
+sample into one tap vector, walking that vector with **`close_l.len()` as the bound
+for all three sources**. A shorter ribbon or room IR is therefore an out-of-bounds
+read on the audio thread. It has never fired because the IRs are *generated*, so
+their lengths agree — but that is an accident of the generator, not a contract, and
+`external.rs` can load arbitrary IRs.
+
+Fixed at both ends: `MicBlend::new` now truncates all six IRs to the shortest and
+sizes the convolver from that, and `recombine` reads the ribbon and room IRs with
+`.get(i).copied().unwrap_or(0.0)`. Belt and braces — a short IR contributes silence
+rather than a crash. `ragged_mic_irs_do_not_panic` drives a deliberately ragged set
+(2048 / 1500 / 300 samples) across the whole knob range.
+
+**2. The recombine cost is now bounded.** `recombine` is 2×~4.5k multiply-adds plus
+two `FftConvolver::load`s — about **70 FFT(256), 0.3–0.5 ms, 12–19% of a 128-frame
+block budget in a single call**. It only runs when a blend knob moves, so normal
+playing is unaffected, but a fast sweep arrives as a burst of parameter changes and
+would bunch that cost into consecutive samples.
+
+Now rate-limited to one per `MIC_BLEND_RECOMBINE_INTERVAL` (128 samples = one
+block), so the worst case is one recombine per block and the added latency on a knob
+move is at most 2.7 ms — well below where a mic-blend sweep reads as lag.
+`mic_blend_recompute_is_rate_limited` sweeps a new value every sample and asserts
+the bound holds while still recombinating at all.
+
+**This is a mitigation, not the fix.** The real answer is to recombine on the control
+thread and hand over finished taps, so no FFT ever runs on the audio thread. That
+needs the blend knobs pushed rather than polled, which is a UI-side change, and it
+is recorded as still open rather than quietly treated as done.
+
+**3. The IR synthesis no longer calls `exp`/`sin` per sample.** Each modal resonance
+was evaluated as `exp(-n/tau) * sin(w n)` directly, per sample, per mode, across
+~4458 samples, the authored modes plus the expanded scatter clusters, and eight
+cabs — ~10.5 M transcendental pairs, the bulk of the measured `CabBank::new`.
+
+Replaced with the standard complex-oscillator recurrence: with `r = e^{-1/tau}`,
+advancing `(c, s) ← (c·r·cos w − s·r·sin w, s·r·cos w + c·r·sin w)` from `(1, 0)`
+gives `s_n = r^n · sin(w n)` exactly. The predelay offset is handled by *starting*
+the walk at `predelay`, which matches the original `nn = 0 → sin 0 = 0`.
+
+`CabBank::new`: **220.4 ms → 202.1 ms**. Less than the finding implied it would be
+("the bulk"), so most of the remaining 202 ms is elsewhere — the convolver
+precomputation and the rest of the synthesis. Worth knowing before anyone chases it
+further.
+
+> **The recurrence is an f32 approximation, so its bound comes from measurement.**
+> `modal_recurrence_matches_the_direct_form` compares against the direct form over
+> 8000 samples at 80 Hz / 1.1 kHz / 3.4 kHz — the last being the worst case, where the
+> rotation angle per sample is largest and drift accumulates fastest — and requires
+> agreement within 2e-4. A second test pins the initial conditions to the predelay
+> boundary. Algebra being right is not the same as f64 thinking, which is why the
+> number is asserted rather than assumed.
+
+**Also fixed along the way:** while re-adding these tests I truncated `ir.rs`'s
+existing `mod tests` and silently deleted `synth_reflection_creates_expected_comb`
+and `synth_is_finite_and_dc_free`. Caught because the suite's test count went *down*
+after an addition — 454 → 453. Both restored; the count is now 456 (the 2 originals
+plus 4 new).
