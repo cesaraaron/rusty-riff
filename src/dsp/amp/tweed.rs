@@ -65,6 +65,12 @@ pub struct Tweed {
 }
 
 impl Tweed {
+    /// Retune the speaker load for the selected cabinet (see
+    /// [`SpeakerLoad::set_load`]).
+    pub fn set_load(&mut self, load: (f32, f32)) {
+        self.speaker.set_load(load.0, load.1);
+    }
+
     pub fn new(sr: f32) -> Self {
         let sr8 = sr * 8.0;
         let mut t = Self {
@@ -125,6 +131,10 @@ impl Tweed {
 }
 
 impl Amplifier for Tweed {
+    fn set_load(&mut self, load: (f32, f32)) {
+        self.speaker.set_load(load.0, load.1);
+    }
+
     #[inline]
     fn process(&mut self, sample: f32, knobs: &[f32; AMP_MAX]) -> f32 {
         let gain = knobs[0];

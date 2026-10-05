@@ -54,7 +54,17 @@ fn main() {
         let mut amp = AmpBank::new(SR);
         let mut cab = CabBank::new(SR);
         let knobs = amp::standard_knobs(am, 0.93, 0.5, 0.5, 0.65, 0.5, 0.65);
-        let mono: Vec<f32> = di.iter().map(|&x| amp.process(am, x, &knobs)).collect();
+        let mono: Vec<f32> = di
+            .iter()
+            .map(|&x| {
+                amp.process(
+                    am,
+                    x,
+                    &knobs,
+                    rusty_riff::dsp::CabModel::Marshall.speaker_load(),
+                )
+            })
+            .collect();
         let with_cab: Vec<f32> = mono
             .iter()
             .map(|&a| {
@@ -80,7 +90,14 @@ fn main() {
     let knobs = amp::standard_knobs(AmpModel::Marshall, 0.93, 0.5, 0.5, 0.65, 0.5, 0.65);
     let mono: Vec<f32> = di
         .iter()
-        .map(|&x| amp.process(AmpModel::Marshall, x, &knobs))
+        .map(|&x| {
+            amp.process(
+                AmpModel::Marshall,
+                x,
+                &knobs,
+                rusty_riff::dsp::CabModel::Marshall.speaker_load(),
+            )
+        })
         .collect();
     for cm in CabModel::ALL {
         let with_cab: Vec<f32> = mono

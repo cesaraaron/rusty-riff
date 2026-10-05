@@ -355,7 +355,13 @@ fn print_engagement(width: usize) {
             let mut bank = AmpBank::new(SR);
             let knobs =
                 rusty_riff::dsp::amp::standard_knobs(model, gain, 1.0, 0.0, 0.65, 0.40, master);
-            let out: Vec<f32> = di.iter().map(|&x| bank.process(model, x, &knobs)).collect();
+            // The speaker load now comes from the selected cabinet (D1), so pass the
+            // cab this rig is paired with rather than letting the model assume one.
+            let load = rusty_riff::dsp::CabModel::Marshall.speaker_load();
+            let out: Vec<f32> = di
+                .iter()
+                .map(|&x| bank.process(model, x, &knobs, load))
+                .collect();
             let rms = (out.iter().map(|&x| x * x).sum::<f32>() / out.len() as f32).sqrt();
             let peak = out.iter().fold(0.0f32, |m, &x| m.max(x.abs()));
             let st = speaker_drive_stats(SR, &out);

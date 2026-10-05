@@ -93,6 +93,11 @@ pub fn standard_knobs(
 /// every user control, so it must stay feel, not loudness.
 pub(crate) struct SpeakerLoad {
     resonance: Biquad,
+    /// Rate and current tuning of `resonance`, so a cab change can retune it in
+    /// place (state preserved) and only when the numbers actually differ.
+    sr: f32,
+    fs: f32,
+    q: f32,
     presence: Biquad,
     disp_lp: Biquad,
     exc_env: f32,
@@ -120,6 +125,9 @@ impl SpeakerLoad {
         let coeff = |ms: f32| 1.0 - (-1.0 / (sr * ms / 1000.0)).exp();
         Self {
             resonance: Biquad::bandpass(sr, fs, q),
+            sr,
+            fs,
+            q,
             presence: Biquad::high_shelf(sr, 5000.0, pres_db),
             disp_lp: Biquad::lowpass(sr, 100.0, 0.9),
             exc_env: 0.0,
@@ -129,6 +137,26 @@ impl SpeakerLoad {
             res_dyn,
             exc_amt,
         }
+    }
+
+    /// Retune the speaker resonance for a different cabinet.
+    ///
+    /// The **cabinet** owns the load: the amp drives whatever is patched into it, so
+    /// a JCM800 into a Supro must load a 1×10 and not the 4×12 its model used to
+    /// assume. `res_base` / `res_dyn` / `exc_amt` deliberately stay with the model —
+    /// how hard the amp drives the load is the amp's character, what the load *is* is
+    /// the cab's.
+    ///
+    /// Retuned in place so the filter state survives a cab switch, and skipped
+    /// entirely when the numbers are unchanged so the common case costs a compare.
+    #[inline]
+    pub fn set_load(&mut self, fs: f32, q: f32) {
+        if (fs - self.fs).abs() < 0.01 && (q - self.q).abs() < 0.001 {
+            return;
+        }
+        self.resonance.set_bandpass(self.sr, fs, q);
+        self.fs = fs;
+        self.q = q;
     }
 
     #[inline]
@@ -759,6 +787,14 @@ impl PowerOs {
 /// normalised 0–1.
 pub trait Amplifier {
     fn process(&mut self, sample: f32, knobs: &[f32; AMP_MAX]) -> f32;
+
+    /// Adopt the selected cabinet's speaker load as `(fs, q)`.
+    ///
+    /// On the trait rather than inherent-per-model because it is part of every
+    /// model's interface now: the load is a property of the *cabinet*, but it has to
+    /// reach whichever model is live. See [`SpeakerLoad::set_load`] for what moves
+    /// and what deliberately stays with the model.
+    fn set_load(&mut self, load: (f32, f32));
 }
 
 /// Owns all amp instances simultaneously so filter state is preserved across
@@ -791,7 +827,26 @@ impl AmpBank {
     }
 
     #[inline]
-    pub fn process(&mut self, model: AmpModel, sample: f32, knobs: &[f32; AMP_MAX]) -> f32 {
+    pub fn process(
+        &mut self,
+        model: AmpModel,
+        sample: f32,
+        knobs: &[f32; AMP_MAX],
+        load: (f32, f32),
+    ) -> f32 {
+        // Push the load into **every** model, not just the live one, so a model
+        // selected later cannot run a block against a stale load. Each call is a
+        // compare-and-return when the numbers already match, so the eight no-op calls
+        // are the cheap case and only the live model's biquad is ever rebuilt.
+        self.marshall.set_load(load);
+        self.mesa.set_load(load);
+        self.randall.set_load(load);
+        self.vox.set_load(load);
+        self.hiwatt.set_load(load);
+        self.plexi.set_load(load);
+        self.fender.set_load(load);
+        self.supro.set_load(load);
+        self.tweed.set_load(load);
         match model {
             AmpModel::Marshall => self.marshall.process(sample, knobs),
             AmpModel::Mesa => self.mesa.process(sample, knobs),
@@ -808,7 +863,76 @@ impl AmpBank {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_selected_cabinet_changes_the_amps_speaker_load() {
+        fn band_amp_at(model: AmpModel, load: (f32, f32), freq: f32) -> f32 {
+            let mut amp: Box<dyn Amplifier> = match model {
+                AmpModel::Marshall => Box::new(Marshall::new(SR)),
+                AmpModel::Mesa => Box::new(Mesa::new(SR)),
+                AmpModel::Randall => Box::new(Randall::new(SR)),
+                AmpModel::Vox => Box::new(Vox::new(SR)),
+                AmpModel::Hiwatt => Box::new(Hiwatt::new(SR)),
+                AmpModel::Plexi => Box::new(Plexi::new(SR)),
+                AmpModel::Fender => Box::new(Fender::new(SR)),
+                AmpModel::Supro => Box::new(Supro::new(SR)),
+                AmpModel::Tweed => Box::new(Tweed::new(SR)),
+            };
+            amp.set_load(load);
+            let knobs = standard_knobs(model, 0.5, 0.5, 0.5, 0.6, 0.5, 0.6);
+            let n = SR as usize;
+            let mut out: Vec<f32> = Vec::with_capacity(n / 2);
+            for i in (n / 2)..n {
+                let x = (2.0 * PI * freq * i as f32 / SR).sin() * 0.5;
+                out.push(amp.process(x, &knobs));
+            }
+            rms(&out)
+        }
+
+        let supro = CabModel::Supro.speaker_load();
+        let fender = CabModel::Fender.speaker_load();
+        assert!(
+            (supro.0 - fender.0).abs() > 25.0,
+            "the two test cabs are too close to prove anything"
+        );
+
+        for (name, model) in [
+            ("Marshall", AmpModel::Marshall),
+            ("Mesa", AmpModel::Mesa),
+            ("Plexi", AmpModel::Plexi),
+            ("Vox", AmpModel::Vox),
+            ("Tweed", AmpModel::Tweed),
+            ("Supro", AmpModel::Supro),
+            ("Fender", AmpModel::Fender),
+            ("Hiwatt", AmpModel::Hiwatt),
+        ] {
+            // Probe each cab at *its own* fundamental: the resonance peaks there, so
+            // comparing a 110 Hz-loaded amp against a 76 Hz-loaded amp at one shared
+            // frequency would only measure how far apart the peaks are.
+            let with_supro = band_amp_at(model, supro, supro.0);
+            let with_fender = band_amp_at(model, fender, fender.0);
+            let delta = (20.0 * (with_supro / with_fender.max(1e-9)).log10()).abs();
+            assert!(
+                delta > 0.5,
+                "{name}: the cabinet barely changed the amp (Supro {with_supro:.4} vs \
+                 Fender {with_fender:.4}, {delta:.2} dB)"
+            );
+        }
+    }
+
+    /// The two Greenback cabinets must load identically, and that has to be a
+    /// deliberate shared row rather than two numbers that happen to be near.
+    #[test]
+    fn greenback_cabs_load_identically() {
+        assert_eq!(
+            CabModel::Marshall.speaker_load(),
+            CabModel::Orange.speaker_load(),
+            "a Marshall cab and an Orange PPC412 are the same speaker"
+        );
+    }
+
     use super::*;
+    use crate::dsp::CabModel;
     use std::f32::consts::PI;
 
     #[test]

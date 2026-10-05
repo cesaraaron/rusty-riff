@@ -236,6 +236,14 @@ impl Biquad {
         y
     }
 
+    /// Retune a [`bandpass`](Self::bandpass) in place, preserving state.
+    pub fn set_bandpass(&mut self, sr: f32, freq: f32, q: f32) {
+        let w0 = 2.0 * PI * freq / sr;
+        let (s, c) = (w0.sin(), w0.cos());
+        let alpha = s / (2.0 * q);
+        self.set_coeffs([alpha, 0.0, -alpha, 1.0 + alpha, -2.0 * c, 1.0 - alpha]);
+    }
+
     /// Steady-state magnitude response at angular frequency `w` (radians/sample).
     ///
     /// `H(z) = (b0 + b1 z^-1 + b2 z^-2) / (1 + a1 z^-1 + a2 z^-2)` evaluated on

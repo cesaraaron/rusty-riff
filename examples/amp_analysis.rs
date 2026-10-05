@@ -55,7 +55,12 @@ impl Dut for BuiltIn {
     fn process(&mut self, x: f32) -> f32 {
         let knobs =
             rusty_riff::dsp::amp::standard_knobs(self.model, 0.65, 0.50, 0.45, 0.65, 0.50, 0.50);
-        let a = self.bank.process(self.model, x, &knobs);
+        let a = self.bank.process(
+            self.model,
+            x,
+            &knobs,
+            rusty_riff::dsp::CabModel::Marshall.speaker_load(),
+        );
         match &mut self.cab {
             Some((cm, cab)) => {
                 let (l, r) = cab.process(*cm, a, 0.5, 0.15, 0.15);

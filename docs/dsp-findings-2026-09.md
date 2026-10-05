@@ -534,7 +534,7 @@ flat-top, perveance) with a per-model instance, plus the 3/2 relationship.
 
 # Phase D — cabinets
 
-## D1 — Cab selection does not change the amp's speaker load · **DEFECT**
+## D1 — Cab selection does not change the amp's speaker load · **DEFECT — FIXED**
 
 `SpeakerLoad` (`amp/mod.rs:94-151`) hard-codes a specific cabinet's resonance
 **per amp model**:
@@ -555,8 +555,10 @@ PPC412 still applies a 95 Hz "4×12" resonance, and a Tweed into a Greenback
 still applies a 4×12. `fidelity-implement.md:614` states this outright:
 "Local to the amp (no amp↔cab feedback loop)".
 
-**Fix.** Feed the selected `CabModel`'s `fs` / Q / sensitivity in. Low risk,
-immediate win.
+**DONE.** `CabModel::speaker_load()` is the table and `SpeakerLoad::set_load` retunes
+the resonance in place. The bundled baseline came back **byte-identical**, because every
+preset already pairs each amp with a matching cab — but cross-pairings move ±0.5 to
+±2.4 dB at the speaker's fundamental. See `fidelity-implement.md`.
 
 ## D2 — No driver resonance and no port model · **GAP**
 

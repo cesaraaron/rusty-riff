@@ -165,8 +165,46 @@ pub enum CabModel {
     Supro = 6,
     Tweed = 7,
 }
-
 impl CabModel {
+    /// The speaker's own resonance, as `(fs, q)`.
+    ///
+    /// This belongs to the **cabinet**, not the amplifier. The amp drives whatever
+    /// load is patched into it, so a JCM800 into an Orange PPC412 must load a
+    /// Greenback and a Tweed into a Supro must load a 1×10 — otherwise selecting a cab
+    /// changes nothing audible in the amp's own response, which is what happened: each
+    /// model used to hard-code one cab's numbers (a Marshall always got a 95 Hz "4×12",
+    /// a Supro a 110 Hz "1×10") no matter what was selected.
+    ///
+    /// Values are the *speaker's* fundamental resonance and its sharpness. What the amp
+    /// does with that load — how hard it drives, how much resonance it takes, how much
+    /// excursion bloom it allows — stays with the model, because that genuinely is the
+    /// amp's character.
+    ///
+    /// | cab | driver | fs | q | note |
+    /// | --- | --- | --- | --- | --- |
+    /// | Mesa 4×12 | V30 | 100 | 1.30 | tight, aggressive upper-mid thrust |
+    /// | Marshall 4×12 | Greenback | 92 | 0.75 | famously loose and boxy |
+    /// | Orange PPC412 | Greenback | 92 | 0.75 | *the same speaker* as the Marshall cab |
+    /// | WEM 4×12 | Alnico | 88 | 1.10 | brighter and tighter than a Greenback |
+    /// | Vox 2×12 | Alnico Blue | 80 | 1.30 | the lowest fundamental, tightest cone |
+    /// | Fender 2×12 | open-back | 76 | 0.80 | loose, extended bass |
+    /// | Supro 1×10 | 1×10 | 110 | 1.00 | the highest fundamental, most punch |
+    /// | Tweed 1×12 | Alnico | 96 | 0.90 | |
+    pub const fn speaker_load(self) -> (f32, f32) {
+        match self {
+            Self::Mesa => (100.0, 1.30),
+            Self::Marshall | Self::Orange => (92.0, 0.75),
+            Self::Wem => (88.0, 1.10),
+            Self::Vox => (80.0, 1.30),
+            Self::Fender => (76.0, 0.80),
+            Self::Supro => (110.0, 1.00),
+            Self::Tweed => (96.0, 0.90),
+        }
+    }
+    ///
+    /// The two Greenback cabinets sharing a row is the point, not a copy-paste: a
+    /// JCM800 and an Orange PPC412 differ in *amp*, not in what is bolted to the back
+    /// panel, and they should now sound like it.
     pub fn from_u8(v: u8) -> Self {
         match v {
             1 => Self::Marshall,
@@ -1685,7 +1723,12 @@ impl DspChain {
         let model = p.amp_model();
         let knobs: [f32; AMP_MAX] =
             std::array::from_fn(|i| p.amp_params[model as usize][i].load(Relaxed));
-        self.amp.process(model, x, &knobs)
+        // The speaker load belongs to the selected cabinet, not the amp: read it per
+        // sample so a cab change lands immediately, exactly like every other knob
+        // here. `SpeakerLoad::set_load` skips the retune when the numbers match, so
+        // the common case is a compare and not a filter rebuild.
+        let load = p.cab_model().speaker_load();
+        self.amp.process(model, x, &knobs, load)
     }
 
     /// The cabinet stage (mono → stereo). A loaded external IR overrides the built-in
@@ -3859,7 +3902,7 @@ mod tests {
         let knobs = amp::standard_knobs(am, 0.65, 0.50, 0.45, 0.65, 0.50, 0.55);
         for i in 0..n {
             let x = (2.0 * PI * freq * i as f32 / sr).sin() * 0.5;
-            let a = amp.process(am, x, &knobs);
+            let a = amp.process(am, x, &knobs, CabModel::Marshall.speaker_load());
             let (l, r) = cab.process(cm, a, 0.5, 0.15, 0.15);
             if i >= warmup {
                 out.push(l + r);
@@ -4041,7 +4084,7 @@ mod tests {
                         + (2.0 * PI * fifth * t).sin()
                         + (2.0 * PI * oct * t).sin())
                         * 0.3;
-                    let a = amp.process(am, x, &knobs);
+                    let a = amp.process(am, x, &knobs, CabModel::Marshall.speaker_load());
                     let (l, rr) = cab.process(cm, a, 0.5, 0.15, 0.15);
                     if i >= warmup {
                         out.push(l + rr);
@@ -4092,7 +4135,7 @@ mod tests {
                     let mut last = 0.0;
                     for i in 0..n {
                         let x = (2.0 * PI * f * i as f32 / sr).sin() * amp_in;
-                        let a = amp.process(am, x, &knobs);
+                        let a = amp.process(am, x, &knobs, CabModel::Marshall.speaker_load());
                         let (l, r) = cab.process(cm, a, 0.5, 0.15, 0.15);
                         last = l + r;
                     }
@@ -4110,7 +4153,7 @@ mod tests {
             let mut out = Vec::with_capacity(n);
             for i in 0..n {
                 let x = (2.0 * PI * note * i as f32 / sr).sin() * 0.5;
-                let a = amp.process(am, x, &knobs);
+                let a = amp.process(am, x, &knobs, CabModel::Marshall.speaker_load());
                 let (l, r) = cab.process(cm, a, 0.5, 0.15, 0.15);
                 out.push(l + r);
             }
@@ -4215,7 +4258,7 @@ mod tests {
             let mut max_abs = 0.0f32;
             for n in 0..(sr as usize / 2) {
                 let x = (2.0 * PI * 82.0 * n as f32 / sr).sin();
-                let y = bank.process(model, x, &knobs);
+                let y = bank.process(model, x, &knobs, CabModel::Marshall.speaker_load());
                 assert!(y.is_finite(), "{} produced non-finite output", model.name());
                 max_abs = max_abs.max(y.abs());
             }

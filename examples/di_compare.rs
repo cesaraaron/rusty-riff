@@ -297,7 +297,12 @@ fn render_knobs(di: &[f32], k: Knobs) -> Vec<f32> {
     );
     di.iter()
         .map(|&x| {
-            let a = amp.process(AmpModel::Marshall, x, &knobs);
+            let a = amp.process(
+                AmpModel::Marshall,
+                x,
+                &knobs,
+                rusty_riff::dsp::CabModel::Marshall.speaker_load(),
+            );
             let (l, r) = cab.process(CabModel::Marshall, a, k.mic, k.blend, k.room);
             0.5 * (l + r)
         })

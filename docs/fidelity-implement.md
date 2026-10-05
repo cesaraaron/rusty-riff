@@ -2133,3 +2133,64 @@ existing `mod tests` and silently deleted `synth_reflection_creates_expected_com
 and `synth_is_finite_and_dc_free`. Caught because the suite's test count went *down*
 after an addition — 454 → 453. Both restored; the count is now 456 (the 2 originals
 plus 4 new).
+
+### D1 — the cabinet's speaker load now comes from the cabinet
+
+Every amp model hard-coded one specific cabinet's speaker resonance and used it no
+matter what was selected: a Marshall always got a 95 Hz "4×12", a Supro a 110 Hz
+"1×10", a Vox an 85 Hz "2×12". `AmpBank::process` never saw the `CabModel`. So a
+JCM800 into an Orange PPC412 still loaded a 4×12, and selecting a different cab
+changed nothing audible in the amp's own stage.
+
+That is backwards physically. The **cabinet** owns the load — an amp drives whatever
+is patched into it. What the amp contributes is how hard it drives that load, and
+that legitimately stays with the model.
+
+**Fix.** `CabModel::speaker_load() -> (fs, q)` is the table, and `SpeakerLoad::set_load`
+retunes the resonance biquad in place (new `Biquad::set_bandpass`, state preserved).
+`set_load` skips the rebuild when the numbers are unchanged, so the steady-state cost
+is a compare. `AmpBank::process` pushes the load into **all nine** models, not just the
+live one, so a model selected later cannot run a block against a stale load — the eight
+no-op calls are the cheap case.
+
+| cab | driver | fs | q |
+| --- | --- | --- | --- |
+| Mesa 4×12 | V30 | 100 | 1.30 |
+| Marshall 4×12 | Greenback | 92 | 0.75 |
+| Orange PPC412 | Greenback | 92 | 0.75 |
+| WEM 4×12 | Alnico | 88 | 1.10 |
+| Vox 2×12 | Alnico Blue | 80 | 1.30 |
+| Fender 2×12 | open-back | 76 | 0.80 |
+| Supro 1×10 | 1×10 | 110 | 1.00 |
+| Tweed 1×12 | Alnico | 96 | 0.90 |
+
+The two Greenback cabinets share a row **deliberately** — a JCM800 and an Orange
+PPC412 differ in amp, not in what is bolted to the back panel, and now they sound
+like it. `greenback_cabs_load_identically` pins that so a future edit that diverges
+them is an explicit act.
+
+**The fidelity baseline is byte-identical, and that is informative rather than
+disappointing.** Every bundled preset already pairs each amp with a *matching* cab
+(fender/fender, tweed/tweed, supro/supro, hiwatt/wem), so the load each one now
+receives is close to the value its model used to assume — and for Supro it is
+**identical** (110 Hz, Q 1.00 both ways). The fix is nearly a no-op for the bundled set.
+
+It is very much not a no-op for a **cross-pairing**, which is the case the finding was
+about. Measured at each cab's own fundamental:
+
+| amp | Marshall/Orange cab | Supro 1×10 | Fender 2×12 |
+| --- | --- | --- | --- |
+| Marshall | 0.2895 | 0.3534 (+1.7 dB) | 0.2218 (−2.3 dB) |
+| Plexi | 0.4350 | 0.5191 (+1.5 dB) | 0.3300 (−2.4 dB) |
+| Tweed | 0.5035 | 0.5329 (+0.5 dB) | 0.4299 (−1.4 dB) |
+| Fender | 0.5711 | 0.6114 (+0.6 dB) | 0.4711 (−1.7 dB) |
+
+So: **if you A/B this, listen with a mismatched amp/cab pair**, not on the bundled
+presets, where you should hear no change at all. `the_selected_cabinet_changes_the_amps_speaker_load`
+asserts every amp moves by more than 0.5 dB between a Supro and a Fender load, probing
+each cab at its *own* fundamental — comparing one shared frequency would only measure
+how far apart the two peaks are, not whether the load took.
+
+One API change worth noting: `set_load` went on the `Amplifier` trait, not just on
+each model. It is part of every model's interface now, and a trait method is what lets
+`AmpBank` reach all nine uniformly.
