@@ -198,7 +198,7 @@ impl Amplifier for Fender {
         let bias = self.bloom.follow(x) * 0.10;
 
         // ── 8× oversampled nonlinear section ──────────────────────────────────
-        let (k1, k2) = split_gain(PREAMP_GAIN_COEFF * pregain, 0.6, 1.2, 1.3);
+        let (k1, k2) = split_gain(PREAMP_GAIN_COEFF * pregain, pregain, 0.241, 0.6);
         let up = self.os.upsample(x);
         let mut down = [0.0f32; 8];
         for (o, &u) in down.iter_mut().zip(up.iter()) {
@@ -229,6 +229,6 @@ impl Amplifier for Fender {
         let x = self.out_hp.process(x);
 
         // Fixed output trim (level-matched to the other models).
-        x * 7.05
+        x * 4.368
     }
 }

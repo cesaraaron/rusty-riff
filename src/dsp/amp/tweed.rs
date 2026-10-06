@@ -159,7 +159,7 @@ impl Amplifier for Tweed {
         // of the Volume knob, so the small power section is slammed early.
         let pregain = 1.0 + gain * 154.0;
         let bias = self.bloom.follow(x) * 0.18;
-        let (k1, k2) = split_gain(PREAMP_GAIN_COEFF * pregain, 0.6, 1.2, 1.3);
+        let (k1, k2) = split_gain(PREAMP_GAIN_COEFF * pregain, pregain, 0.241, 0.6);
 
         // ── 8× oversampled nonlinear section ──────────────────────────────────
         let up = self.os.upsample(x);
@@ -181,6 +181,6 @@ impl Amplifier for Tweed {
         let x = self.speaker.process(x, self.envelope);
         let x = self.out_hp.process(x);
 
-        x * 1.71
+        x * 1.405
     }
 }

@@ -591,18 +591,30 @@ impl TubeClip {
 /// this out explicitly instead.
 pub(crate) const INSERTION_LOSS: f32 = std::f32::consts::FRAC_2_PI;
 
-/// Split a preamp's voltage gain across two triodes without changing the total.
+/// Split a preamp's total voltage gain into two stages, **front-loaded**.
 ///
-/// The exponent sets how front-loaded the cascade is (`0.6` puts more on the first
-/// stage than the second, matching how a real gain-staged preamp is laid out), and
-/// the constants keep each stage off its own clipper's deep-saturation plateau,
-/// where the harmonic series turns into the slow-decaying "cheap fizz" of a
-/// square-ish wave. Normalised so `k1 * k2 == total` exactly.
-pub(crate) fn split_gain(total: f32, p: f32, c1: f32, c2: f32) -> (f32, f32) {
-    let norm = (c1 * c2).sqrt();
-    let (a, b) = (c1 / norm, c2 / norm);
-    let k1 = total.powf(p) * a;
-    let k2 = (total / total.powf(p)) * b;
+/// `k1 = front_load * pregain^p` and `k2 = total / k1`, so the product is exactly
+/// `total` while the first stage takes the drive and the second is an attenuator
+/// (`k2 < 1`) carrying a small signal onwards.
+///
+/// **Why this shape, and not an even split.** An even split is the obvious choice and
+/// it is wrong for a valve preamp. It matches the *total* small-signal gain but leaves
+/// each stage barely into saturation, and a stage that is barely clipping generates
+/// almost no harmonics. Measured on the Marshall, an even split drove clipper 1 to an
+/// input argument of **2.06**; the pre-C1 normalisation drove it to **6.21**. That is
+/// the whole reason the first C1 attempt sounded thin: preamp h3/h1 fell from 0.425
+/// to 0.258 and the final output's absolute h3 nearly halved.
+///
+/// The old `g` values *looked* enormous (12–28 at full gain) but existed only to be
+/// divided straight back out by `sqrt(g)`; what reached the curve was `u * g`, and
+/// that is the number that sets the saturation. So the split is specified by how hard
+/// **stage one** should be driven, and stage two follows from the total.
+///
+/// Front-loading is also what a real gain-staged triode preamp does: the first stage
+/// is where an input breaks up, and interstage coupling attenuates into the second.
+pub(crate) fn split_gain(total: f32, pregain: f32, front_load: f32, p: f32) -> (f32, f32) {
+    let k1 = front_load * pregain.powf(p);
+    let k2 = if k1 > 1e-6 { total / k1 } else { 1.0 };
     (k1, k2)
 }
 
@@ -933,7 +945,6 @@ impl AmpBank {
 
 #[cfg(test)]
 mod tests {
-
     #[test]
     fn the_selected_cabinet_changes_the_amps_speaker_load() {
         fn band_amp_at(model: AmpModel, load: (f32, f32), freq: f32) -> f32 {

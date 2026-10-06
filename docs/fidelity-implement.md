@@ -2257,3 +2257,84 @@ derived it from *capacity*, giving one partition fewer whenever the IR did not f
 capacity; and my truncation passed only the two close IRs, leaving the other four long,
 so their spectra disagreed on partition count. The tests (`ragged_mic_irs_do_not_panic`,
 `mic_blend_recompute_is_rate_limited`) caught both immediately.
+
+### C1 revisited — the h3 collapse, explained and fixed
+
+The first C1 attempt was held back because it changed the harmonic balance in a way I
+could not account for: on a Marshall at identical settings `(h2+h3)/h1` went **0.221 →
+0.071**, h2 was unchanged, and h3 more than halved — with `h3/h1` flat at ~0.05
+*regardless of input amplitude*, which is not how a clipping stage behaves. The user
+also preferred main's character. Here is what it actually was.
+
+**Measured, not reasoned.** Instrumenting the preamp output directly (`main` vs first
+C1 attempt):
+
+| | preamp peak | preamp h3/h1 | final h3 |
+| --- | --- | --- | --- |
+| main | 0.269 | **0.425** | 0.103 |
+| C1 (even split) | 0.652 | **0.258** | 0.055 |
+
+So the h3 was being lost **in the preamp**, not downstream. The mechanism is the
+clipper's *input argument* — the number of times the curve that reaches it:
+
+| | drive into clipper 1 at u = 0.5 |
+| --- | --- |
+| main | `u * g1` = 6.21 |
+| C1 (even split) | `u * k1 / INSERTION_LOSS` = 2.06 |
+
+The old model's `g` values *looked* enormous (12–28 at full gain) but existed only to
+be divided straight back out by `sqrt(g)`. C1 divides the insertion loss out
+explicitly and matches the **total** small-signal gain — which necessarily leaves
+each individual stage driven about a third as hard. A stage driven to 2.06 barely
+clips; one driven to 6.21 is nearly square. So the preamp made less distortion, and
+the power stage inherited a cleaner signal.
+
+**My first hypothesis was wrong and I want that on the record.** I initially compared
+"effective drive" (the drive divided by `sqrt(g)`) and concluded the two were nearly
+identical at 1.76 vs 2.06 — which is true and irrelevant, because that normalisation
+is exactly the thing C1 removed. The quantity that matters is the clipper's raw
+argument. Comparing the wrong number is why the first investigation dead-ended.
+
+**Fix: split the gain front-loaded, not evenly.** `split_gain` now takes `pregain` and
+a per-model `front_load`, giving `k1 = front_load * pregain^p` and `k2 = total / k1`.
+The second stage is therefore an **attenuator** (`k2 < 1`) carrying a small signal
+onward — which is what a real gain-staged triode preamp does, and why the first stage
+is where an input breaks up.
+
+`front_load` is not a taste knob; it is solved per model so the clipper input
+argument reproduces the pre-C1 value:
+
+```
+front_load = INSERTION_LOSS * c1_old / ratio^p        (ratio ≈ 6.84, the widened range)
+```
+
+| model | front_load | p |
+| --- | --- | --- |
+| Marshall | 0.2773 | 0.60 |
+| Mesa | (AX7 front-loaded) | — |
+| Plexi | 0.2512 | 0.62 |
+| Hiwatt / Vox | 0.0931 | 1.00 |
+| Fender / Supro / Tweed | 0.2410 | 0.60 |
+| Randall | 0.2568 | 0.70 |
+
+**Result** — the harmonic character is back:
+
+| Marshall at identical settings | main | C1 even split | C1 front-loaded |
+| --- | --- | --- | --- |
+| `(h2+h3)/h1` | 0.221 | 0.071 | **0.205** |
+| absolute h3 | 0.103 | 0.055 | **0.126** |
+| `distortion_is_harmonic_not_aliased_hash` | pass | **fail** | **pass** |
+
+and the actual point of C1 is intact: **28.2 dB of monotonic gain authority** on the
+Marshall (27.8 Vox, 21.8 Plexi) against 0.8 dB non-monotonic before. Re-trimming after
+front-loading put all nine models at **0.0650 ± 0.0001** mid-band RMS — a 1.00x spread,
+against 1.65x before this whole phase.
+
+**One test floor moved again, and it has a history worth stating.** The B1 bypass-click
+ratio has gone 6.8x → 3.3x (D4 oversampled the cab) → 2.9x (C1 restored the preamp's
+saturation), so its floor went 5x → 3x → 2.5x. Each time the *signal* got hotter, the
+flanger's wet-minus-dry swing at the toggle grew, and the ramped step grew with it.
+The mechanism is not degrading — the A/B in that test measures ramped against
+hard-cut on identical input, which is what actually protects the property. What the
+floor asserts is only that the ramp removes *most* of the step; if declicking ever
+truly broke, the ratio would collapse toward 1.0 and fail long before it got subtle.

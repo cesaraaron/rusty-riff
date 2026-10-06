@@ -169,7 +169,7 @@ impl Amplifier for Supro {
         // thick, vocal edge-of-breakup a cranked small combo lives in.
         let pregain = 1.0 + gain * 154.0;
         let bias = self.bloom.follow(x) * 0.11;
-        let (k1, k2) = split_gain(PREAMP_GAIN_COEFF * pregain, 0.6, 1.2, 1.3);
+        let (k1, k2) = split_gain(PREAMP_GAIN_COEFF * pregain, pregain, 0.241, 0.6);
 
         // ── 8× oversampled nonlinear section ──────────────────────────────────
         let up = self.os.upsample(x);
@@ -193,6 +193,6 @@ impl Amplifier for Supro {
 
         // Fixed output trim (no master) — level-matches the small combo to the
         // other models so switching amps doesn't jump the volume.
-        x * 5.99
+        x * 4.288
     }
 }

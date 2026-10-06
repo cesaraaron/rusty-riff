@@ -261,7 +261,7 @@ impl Amplifier for Hiwatt {
             // Dynamic cathode bias shifts the operating point under hard drive
             // before the stage-1 waveshaper; the inter-stage HP strips its DC.
             let d = self.cathode.shift(u + bias);
-            let (k1, k2) = split_gain(PREAMP_GAIN_COEFF * pregain, 0.62, 1.0, 1.0);
+            let (k1, k2) = split_gain(PREAMP_GAIN_COEFF * pregain, pregain, 0.09307, 1.0);
             let s = TubeClip::AX7.stage(d, k1);
             let s = self.stage_hp.process(s);
             // The second stage's share is fixed relative to the first (was a
@@ -296,6 +296,6 @@ impl Amplifier for Hiwatt {
 
         // Output trim: level-matched to the other models so switching amps doesn't
         // jump in volume. Lands the DR103 mid-band alongside the Vox/Mesa/Randall.
-        x * master * 6.72
+        x * master * 12.444
     }
 }

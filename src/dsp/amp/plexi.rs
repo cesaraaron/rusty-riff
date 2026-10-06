@@ -225,7 +225,7 @@ impl Amplifier for Plexi {
         let bias = self.bloom.follow(x) * 0.05;
 
         // ── 8× oversampled nonlinear section ──────────────────────────────────
-        let (k1, k2) = split_gain(PREAMP_GAIN_COEFF * pregain, 0.62, 1.3, 1.5);
+        let (k1, k2) = split_gain(PREAMP_GAIN_COEFF * pregain, pregain, 0.2512, 0.62);
         let up = self.os.upsample(x);
         let mut down = [0.0f32; 8];
         for (o, &u) in down.iter_mut().zip(up.iter()) {
@@ -248,6 +248,6 @@ impl Amplifier for Plexi {
 
         // Fixed output trim (no master volume) — level-matches the Plexi to the
         // other models so switching amps doesn't jump the volume.
-        x * 2.7
+        x * 2.114
     }
 }

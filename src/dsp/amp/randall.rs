@@ -197,7 +197,7 @@ impl Amplifier for Randall {
             // each clipper rather than by the drive. All three Warhead curves have
             // unit small-signal slope, so unlike the tube stages there is no
             // insertion loss to divide out here.
-            let (k1, k2) = split_gain(PREAMP_GAIN_COEFF * pregain, 0.7, 1.55, 2.4);
+            let (k1, k2) = split_gain(PREAMP_GAIN_COEFF * pregain, pregain, 0.2568, 0.7);
             let s = fet_clip_asym((u + bias) * k1);
             let s = self.stage_hp_1.process(s);
             let s = bjt_clip(s * k2);
@@ -235,7 +235,7 @@ impl Amplifier for Randall {
         // breakup + mic saturation), and starving it buries E2's fundamental
         // under overtones (`fundamental_is_not_buried_under_overtones`) and
         // breaks the DS-chain level match. Re-tuning it means re-tuning the cab.
-        x * master * 0.853
+        x * master * 0.762
     }
 }
 

@@ -370,7 +370,7 @@ confirmed as *intended* by `move_selected_stage_moves_amp_and_cab_separately`
 The single biggest tone win, and the largest blast radius. Sequenced so each
 sub-step is independently listenable and re-blessable.
 
-## C1 — There is no gain staging; `gain` is a compression control · **GAP**
+## C1 — There is no gain staging; `gain` is a compression control · **GAP — FIXED**
 
 Each clip stage is normalised `clip(u*g) / sqrt(g)`. So a stage's small-signal
 gain is `0.6366*sqrt(g)` and its **saturated output is `1/sqrt(g)`**.
@@ -400,9 +400,17 @@ shelves of up to **+9 dB** (`mesa.rs:148`) that the user **cannot dial out** and
 that partially cancel their own bass/treble moves. `hiwatt.rs:153-156`
 documents reducing this from +4 dB to +1.5 dB for exactly that reason.
 
-**Target.** Real small-signal gain per stage; compensate the `atan` insertion
-loss explicitly rather than with a fixed shelf. This is what makes `gain` mean
-gain and gives the master knob somewhere to go.
+**DONE**, with one non-obvious consequence. Real small-signal gain per stage, with the
+`atan` insertion loss divided out explicitly: 28.2 dB of monotonic gain authority on
+the Marshall against 0.8 dB before, and the nine models loudness-matched to a 1.00x
+spread.
+
+The catch: matching the **total** gain leaves each stage driven ~3x less hard than the
+old `sqrt(g)`-normalised form, so the preamp made far less distortion (Marshall
+`(h2+h3)/h1` 0.221 → 0.071) and it had to be fixed by splitting the gain **front-loaded**
+— `k1` takes the drive, `k2` is an interstage attenuator — so stage one's clipper input
+reproduces the old value. That is also how a real gain-staged preamp works. See
+`fidelity-implement.md`.
 
 ## C2 — There is no negative feedback · **GAP**
 

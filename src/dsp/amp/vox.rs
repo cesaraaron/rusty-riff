@@ -216,7 +216,7 @@ impl Amplifier for Vox {
             // Dynamic cathode bias shifts the operating point under hard drive
             // before the stage-1 waveshaper; the inter-stage HP strips its DC.
             let d = self.cathode.shift(u + bias);
-            let (k1, k2) = split_gain(PREAMP_GAIN_COEFF * pregain, 0.62, 1.0, 1.0);
+            let (k1, k2) = split_gain(PREAMP_GAIN_COEFF * pregain, pregain, 0.09307, 1.0);
             let s = TubeClip::EL84.stage(d, k1);
             let s = self.stage_hp.process(s);
             // The second stage's share is fixed relative to the first (was a
@@ -256,6 +256,6 @@ impl Amplifier for Vox {
 
         // Output trim: the AC30 has no master volume (the Top Boost Volume is the
         // gain), so this fixed trim level-matches it to the other models.
-        x * 6.34
+        x * 9.037
     }
 }

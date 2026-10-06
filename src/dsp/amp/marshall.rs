@@ -294,7 +294,7 @@ impl Amplifier for Marshall {
         // is the "cheap fizz" fingerprint. Two stages at ~7× and ~4× stay on the
         // round part of the curve and produce the fast-falling harmonic series a
         // real cascade measures.
-        let (k1, k2) = split_gain(PREAMP_GAIN_COEFF * pregain, 0.6, 1.4, 1.6);
+        let (k1, k2) = split_gain(PREAMP_GAIN_COEFF * pregain, pregain, 0.2773, 0.6);
         let up = self.os.upsample(x);
         let mut down = [0.0f32; 8];
         for (o, &u) in down.iter_mut().zip(up.iter()) {
@@ -335,6 +335,6 @@ impl Amplifier for Marshall {
 
         // Output trim: level-matches the JCM800 to the other models so switching
         // doesn't jump in volume (re-measured after the power-drive increase).
-        x * master * 5.603
+        x * master * 5.271
     }
 }
