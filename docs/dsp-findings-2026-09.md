@@ -698,9 +698,10 @@ for no benefit.
   does 2×4458 multiply-adds plus `2K` forward FFT(256) — **~70 FFT(256) ≈
   0.3–0.5 ms**, 12–19% of a 128-frame budget in a single call. Bounded today
   (UI steps 0.05, no MIDI target), but with no rate limit or per-block dedupe.
-  **Hoist to the control thread.** *(partly done: now rate-limited to one per
-  128-sample block, which bounds the worst case but does not move the work off the
-  audio thread)*
+  **Hoist to the control thread.** *(rate-limited to one per 128-sample block, which
+  bounds the worst case. A frequency-domain blend that removes all FFTs from this path
+  was built and measured **slower** — it streams six ~110 KB spectra per call where the
+  FFT scratch stays in L1 — so it is reverted. See `fidelity-implement.md`.)*
 - `cab/mod.rs:592` indexes `ribbon_l`/`room_l` with `close_l.len()` as the
   bound. A ragged IR would **panic on the audio thread**.
 - `ir.rs:138-146` calls `exp()` and `sin()` per mode per sample —
@@ -717,7 +718,7 @@ for no benefit.
   nothing.**
 - `GrilleEcho`'s normalisation is computed from the unfiltered tap gains, giving
   an unconditional **−0.181 dB broadband** tilt including the LF where its
-  filtered taps contribute nothing.
+  filtered taps contribute nothing. *(fixed; the existing test was pinning it)*
 
 ## D8 — What is genuinely good here
 

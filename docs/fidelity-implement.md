@@ -2194,3 +2194,66 @@ how far apart the two peaks are, not whether the load took.
 One API change worth noting: `set_load` went on the `Amplifier` trait, not just on
 each model. It is part of every model's interface now, and a trait method is what lets
 `AmpBank` reach all nine uniformly.
+
+### D7b — the mic knob that did nothing, a tilt the test was pinning, and a refactor that measured slower
+
+**`mic_pos` was hardcoded to `0.0` on the external-IR path** — and 0.0 is not a neutral
+default. In `MicPosition::set`, 0 is the **edge** of the cabinet: fully off-axis,
+darkest, with the off-axis comb at full depth. 0.5 is neutral and `DEFAULT_MIC_POS` is
+0.4. So a loaded `.wav` capture was being pushed to the worst setting *and* the UI kept
+the knob lit with no effect — the worst of both. `cab_stage` now passes the real
+value; `ExternalIrCab` documented `mic_pos` as "a small trim" all along, so this was
+the code disagreeing with itself.
+
+**`GrilleEcho`'s normalisation was tilting the whole spectrum.** `norm` assumes both
+reflection taps contribute at full gain, but both are high-passed, so at low
+frequencies they contribute nothing and the **direct path** was being scaled by
+`norm` anyway: an unconditional **−0.181 dB**, worst exactly where the grille cloth
+does least. `norm` now multiplies only the tap sum.
+
+> The existing test was **pinning the defect**. `grille_echo_combs_only_the_top`
+> asserted `(low - norm).abs() < 0.02` while its own comment said "the lows … pass at
+> unit gain … the body is untouched". It *required* 200 Hz to come out at 0.9794 while
+> claiming 1.0 was the intent. Now it asserts unity, and the measured value is 1.0020.
+
+**The "hoist recombine off the audio thread" idea, tried properly and reverted.**
+Convolution is linear, so a weighted sum of IRs equals a weighted sum of their
+*spectra*. Transforming the three per-mic IRs once at construction and blending the
+stored spectra does **7× less arithmetic** per knob move — ~9k multiply-adds against
+~190k flops — and removes every FFT from the audio path. It is the obvious fix and it
+is what `FftConvolver::load_spectrum` / `partition_spectrum` were written for.
+
+**It measured slower.**
+
+| | realtime budget (heaviest preset) |
+| --- | --- |
+| time-domain blend + rate limit (shipped) | **5.1–5.6%** |
+| frequency-domain blend + rate limit | 7.5–8.3% |
+| recombine suppressed entirely | 5.3–5.9% |
+
+With recombine suppressed the bench drops, which confirms the blend path is the cost —
+but the spectral version costs **more** of the budget than the time-domain one despite
+doing a fraction of the work. The plausible reason is memory traffic rather than
+arithmetic: the spectral blend streams six ~110 KB spectra per call, while the
+time-domain path's FFT scratch is 256 samples and stays resident in L1. It also pushed
+`CabBank::new` from 202 ms to **293 ms** (6 spectra per cab instead of 2 loads).
+
+So it is reverted, and the finding's framing corrected: `recombine` is not currently on
+the audio thread's critical path in any harmful way, because it only fires when a mic
+knob moves and the rate limit caps it at once per 128-sample block. **The cheap,
+measured win is the rate limit**, and the frequency-domain idea is only worth revisiting
+if the knob-move cost is ever felt.
+
+`load_spectrum` / `partition_spectrum` stay in `conv.rs` — they are correct, tested by
+the cab suite, and they are what a future revisit would build on.
+
+**Baseline re-blessed** for the `GrilleEcho` change: 5 presets each 0.12–0.16 dB louder
+in LUFS, which is what removing a broadband 0.181 dB cut does.
+
+Two bugs of mine surfaced while doing the spectral version, both caught by the tests
+rather than by review — worth recording because they are the kind that survive a skim:
+`partition_spectrum` derived the partition count from the IR length while the convolver
+derived it from *capacity*, giving one partition fewer whenever the IR did not fill its
+capacity; and my truncation passed only the two close IRs, leaving the other four long,
+so their spectra disagreed on partition count. The tests (`ragged_mic_irs_do_not_panic`,
+`mic_blend_recompute_is_rate_limited`) caught both immediately.

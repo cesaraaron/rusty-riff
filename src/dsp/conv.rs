@@ -157,6 +157,71 @@ impl FftConvolver {
         }
     }
 
+    /// Install a **precomputed** IR spectrum instead of transforming one here.
+    ///
+    /// This exists so the cabinet's mic blend can happen in the frequency domain:
+    /// the three per-mic IRs are transformed once (off the audio thread, at
+    /// construction) and every later blend is a weighted sum of three stored
+    /// spectra. Without it, moving a mic knob means running `k` forward FFTs per
+    /// channel *on the audio thread* — the cost the D7 audit flagged.
+    ///
+    /// Length must match exactly: `k * n` complex bins.
+    pub fn load_spectrum(&mut self, h_re: &[f32], h_im: &[f32]) {
+        assert_eq!(
+            h_re.len(),
+            self.k * self.n,
+            "IR spectrum must match the convolver's k * n"
+        );
+        assert_eq!(h_im.len(), self.k * self.n);
+        self.h_re.copy_from_slice(h_re);
+        self.h_im.copy_from_slice(h_im);
+    }
+
+    /// Transform an IR into the partitioned frequency-domain form
+    /// [`load_spectrum`](Self::load_spectrum) expects.
+    ///
+    /// Call once per IR, off the audio thread. Returns `(h_re, h_im)` of `k * n`
+    /// complex bins, where `k` covers `ir.len()` at partition size `P`.
+    ///
+    /// `capacity` must match the capacity the target convolver was built with, so
+    /// both agree on the partition count `k`. Deriving `k` from `ir.len()` instead
+    /// silently produces one partition fewer whenever the IR does not fill its
+    /// capacity, and [`load_spectrum`](Self::load_spectrum) then rejects the result.
+    pub fn partition_spectrum(ir: &[f32], capacity: usize) -> (Vec<f32>, Vec<f32>) {
+        let p = P;
+        let n = p * 2;
+        let k = capacity.max(1).div_ceil(p);
+
+        let bits = n.trailing_zeros();
+        let bitrev: Vec<usize> = (0..n).map(|i| bit_reverse(i, bits)).collect();
+        let mut wre = vec![0.0f32; n / 2];
+        let mut wim = vec![0.0f32; n / 2];
+        for j in 0..n / 2 {
+            let ang = 2.0 * PI * j as f32 / n as f32;
+            wre[j] = ang.cos();
+            wim[j] = ang.sin();
+        }
+
+        let mut h_re = vec![0.0f32; k * n];
+        let mut h_im = vec![0.0f32; k * n];
+        let mut sre = vec![0.0f32; n];
+        let mut sim = vec![0.0f32; n];
+        let n_taps = ir.len().min(k * p);
+        for kk in 0..k {
+            let start = kk * p;
+            for i in 0..n {
+                let t = start + i;
+                sre[i] = if i < p && t < n_taps { ir[t] } else { 0.0 };
+                sim[i] = 0.0;
+            }
+            Self::fft(&bitrev, &wre, &wim, &mut sre, &mut sim, false);
+            let dst = kk * n;
+            h_re[dst..dst + n].copy_from_slice(&sre);
+            h_im[dst..dst + n].copy_from_slice(&sim);
+        }
+        (h_re, h_im)
+    }
+
     /// Convolve one input sample, returning one output sample (delayed by `P`).
     #[inline]
     pub fn process(&mut self, x: f32) -> f32 {

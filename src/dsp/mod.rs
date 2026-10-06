@@ -1732,21 +1732,31 @@ impl DspChain {
     }
 
     /// The cabinet stage (mono → stereo). A loaded external IR overrides the built-in
-    /// cab when active; otherwise the multi-mic blend renders (the external IR path
-    /// ignores the mic knobs — the capture is already miked). Reused by the amp-only
-    /// external-amp path, which feeds it the AU's (summed-to-mono) output.
+    /// cab when active; otherwise the multi-mic blend renders. The external IR path
+    /// ignores `blend`/`room` — a loaded capture is already miked — but **`mic_pos` is
+    /// live**, as `ExternalIrCab` documents.
+    ///
+    /// It used to be hardcoded to `0.0` here, which is not a neutral default: in
+    /// `MicPosition::set`, 0 is the **edge** of the cabinet (fully off-axis, darkest,
+    /// with the off-axis comb at full depth) and 0.5 is neutral. So every loaded
+    /// capture was being pushed to the worst case while the UI kept the knob lit and
+    /// moving it did nothing — the worst of both. `DEFAULT_MIC_POS` is 0.4.
+    ///
+    /// Reused by the amp-only external-amp path, which feeds it the AU's
+    /// (summed-to-mono) output.
     #[inline]
     fn cab_stage(&mut self, x: f32) -> (f32, f32) {
         let p = &self.params;
+        let mic_pos = p.mic_pos.load(Relaxed);
         match self.ext_cab.as_mut() {
             Some(ext) if p.cab_external_active.load(Relaxed) => {
                 use cab::Cabinet;
-                ext.process(x, 0.0, 0.0, 0.0)
+                ext.process(x, mic_pos, 0.0, 0.0)
             }
             _ => self.cab.process(
                 p.cab_model(),
                 x,
-                p.mic_pos.load(Relaxed),
+                mic_pos,
                 p.mic_blend.load(Relaxed),
                 p.mic_room.load(Relaxed),
             ),
@@ -2376,18 +2386,48 @@ impl CompDelay {
 
 #[cfg(test)]
 mod tests {
-    /// The cab's convolution latency is a real, fixed cost, and the AU
-    /// compensation has to know about it.
+    /// The mic-position knob must reach the **external IR** path, not just the
+    /// built-in cabs.
     ///
-    /// `FftConvolver` is overlap-save, so the first output lands one full `P`-sample
-    /// block late: 128 samples, ~2.67 ms at 48 kHz. For an **amp-only** AU the
-    /// built-in cab still runs and adds exactly that much, so delaying the built-in
-    /// path by the AU's *full* reported latency left the two paths 2.67 ms apart.
-    /// The 4 ms declick hides the click, not the timing.
-    ///
-    /// Asserting the constant is worth a line: it is the number the alignment is
-    /// built on, and it was previously private to `conv.rs`, which is why nothing
-    /// out here could account for it.
+    /// `ExternalIrCab` documents `mic_pos` as "a small trim" and the UI keeps the knob
+    /// lit, but `cab_stage` hardcoded the argument to `0.0` — and 0.0 is the *edge* of
+    /// the cabinet in `MicPosition::set` (fully off-axis, darkest, off-axis comb at
+    /// full depth), not a neutral value. So the knob was both dead **and** defaulted to
+    /// the worst setting.
+    #[test]
+    fn mic_position_reaches_the_external_ir_path() {
+        use crate::dsp::cab::Cabinet as _;
+        use crate::dsp::cab::external::{ExternalIrCab, LoadedIr};
+        let sr = 48_000.0;
+
+        // Unit impulse IR: the cab output is then essentially the mic EQ applied to
+        // an impulse, so the two positions are directly comparable.
+        let render = |pos: f32| -> (f32, f32) {
+            let ir = LoadedIr {
+                l: vec![1.0; 64],
+                r: vec![1.0; 64],
+                name: "probe".to_string(),
+            };
+            let mut cab = ExternalIrCab::new(sr, ir);
+            let mut worst = (0.0f32, 0.0f32);
+            for n in 0..2048usize {
+                let x = if n == 8 { 1.0 } else { 0.0 };
+                let (l, r) = cab.process(x, pos, 0.0, 0.0);
+                worst.0 = worst.0.max(l.abs());
+                worst.1 = worst.1.max(r.abs());
+            }
+            worst
+        };
+
+        let edge = render(0.0);
+        let centre = render(1.0);
+        assert!(
+            (edge.0 - centre.0).abs() > 1e-3 || (edge.1 - centre.1).abs() > 1e-3,
+            "mic_pos made no difference on the external IR path: edge {edge:?} vs \
+             centre {centre:?}"
+        );
+    }
+
     #[test]
     fn cab_convolution_latency_is_exposed_and_is_one_block() {
         assert_eq!(crate::dsp::conv::latency(), 128);

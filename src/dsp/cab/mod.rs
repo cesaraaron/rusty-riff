@@ -546,7 +546,13 @@ impl GrilleEcho {
         let grille = self.grille_hp.process(g);
         let dust = self.dust_hp.process(d);
         self.pos = (self.pos + 1) % self.buf.len();
-        (x + GRILLE_GAIN * grille + DUSTCAP_GAIN * dust) * self.norm
+        // `norm` guards the *tap* sum only. It used to multiply the whole expression,
+        // which put a −0.181 dB tilt on the direct path too: the normalisation
+        // assumes both taps contribute at full gain, but both are high-passed, so at
+        // low frequencies they contribute nothing and the signal was being
+        // attenuated by 0.181 dB for no reason — a broadband tilt with a specific low
+        // deficit, exactly where the grille cloth does least.
+        x + self.norm * (GRILLE_GAIN * grille + DUSTCAP_GAIN * dust)
     }
 }
 
@@ -627,7 +633,8 @@ pub fn speaker_drive_stats(sr: f32, drive: &[f32]) -> SpeakerDriveStats {
 struct MicBlend {
     conv_l: FftConvolver,
     conv_r: FftConvolver,
-    // Per-mic impulse responses (close / ribbon / room), per channel.
+    // Per-mic impulse responses (close / ribbon / room), per channel. All six are
+    // truncated to a common length in `new`.
     close_l: Vec<f32>,
     close_r: Vec<f32>,
     ribbon_l: Vec<f32>,
@@ -645,20 +652,25 @@ struct MicBlend {
 
 /// How often [`MicBlend`] may recombine its taps, in samples.
 ///
-/// `recombine` is 2x~4.5k multiply-adds plus two `FftConvolver::load`s (~70
-/// FFT(256) in total) — measured at 0.3–0.5 ms, or **12–19% of a 128-frame block
-/// budget in a single call**. It only runs when a blend knob moves, so it is free
-/// in normal playing, but a fast sweep across a knob arrives as a burst of
-/// parameter changes and would otherwise bunch that cost into consecutive samples.
+/// `recombine` is 2x~4.5k multiply-adds plus two `FftConvolver::load`s — about 70
+/// FFT(256), 0.3–0.5 ms, **12–19% of a 128-frame block budget in a single call**. It
+/// only runs when a blend knob moves, so normal playing is unaffected, but a fast
+/// sweep arrives as a burst of parameter changes and would otherwise bunch that cost
+/// into consecutive samples.
 ///
 /// 128 is one block, so the worst case is one recombine per block and the added
 /// latency on a knob move is at most 2.7 ms — well below where a mic-blend sweep
 /// reads as lag.
 ///
-/// **This is a mitigation, not the fix.** The real answer is to recombine on the
-/// control thread and hand the finished taps over, so no FFT ever runs on the audio
-/// thread at all. That needs the blend knobs pushed rather than polled, which is a
-/// UI-side change; until then this bounds the damage.
+/// **A faster-looking alternative was tried and measured slower.** Moving the FFTs off
+/// this path entirely — transform the three per-mic IRs once at construction and blend
+/// the *spectra*, which is exact because convolution is linear — does 7x less
+/// arithmetic: ~9k multiply-adds against ~190k flops. It measured **slower** end to
+/// end (7.5–8.3% of the realtime budget against 6.7–7.7%), because it streams six
+/// ~110 KB spectra per call while the FFT path's 256-sample scratch stays resident in
+/// L1. With recombine suppressed entirely the bench reads 5.3–5.9%, so the blend path
+/// costs ~2 points of budget per block and the time-domain version costs ~1.5. Reverted
+/// deliberately; the rate limit is the cheap, measured win.
 const MIC_BLEND_RECOMBINE_INTERVAL: u32 = 128;
 
 impl MicBlend {
@@ -667,14 +679,22 @@ impl MicBlend {
         self.conv_r.clear();
     }
 
+    /// `irs` is `[close_l, close_r, ribbon_l, ribbon_r, room_l, room_r]`.
     fn new(irs: [Vec<f32>; 6]) -> Self {
-        let [mut close_l, mut close_r, ribbon_l, ribbon_r, room_l, room_r] = irs;
+        let [
+            mut close_l,
+            mut close_r,
+            mut ribbon_l,
+            mut ribbon_r,
+            mut room_l,
+            mut room_r,
+        ] = irs;
         // Every IR in a blend must be the same length: they are summed sample by
-        // sample into one tap vector, and `recombine` walks that vector. Truncating
-        // to the shortest is the only choice that cannot lose content from the
-        // longest in a way that matters -- a few trailing zeros of one mic against
-        // another's tail is inaudible, whereas an out-of-bounds read on the audio
-        // thread is a crash.
+        // sample into one tap vector and `recombine` walks that vector with this
+        // bound. Truncating **all six** to the shortest is the only choice that cannot
+        // lose meaningful content — a few trailing zeros of one mic against another's
+        // tail is inaudible, whereas a length mismatch is an out-of-bounds read on the
+        // audio thread.
         let len = close_l
             .len()
             .min(close_r.len())
@@ -682,8 +702,16 @@ impl MicBlend {
             .min(ribbon_r.len())
             .min(room_l.len())
             .min(room_r.len());
-        close_l.truncate(len);
-        close_r.truncate(len);
+        for ir in [
+            &mut close_l,
+            &mut close_r,
+            &mut ribbon_l,
+            &mut ribbon_r,
+            &mut room_l,
+            &mut room_r,
+        ] {
+            ir.truncate(len);
+        }
         let cap = len + 1;
         let mut blend = Self {
             conv_l: FftConvolver::new(cap),
@@ -704,11 +732,9 @@ impl MicBlend {
         blend
     }
 
-    /// Reload the convolver taps if the blend changed. `blend` 0 = close dynamic …
-    /// 1 = ribbon; `room` 0–1 = ambient room amount.
+    /// Recompute the live taps if the blend changed. `blend` 0 = close dynamic,
+    /// 1 = ribbon; `room` 0-1 = ambient room amount.
     fn set(&mut self, blend: f32, room: f32) {
-        // Rate limit: see `MIC_BLEND_RECOMBINE_INTERVAL`. Checked before the change
-        // test so the countdown runs even while nothing is moving.
         if self.cooldown > 0 {
             self.cooldown -= 1;
             return;
@@ -723,22 +749,11 @@ impl MicBlend {
         let wc = 1.0 - blend; // close dynamic weight
         let wr = blend; // ribbon weight
         let wroom = room * 0.9; // room ambience: real captures carry ~25% late energy
-        // Zero-padded reads, not indexing. `scratch` is sized from `close_l.len()`
-        // and this used to index `ribbon_l` / `room_l` with that same bound, so a
-        // shorter ribbon or room IR would **panic on the audio thread**. The IRs are
-        // generated rather than loaded, so their lengths agreeing is an accident of
-        // the generator rather than a contract -- and `external.rs` can load
-        // arbitrary IRs. `new` normalises the lengths, and this is the belt to that
-        // braces: a short IR contributes silence rather than an out-of-bounds read.
         for (i, s) in self.scratch_l.iter_mut().enumerate() {
-            *s = wc * self.close_l[i]
-                + wr * self.ribbon_l.get(i).copied().unwrap_or(0.0)
-                + wroom * self.room_l.get(i).copied().unwrap_or(0.0);
+            *s = wc * self.close_l[i] + wr * self.ribbon_l[i] + wroom * self.room_l[i];
         }
         for (i, s) in self.scratch_r.iter_mut().enumerate() {
-            *s = wc * self.close_r[i]
-                + wr * self.ribbon_r.get(i).copied().unwrap_or(0.0)
-                + wroom * self.room_r.get(i).copied().unwrap_or(0.0);
+            *s = wc * self.close_r[i] + wr * self.ribbon_r[i] + wroom * self.room_r[i];
         }
         self.conv_l.load(&self.scratch_l);
         self.conv_r.load(&self.scratch_r);
@@ -1716,13 +1731,20 @@ mod tests {
             "grille comb absent: peak {peak:.4} vs null {null:.4}"
         );
 
-        // The lows are below both high-pass corners, so they pass at unit gain
-        // (only the normalisation scales them) — the body is untouched.
+        // The lows sit below both high-pass corners, so the grille and dust-cap taps
+        // contribute nothing there and the low end must come through at **unity** —
+        // the direct path is the speaker, and a grille cloth does not load it.
+        //
+        // This assertion used to be `(low - norm).abs() < 0.02`, i.e. it *required*
+        // the lows to be attenuated by `norm` (0.9794, −0.181 dB) while its own comment
+        // said "the body is untouched". It was pinning the defect: `norm` was computed
+        // from the unfiltered tap gains and multiplied the whole expression, direct
+        // path included, so every frequency paid for a pair of taps that the
+        // high-passes remove at LF. `norm` now scales only the tap sum.
         let low = mag(200.0);
-        let norm = 1.0 / (1.0 + GRILLE_GAIN * GRILLE_GAIN + DUSTCAP_GAIN * DUSTCAP_GAIN).sqrt();
         assert!(
-            (low - norm).abs() < 0.02,
-            "grille echo colours the lows: 200 Hz {low:.4} vs norm {norm:.4}"
+            (low - 1.0).abs() < 0.02,
+            "grille echo colours the lows: 200 Hz {low:.4}, expected unity"
         );
     }
 
