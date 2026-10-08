@@ -3,7 +3,7 @@ source: src/ui/draw.rs
 expression: text
 ---
 ┌─────────────────────────────────────╔ K E Y B I N D I N G S ════════════════════════════════════════════════════════════════════╗──────────────────────────────[ ] move┐
-│  AMP ──▶ CAB ──▶ OUTPUT             ║Panels & chain                                                                             ║░░▌          OUT ▐░░░░░▌LIM           │
+│  AMP ──▶ CAB                        ║Panels & chain                                                                             ║░░▌          OUT ▐░░░░░▌LIM           │
 └─────────────────────────────────────║  1 / 2 / 3 / 4  focus chain, amp, timeline, pedals (again: hide → timeline)               ║──────────────────────────────────────┘
 ┏┤ MARSHALL PLEXI ├━━━━━━━━━━━━━━━━━━━║  Tab / Shift-Tab  cycle focus through the visible panels                                  ║━━━━━━━━━━━━━━━━━━━━━━━━┤ 🎙 MARSH GB ├┓
 ┃                                     ║  ←/→  move inside the focused panel                                                       ║                                      ┃

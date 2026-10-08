@@ -215,7 +215,6 @@ fn render_header(
     if let Some(name) = plugin {
         push_stage(&mut chain, format!("🔌 {name}"), Style::default().fg(AMBER));
     }
-    push_stage(&mut chain, "OUTPUT".to_owned(), Style::default().fg(CHROME));
 
     // Half / half-ish: live order on the left (70%), single-line input/output
     // mini-bars on the right (30%). The chain clips at its boundary on long
@@ -224,15 +223,16 @@ fn render_header(
         .direction(Direction::Horizontal)
         .constraints([Constraint::Ratio(7, 10), Constraint::Ratio(3, 10)])
         .split(inner);
-    // The left pane holds the live chain and, at its right edge, the rig master
-    // output. The master gets a fixed cell so it stays put as the chain scrolls or
-    // clips, and it is the panel-1 focus target: `←`/`→` select it, `↑`/`↓` adjust.
+    // The rig master output and the OUTPUT terminator are pinned at the right edge
+    // of the chain pane, so they stay visible however long the board gets and read
+    // as fixed chrome rather than reorderable stages. The master is the panel-1
+    // focus target: `←`/`→` select it, `↑`/`↓` adjust it, `[`/`]` leave it alone.
     let left = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Min(0), Constraint::Length(15)])
+        .constraints([Constraint::Min(0), Constraint::Length(CHAIN_TAIL_WIDTH)])
         .split(halves[0]);
     f.render_widget(Paragraph::new(Line::from(chain)), left[0]);
-    render_master_cell(f, left[1], params, focused && master_selected);
+    render_chain_tail(f, left[1], params, focused && master_selected);
 
     let meter_rows = Layout::default()
         .direction(Direction::Vertical)
@@ -259,23 +259,29 @@ fn render_header(
 
 /// The rig master-output cell in the header: a compact dB readout, and also the
 /// panel-1 focus target. Highlighted while selected; `↑`/`↓` adjust it.
-fn render_master_cell(f: &mut Frame, area: Rect, params: &Params, selected: bool) {
+fn render_chain_tail(f: &mut Frame, area: Rect, params: &Params, master_selected: bool) {
     let db = master_output_db(params.master_output.load(Relaxed));
-    let style = if selected {
+    let master_style = if master_selected {
         Style::default()
             .fg(ACCENT)
             .add_modifier(Modifier::BOLD | Modifier::REVERSED)
     } else {
         Style::default().fg(CHROME)
     };
-    // Trailing space so the readout keeps a one-cell gap from the meters that
-    // follow it in the header.
-    let text = format!("MASTER {db:+.1} ");
-    f.render_widget(
-        Paragraph::new(Line::from(Span::styled(text, style))).alignment(Alignment::Right),
-        area,
-    );
+    let arrow = Span::styled(" ──▶ ", Style::default().fg(DIM));
+    let line = Line::from(vec![
+        arrow.clone(),
+        Span::styled(format!("MASTER {db:+.1}"), master_style),
+        arrow,
+        Span::styled("OUTPUT ", Style::default().fg(CHROME)),
+    ]);
+    f.render_widget(Paragraph::new(line), area);
 }
+
+/// Width of the pinned chain tail: ` ──▶ MASTER +0.0 ──▶ OUTPUT` plus a trailing
+/// gap (28 cells; the master readout is always 11 wide across its whole -6..+6 dB
+/// range).
+const CHAIN_TAIL_WIDTH: u16 = 28;
 
 /// Ribbon label + live on/off for a pedal stage (`None` for the amp and cab).
 fn pedal_stage_state(params: &Params, stage: ChainStage) -> Option<(&'static str, bool)> {
@@ -1911,6 +1917,35 @@ mod tests {
         screen_text(&term)
     }
 
+    /// As [`render_with`], but with the panel-1 master cell selected. Kept separate
+    /// so the common helper stays free of a flag only one golden needs.
+    fn render_with_master(params: &Params, board: &[bool], master_selected: bool) -> String {
+        let levels = Levels::new();
+        let mut term = Terminal::new(TestBackend::new(W, H)).expect("test backend");
+        term.draw(|f| {
+            draw(
+                f,
+                params,
+                &levels,
+                &InputCalibration::default(),
+                Some(CHAIN_TILE),
+                board,
+                false,
+                false,
+                None,
+                None,
+                None,
+                None,
+                Panels::all_visible(),
+                ChainStage::Amp,
+                master_selected,
+                None,
+            );
+        })
+        .expect("draw");
+        screen_text(&term)
+    }
+
     /// The focused knob alone draws a full box (top, sides, bottom); an
     /// unfocused knob renders the same content with blank insets and no box.
     #[test]
@@ -2056,6 +2091,69 @@ mod tests {
             .unwrap_or(AMP_START);
         let text = render_with(&params, &board, Some(focus), |_| {});
         insta::assert_snapshot!("default_screen", text);
+    }
+
+    /// The master cell is pinned just before OUTPUT, and is drawn reversed when the
+    /// panel-1 cursor is on it. The goldens cannot check this -- `screen_text` drops
+    /// styling -- so the selected style is inspected from the buffer directly.
+    #[test]
+    fn master_cell_is_pinned_before_output_and_highlights_when_selected() {
+        let params = Params::new();
+        params.master_output.store(0.75, Relaxed); // +3.0 dB
+
+        // Unselected: the tail reads `──▶ MASTER +3.0 ──▶ OUTPUT` with a gap before
+        // the meters (so it does not run into `IN uncal`).
+        let plain = render_with_master(&params, &board_all(false), false);
+        let line = plain
+            .lines()
+            .find(|l| l.contains("MASTER"))
+            .expect("header line");
+        assert!(
+            line.contains("──▶ MASTER +3.0 ──▶ OUTPUT"),
+            "master must sit before OUTPUT: {line}"
+        );
+
+        // Selected: the MASTER span itself carries REVERSED.
+        let levels = Levels::new();
+        let mut term = Terminal::new(TestBackend::new(W, H)).expect("test backend");
+        term.draw(|f| {
+            draw(
+                f,
+                &params,
+                &levels,
+                &InputCalibration::default(),
+                Some(CHAIN_TILE),
+                &board_all(false),
+                false,
+                false,
+                None,
+                None,
+                None,
+                None,
+                Panels::all_visible(),
+                ChainStage::Amp,
+                true,
+                None,
+            );
+        })
+        .expect("draw");
+        let buf = term.backend().buffer();
+        let area = buf.area();
+        let mut found = false;
+        for y in 0..area.height {
+            let row: String = (0..area.width).map(|x| buf[(x, y)].symbol()).collect();
+            // The arrows are multi-byte, so a byte offset is not a cell column.
+            if let Some(byte) = row.find("MASTER") {
+                let col = row[..byte].chars().count() as u16;
+                let style = buf[(col, y)].style();
+                assert!(
+                    style.add_modifier.contains(Modifier::REVERSED),
+                    "the selected master cell must be reversed"
+                );
+                found = true;
+            }
+        }
+        assert!(found, "the MASTER cell must be rendered");
     }
 
     /// Rendering must never panic across a spread of states: empty board, full

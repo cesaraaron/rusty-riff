@@ -79,11 +79,13 @@ cabinet browser. Each built-in amp has its own front-panel knobs; the cabinet
 stage adds mic position, dynamic/ribbon blend, and room amount. `I` opens the
 external IR browser and `X` bypasses the IR.
 
-The **MASTER** cell at the right edge of the chain header (panel 1) is the rig's
-output level, `-6` to `+6 dB` with `0.0` (unity) at centre. Select it with `←`/`→`
-in panel 1 and adjust it with `↑`/`↓`; `Space` resets it to unity. It is a level
-control, not a tone control: unlike an amp's own master it does not sit in the
-feedback path, and it works the same on every amp model — including the five that
+The **MASTER** cell is pinned at the end of the chain header (panel 1), just
+before the `OUTPUT` label: it is the rig's output level, `-6` to `+6 dB` with
+`0.0` (unity) at centre. It stays visible however long the board gets, and unlike
+the stages it cannot be reordered. Select it with `←`/`→` in panel 1 and adjust it
+with `↑`/`↓`; `Space` resets it to unity. It is a level control, not a tone
+control: unlike an amp's own master it does not sit in the feedback path, and it
+works the same on every amp model — including the five that have
 have no master knob of their own. It scales the guitar signal only, so turning it
 up does not also turn up a backing track, the metronome, or the looper, which is
 what makes it useful for balancing the guitar against a backing track. The top of
