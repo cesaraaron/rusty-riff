@@ -1589,6 +1589,7 @@ mod tests {
     /// RMS: the ear weights the mids far more than the low end a chug is full of, so
     /// raw RMS let bass-heavy voicings (and the low-headroom small combos) drift out
     /// of perceptual balance. See `examples/rig_loudness.rs`.
+
     #[test]
     fn amps_are_loudness_matched() {
         use crate::dsp::biquad::Biquad;
@@ -1612,7 +1613,9 @@ mod tests {
         };
 
         let mut levels = Vec::new();
-        for (_name, model, mut amp) in each_amp() {
+        let mut names = Vec::new();
+        for (name, model, mut amp) in each_amp() {
+            names.push(name);
             // Driven hard — the regime the per-amp output trims are tuned to match.
             let knobs = standard_knobs(model, 0.93, 0.5, 0.5, 0.65, 0.5, 0.65);
             let out: Vec<f32> = di.iter().map(|&x| amp.process(x, &knobs)).collect();
@@ -1626,6 +1629,16 @@ mod tests {
             "amps not perceptually loudness-matched: mid-band rms spread {hi:.4}/{lo:.4} = {:.2}x",
             hi / lo
         );
+        // **Absolute** level as well as relative. The spread check alone let the
+        // C2 feedback loop pass: negative feedback removes gain by definition, and
+        // it removed it from every model, so the spread stayed tight while the
+        // whole bank sat up to 2 dB quiet. A spread assertion cannot see that.
+        for (name, lv) in names.iter().zip(levels.iter()) {
+            assert!(
+                (lv - 0.0650).abs() < 0.0010,
+                "{name} mid-band rms {lv:.4} is not at the 0.0650 trim target"
+            );
+        }
     }
 
     /// Every amp model must be **time-aligned**, so switching models on stage

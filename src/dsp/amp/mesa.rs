@@ -219,7 +219,7 @@ impl Mesa {
         // `pf_out` so the loop stays causal.
         let fb = self.nfb.feedback(self.pf_out, master, presence);
         let out = self.os_power.shape(x - fb, |u| {
-            TubeClip::PUSH_PULL.shape(u * drive_up) * rail * 0.847
+            TubeClip::PUSH_PULL.shape(u * drive_up) * rail * 0.9964
         });
         self.pf_out = out;
         out

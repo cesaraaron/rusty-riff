@@ -238,7 +238,7 @@ impl Amplifier for Randall {
         // Subtract the divider's feedback from the stage's own input, read from
         // `pf_out` so the loop stays causal.
         let fb = self.nfb.feedback(self.pf_out, master, treble);
-        let out = self.os_power.shape(x - fb, |u| (u * 1.85).tanh() * 0.54);
+        let out = self.os_power.shape(x - fb, |u| (u * 1.85).tanh() * 0.5997);
         self.pf_out = out;
         let x = out;
         let x = self.speaker.process(x, 0.0);

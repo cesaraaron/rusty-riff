@@ -267,7 +267,7 @@ impl Marshall {
         // `pf_out` (the previous sample) so the loop is causal.
         let fb = self.nfb.feedback(self.pf_out, master, presence);
         let out = self.os_power.shape(x - fb, |u| {
-            TubeClip::PUSH_PULL.shape(u * drive_up) * rail * 0.62
+            TubeClip::PUSH_PULL.shape(u * drive_up) * rail * 0.7992
         });
         self.pf_out = out;
         out
