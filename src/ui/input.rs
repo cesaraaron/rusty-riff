@@ -228,57 +228,59 @@ fn focus_after_hide(
 // `Tab` / `Shift-Tab` cycle the visible panels (see `cycle_panel`).
 // switched with the number keys, so the old global panel walk is gone.
 
-/// Knob range for the section a focus owns scoped `←`/`→` navigation in:
-/// panel 2 the amp or mic group containing the focus, panel 4 the focused
-/// pedal's own knobs. `None` (no section owns the arrows) leaves focus alone.
-fn scoped_knob_range(focus: Option<usize>, amp_count: usize) -> Option<(usize, usize)> {
+/// The cells `←`/`→` walk within the focused panel, in order. Movement is one
+/// flat walk that crosses sub-groups and wraps at the ends:
+/// - panel 2: the active model's amp knobs, the master output, then cab/mic knobs;
+/// - panel 4: every on-board pedal's knobs in chain order, then `+ ADD`.
+///
+/// Panels 1 and 3 own their arrows elsewhere (chain cursor, seek), so they return
+/// no stops and the arrows leave their focus untouched.
+fn panel_stops(
+    focus: Option<usize>,
+    board: &[bool],
+    order: &[u8; CHAIN_LEN],
+    amp_count: usize,
+) -> Vec<usize> {
     match panel_of(focus) {
         2 => {
-            if focus.is_some_and(|k| (MIC_START..MIC_END).contains(&k)) {
-                Some((MIC_START, MIC_END))
-            } else {
-                Some((AMP_START, AMP_START + amp_count))
-            }
+            let mut stops: Vec<usize> = (AMP_START..AMP_START + amp_count).collect();
+            // The rig master output is drawn as the amp panel's last cell but lives
+            // at the end of the knob table, so it is appended explicitly.
+            stops.push(OUT_START);
+            stops.extend(MIC_START..MIC_END);
+            stops
         }
         4 => {
-            let pi = focus.and_then(pedal_of)?;
-            Some((PEDALS[pi].start, PEDALS[pi].end))
+            let mut stops: Vec<usize> = Vec::new();
+            for &(_, stage) in &rendered_stages(order, board) {
+                if let Some(pi) = stage.pedal_index() {
+                    stops.extend(PEDALS[pi].start..PEDALS[pi].end);
+                }
+            }
+            stops.push(ADD_TILE);
+            stops
         }
-        _ => None,
+        _ => Vec::new(),
     }
 }
 
-/// `←`/`→` inside the focused panel: cycle knobs within the focused amp/mic
-/// section, or within the focused pedal, wrapping around that section only. The
-/// ribbon and timeline own their arrows; a focus with no section (the `+ ADD`
-/// tile, a stale focus) is left untouched.
+/// `←`/`→` inside the focused panel: walk its cells continuously, wrapping at the
+/// ends. A focus with no stops (the ribbon or the timeline, which own their
+/// arrows) is left untouched.
 pub(super) fn step_knob_in_panel(
     focus: Option<usize>,
     board: &[bool],
-    _order: &[u8; CHAIN_LEN],
+    order: &[u8; CHAIN_LEN],
     dir: i32,
     amp_count: usize,
 ) -> Option<usize> {
-    let Some((start, end)) = scoped_knob_range(focus, amp_count) else {
-        return focus;
-    };
-    let mut stops: Vec<usize> = (start..end)
-        .filter(|&k| knob_visible(k, board, amp_count))
-        .collect();
-    // The master output is drawn as the amp panel's last cell but lives at the end
-    // of the knob table, so the contiguous range misses it.
-    if start == AMP_START {
-        stops.push(OUT_START);
-    }
+    let stops = panel_stops(focus, board, order, amp_count);
     match focus.and_then(|c| stops.iter().position(|&s| s == c)) {
         Some(pos) => {
             let n = stops.len() as i32;
-            stops
-                .get((((pos as i32 + dir) % n + n) % n) as usize)
-                .copied()
+            Some(stops[(((pos as i32 + dir.signum()) % n + n) % n) as usize])
         }
-        // A stale focus re-anchors at the section's first reachable knob, and
-        // stays put if the whole section is unreachable.
+        // A stale focus re-anchors at the panel's first cell.
         None => stops.first().copied().or(focus),
     }
 }
@@ -623,84 +625,68 @@ mod tests {
         );
     }
 
-    /// Panel 2 `←`/`→` stays within the amp or mic group, wrapping there only.
+    /// Panel 2 `←`/`→` walks the amp knobs, the master output and the cab/mic
+    /// knobs as one continuous, wrapping run.
     #[test]
-    fn arrows_cycle_within_the_focused_amp_or_cab_section() {
+    fn arrows_walk_the_amp_panel_continuously() {
         let b = board(true);
         let o = order();
-        // Amp group: 6 amp knobs plus the rig master output, which is drawn as the
-        // panel's last cell even though its table index sits past the pedals.
         assert_eq!(
             step_knob_in_panel(Some(AMP_START), &b, &o, 1),
             Some(AMP_START + 1)
         );
+        // The amp block runs into the master output, then the mic block.
         assert_eq!(
             step_knob_in_panel(Some(AMP_START + AMP_KNOBS - 1), &b, &o, 1),
             Some(OUT_START),
-            "→ past the last amp knob must reach the master output"
+            "the last amp knob must lead to the master output"
         );
         assert_eq!(
             step_knob_in_panel(Some(OUT_START), &b, &o, 1),
+            Some(MIC_START),
+            "the master output must lead into the cab/mic knobs"
+        );
+        // And the mic block wraps back to the first amp knob.
+        assert_eq!(
+            step_knob_in_panel(Some(MIC_END - 1), &b, &o, 1),
             Some(AMP_START),
-            "→ past the master output must wrap inside the amp group"
+            "the last mic knob must wrap to the first amp knob"
+        );
+        // Backwards crosses the same boundaries.
+        assert_eq!(
+            step_knob_in_panel(Some(MIC_START), &b, &o, -1),
+            Some(OUT_START)
         );
         assert_eq!(
             step_knob_in_panel(Some(AMP_START), &b, &o, -1),
-            Some(OUT_START),
-            "← before the first amp knob must wrap to the master output"
-        );
-        assert_eq!(
-            step_knob_in_panel(Some(OUT_START), &b, &o, -1),
-            Some(AMP_START + AMP_KNOBS - 1),
-            "← from the master output must return to the last amp knob"
-        );
-        // Cab/mic group: never crossing into the amp.
-        assert_eq!(
-            step_knob_in_panel(Some(MIC_START), &b, &o, -1),
             Some(MIC_END - 1)
         );
-        assert_eq!(
-            step_knob_in_panel(Some(MIC_END - 1), &b, &o, 1),
-            Some(MIC_START)
-        );
-        // A stale focus re-anchors at the amp group's first knob.
+        // A stale focus re-anchors at the panel's first cell.
         assert_eq!(step_knob_in_panel(None, &b, &o, 1), Some(AMP_START));
     }
 
-    /// Panel 4 `←`/`→` stays within the focused pedal, wrapping there only.
+    /// Panel 4 `←`/`→` walks every on-board pedal's knobs in chain order, crosses
+    /// pedal boundaries, visits `+ ADD`, and wraps.
     #[test]
-    fn arrows_cycle_within_the_focused_pedal() {
+    fn arrows_walk_every_pedal_continuously() {
         let b = board(true);
         let o = order();
         let gate = PEDALS[0].start;
         assert_eq!(step_knob_in_panel(Some(gate), &b, &o, 1), Some(gate + 1));
+        // The last knob of the first on-board pedal leads into the next pedal.
         assert_eq!(
             step_knob_in_panel(Some(PEDALS[0].end - 1), &b, &o, 1),
-            Some(gate),
-            "→ past the pedal's last knob must wrap inside the pedal"
+            Some(PEDALS[1].start),
+            "the walk must cross from one pedal into the next"
         );
+        // The last pedal leads to +ADD, which wraps to the first pedal.
+        let last_end = PEDALS[PEDALS.len() - 1].end;
         assert_eq!(
-            step_knob_in_panel(Some(gate), &b, &o, -1),
-            Some(PEDALS[0].end - 1)
-        );
-        // A three-knob pedal walks only its own three.
-        let comp = PEDALS[3].start;
-        let mut seen = vec![comp];
-        let mut f = Some(comp);
-        for _ in 0..4 {
-            f = step_knob_in_panel(f, &b, &o, 1);
-            seen.push(f.unwrap());
-        }
-        assert_eq!(
-            seen,
-            vec![comp, comp + 1, comp + 2, comp, comp + 1],
-            "arrows must wrap within the pedal only"
-        );
-        // The +ADD tile owns no knobs: arrows are inert there.
-        assert_eq!(
-            step_knob_in_panel(Some(ADD_TILE), &b, &o, 1),
+            step_knob_in_panel(Some(last_end - 1), &b, &o, 1),
             Some(ADD_TILE)
         );
+        assert_eq!(step_knob_in_panel(Some(ADD_TILE), &b, &o, 1), Some(gate));
+        assert_eq!(step_knob_in_panel(Some(gate), &b, &o, -1), Some(ADD_TILE));
         // Ribbon and timeline own their arrows.
         assert_eq!(
             step_knob_in_panel(Some(CHAIN_TILE), &b, &o, 1),
@@ -712,22 +698,20 @@ mod tests {
         );
     }
 
-    /// An off-board pedal's arrows re-anchor to its own first knob instead of
-    /// leaking onto another pedal.
+    /// The walk is confined to the focused panel: an off-board pedal is skipped,
+    /// and panel 2 never leaks into the pedalboard.
     #[test]
-    fn arrows_never_leave_the_focused_pedal_group() {
+    fn arrows_stay_inside_the_focused_panel() {
         let mut b = board(false);
         b[3] = true; // only COMP is on the board
         let o = order();
-        let off = PEDALS[0].start;
+        // An off-board pedal's focus re-anchors on the only on-board pedal.
         assert_eq!(
-            step_knob_in_panel(Some(off), &b, &o, 1),
-            Some(off),
-            "an off-board pedal's arrows must not reach another pedal"
+            step_knob_in_panel(Some(PEDALS[0].start), &b, &o, 1),
+            Some(PEDALS[3].start),
+            "an off-board pedal's arrows must re-anchor on the board"
         );
-        // The amp/mic panel's arrows stay inside panel 2. The rig master output is
-        // part of that panel (it is drawn as the amp panel's last cell), so it is a
-        // legal landing spot even though its table index sits past the mic block.
+        // Panel 2 loops within amp + master + mic.
         for k in AMP_START..MIC_END {
             let f = step_knob_in_panel(Some(k), &b, &o, 1);
             assert!(
