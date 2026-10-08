@@ -2325,6 +2325,9 @@ front_load = INSERTION_LOSS * c1_old / ratio^p        (ratio ≈ 6.84, the widen
 | absolute h3 | 0.103 | 0.055 | **0.126** |
 | `distortion_is_harmonic_not_aliased_hash` | pass | **fail** | **pass** |
 
+> **SHIPPED.** Merged to `main` as `c137173` after the A/B listening pass. CI green
+> in both profiles; baseline re-blessed; bench 5.1–5.6% of the realtime budget.
+
 and the actual point of C1 is intact: **28.2 dB of monotonic gain authority** on the
 Marshall (27.8 Vox, 21.8 Plexi) against 0.8 dB non-monotonic before. Re-trimming after
 front-loading put all nine models at **0.0650 ± 0.0001** mid-band RMS — a 1.00x spread,
