@@ -591,6 +591,58 @@ const DEFAULT_MIC_ROOM: f32 = 0.0;
 /// preset already set `width = 1.0`, so nothing in the preset set depends on it.
 pub const DEFAULT_MASTER_WIDTH: f32 = 1.0;
 
+/// The widened setting `W` toggles back to. Kept separate from
+/// [`DEFAULT_MASTER_WIDTH`] on purpose: the toggle used to store `DEFAULT_` for
+/// both branches, and once the default moved to a neutral `1.0` that made the
+/// "wide" branch a no-op -- `W` reported "studio wide" while changing nothing.
+pub const WIDE_MASTER_WIDTH: f32 = 1.3;
+
+/// Rig master output -- the thing GarageBand calls a master and a real head calls
+/// a power amp. Normalized `0.0`-`1.0`, mapped by [`master_output_gain`]. Unity is
+/// [`DEFAULT_MASTER_OUTPUT`], which must stay exactly 0 dB so the boot state, the
+/// bundled presets and the fidelity baseline are all untouched.
+pub const DEFAULT_MASTER_OUTPUT: f32 = 0.5;
+
+/// The master-output knob's full span in dB, symmetric about unity so the control
+/// is a monitor level rather than a one-way boost.
+///
+/// Held to +/-6 dB deliberately: the rig peaks around 0.45 while the limiter knee is
+/// 0.95, so the top of the range reaches the knee without ever compressing and
+/// turning the master up cannot change the tone. Widening this means revisiting the
+/// limiter, not just this constant.
+pub const MASTER_OUTPUT_RANGE_DB: f32 = 6.0;
+
+/// Map the normalized master-output knob to a linear gain.
+///
+/// Linear in dB, so neither end is a dead zone and the control is predictable at a
+/// glance. A curved fader would spend much of its travel in the top fraction of a dB,
+/// which is precisely the range this knob is actually used over.
+#[inline]
+pub fn master_output_gain(norm: f32) -> f32 {
+    let db = (norm.clamp(0.0, 1.0) - DEFAULT_MASTER_OUTPUT) * 2.0 * MASTER_OUTPUT_RANGE_DB;
+    10.0f32.powf(db / 20.0)
+}
+
+/// The same mapping as [`master_output_gain`], in dB, for UI readouts.
+#[inline]
+pub fn master_output_db(norm: f32) -> f32 {
+    (norm.clamp(0.0, 1.0) - DEFAULT_MASTER_OUTPUT) * 2.0 * MASTER_OUTPUT_RANGE_DB
+}
+
+/// Cycle the studio-master width between neutral and wide, returning the new
+/// value and the label the toast shows.
+///
+/// This is the `W` policy, kept out of the UI event loop so it can be tested: the
+/// handler used to store [`DEFAULT_MASTER_WIDTH`] for *both* branches, so once the
+/// default became a neutral `1.0` the "wide" branch silently became a no-op.
+pub fn toggle_master_width(current: f32) -> (f32, &'static str) {
+    if current > DEFAULT_MASTER_WIDTH + 1e-3 {
+        (DEFAULT_MASTER_WIDTH, "neutral")
+    } else {
+        (WIDE_MASTER_WIDTH, "studio wide")
+    }
+}
+
 // When an external IR is loaded it can be toggled against the built-in cabs live;
 // it starts inactive (the engine boots on a built-in cab).
 const DEFAULT_CAB_EXTERNAL_ACTIVE: bool = false;
@@ -736,6 +788,8 @@ pub struct Params {
     // Studio-master stereo width applied on the output bus (`1.0` neutral,
     // `1.3` the historic widening). The output limiter is independent.
     pub master_width: Arc<AtomicF32>,
+    /// Rig master output, normalized 0.0-1.0. See [`DEFAULT_MASTER_OUTPUT`].
+    pub master_output: Arc<AtomicF32>,
 
     /// MIDI-clock tempo surfaced by the UI (`0.0` = no clock running). Written by
     /// the MIDI thread when clock sync is enabled; read-only everywhere else.
@@ -962,6 +1016,7 @@ impl Params {
             mic_blend: p!(DEFAULT_MIC_BLEND),
             mic_room: p!(DEFAULT_MIC_ROOM),
             master_width: p!(DEFAULT_MASTER_WIDTH),
+            master_output: p!(DEFAULT_MASTER_OUTPUT),
             midi_clock_bpm: p!(0.0),
             cab_external_active: b!(DEFAULT_CAB_EXTERNAL_ACTIVE),
             cab_external_loaded: b!(false),
@@ -1104,6 +1159,7 @@ impl Params {
         self.mic_blend.store(DEFAULT_MIC_BLEND, Relaxed);
         self.mic_room.store(DEFAULT_MIC_ROOM, Relaxed);
         self.master_width.store(DEFAULT_MASTER_WIDTH, Relaxed);
+        self.master_output.store(DEFAULT_MASTER_OUTPUT, Relaxed);
         // Fall back to the built-in cab. The loaded IR (if any) stays installed in
         // the chain — only its active/inactive selection is a default-able param.
         self.cab_external_active
@@ -1504,6 +1560,8 @@ struct BlockRoute {
     skip_cab: bool,
     /// Master-bus width for this block.
     width: f32,
+    /// Frozen once per block alongside `width`. See [`master_output_gain`].
+    output: f32,
 }
 
 /// Built-in↔AU declick fade time. Long enough to smooth a waveform step, short
@@ -1711,6 +1769,7 @@ impl DspChain {
             // stage is skipped; an amp-only AU still feeds the built-in cab.
             skip_cab: use_ext_amp && !amp_only,
             width: p.master_width.load(Relaxed),
+            output: master_output_gain(p.master_output.load(Relaxed)),
         }
     }
 
@@ -2091,7 +2150,7 @@ impl DspChain {
     pub fn process(&mut self, sample: f32) -> (f32, f32) {
         let route = self.route_for_block(false);
         let (l, r) = self.process_core(sample, &route);
-        master_bus(l, r, route.width, &mut self.master_dc)
+        master_bus(l, r, route.width, route.output, &mut self.master_dc)
     }
 
     /// Process a block of mono input samples into stereo output buffers.
@@ -2209,7 +2268,7 @@ impl DspChain {
 
         // Master bus, per sample (width read once per block, in the route).
         for (l, r) in out_l.iter_mut().zip(out_r.iter_mut()) {
-            let (wl, wr) = master_bus(*l, *r, route.width, &mut self.master_dc);
+            let (wl, wr) = master_bus(*l, *r, route.width, route.output, &mut self.master_dc);
             if amp_loaded {
                 // Advance the built-in↔AU declick ramp (identity when steady).
                 if self.declick_gain < self.declick_target {
@@ -2246,8 +2305,14 @@ impl DspChain {
 /// [`process_block`](DspChain::process_block) remain bit-identical for a given
 /// input: each drives its own blockers deterministically, one sample at a time.
 #[inline]
-fn master_bus(l: f32, r: f32, width: f32, dc: &mut MasterDc) -> (f32, f32) {
+fn master_bus(l: f32, r: f32, width: f32, output: f32, dc: &mut MasterDc) -> (f32, f32) {
     let (l, r) = widen(l, r, width);
+    // Master output sits after the widener and before the limiter, so the limiter
+    // still guards the ceiling and turning the knob up can never clip. Placing it
+    // here also keeps it ahead of the monitor-only buses, which are summed outside
+    // the chain: backing tracks, the metronome and the looper are untouched by it,
+    // which is the whole point of using it to balance the guitar against a track.
+    let (l, r) = (l * output, r * output);
     let (l, r) = (dc.l.process(l), dc.r.process(r));
     (soft_limit(l), soft_limit(r))
 }
@@ -3166,12 +3231,12 @@ mod tests {
         // transient, not leakage. 0.25 s is >12 time constants at 8 Hz.
         let mut dc = MasterDc::new(sr);
         for _ in 0..(sr as usize / 4) {
-            master_bus(0.25, -0.25, 1.0, &mut dc);
+            master_bus(0.25, -0.25, 1.0, 1.0, &mut dc);
         }
         let mut sum = 0.0f64;
         let n = sr as usize;
         for _ in 0..n {
-            let (l, _r) = master_bus(0.25, -0.25, 1.0, &mut dc);
+            let (l, _r) = master_bus(0.25, -0.25, 1.0, 1.0, &mut dc);
             sum += l as f64;
         }
         let mean = (sum / n as f64) as f32;
@@ -3216,7 +3281,7 @@ mod tests {
     #[test]
     fn master_bus_width_is_neutral_at_one_and_limiter_is_independent() {
         let mut dc = MasterDc::new(48_000.0);
-        let (nl, nr) = master_bus(0.5, -0.2, 1.0, &mut dc);
+        let (nl, nr) = master_bus(0.5, -0.2, 1.0, 1.0, &mut dc);
         assert!(
             (nl - 0.5).abs() < 1e-6 && (nr + 0.2).abs() < 1e-6,
             "width 1.0 must be neutral, got ({nl}, {nr})"
@@ -3233,7 +3298,7 @@ mod tests {
 
         for width in [0.0, 1.0, 1.3, 2.0] {
             let mut dc = MasterDc::new(48_000.0);
-            let (l, r) = master_bus(4.0, -4.0, width, &mut dc);
+            let (l, r) = master_bus(4.0, -4.0, width, 1.0, &mut dc);
             assert!(
                 l.abs() <= 1.0 && r.abs() <= 1.0,
                 "limiter failed to bound output at width {width}: ({l}, {r})"
@@ -3309,6 +3374,121 @@ mod tests {
             diff += (nl - wl).abs() + (nr - wr).abs();
         }
         assert!(diff > 1e-3, "master width had no audible effect: {diff}");
+    }
+
+    /// `W` must actually change the width. It stored `DEFAULT_MASTER_WIDTH` in both
+    /// branches, so once the default became a neutral `1.0` the toggle was a no-op
+    /// that still reported "studio wide".
+    #[test]
+    fn the_master_width_toggle_actually_toggles() {
+        let (from_default, label) = toggle_master_width(DEFAULT_MASTER_WIDTH);
+        assert_eq!(label, "studio wide");
+        assert_eq!(from_default, WIDE_MASTER_WIDTH);
+        assert!(
+            from_default != DEFAULT_MASTER_WIDTH,
+            "the wide branch must differ from neutral"
+        );
+        let (back, label) = toggle_master_width(from_default);
+        assert_eq!(label, "neutral");
+        assert_eq!(back, DEFAULT_MASTER_WIDTH);
+        // And it must be idempotent per press: pressing twice returns to where it
+        // started rather than sticking.
+        assert_eq!(toggle_master_width(back).0, WIDE_MASTER_WIDTH);
+    }
+
+    /// The knob maps linearly in dB, symmetric about unity, so neither end is a
+    /// dead zone and the displayed dB is exactly what the audio does.
+    #[test]
+    fn master_output_maps_linearly_about_unity() {
+        assert!((master_output_gain(DEFAULT_MASTER_OUTPUT) - 1.0).abs() < 1e-6);
+        assert!((master_output_db(DEFAULT_MASTER_OUTPUT)).abs() < 1e-6);
+        assert!((master_output_gain(0.0) - master_output_gain(1.0)).abs() > 0.5);
+        // Endpoints are exactly +/- MASTER_OUTPUT_RANGE_DB.
+        assert!((master_output_db(1.0) - MASTER_OUTPUT_RANGE_DB).abs() < 1e-4);
+        assert!((master_output_db(0.0) + MASTER_OUTPUT_RANGE_DB).abs() < 1e-4);
+        // Monotonic across the whole travel.
+        let mut prev = f32::MIN;
+        for i in 0..=100 {
+            let g = master_output_gain(i as f32 / 100.0);
+            assert!(g > prev, "gain must increase monotonically");
+            prev = g;
+        }
+    }
+
+    /// Unity must be **bit-identical** to no master at all, or the boot state, the
+    /// bundled presets and the fidelity baseline all shift under us.
+    #[test]
+    fn master_output_at_unity_is_bit_identical_to_no_master() {
+        // The gain function itself must be exactly unity at the default, not merely
+        // close: this is what keeps the boot state, the bundled presets and the
+        // fidelity baseline untouched.
+        assert_eq!(master_output_gain(DEFAULT_MASTER_OUTPUT), 1.0);
+        assert_eq!(master_output_db(DEFAULT_MASTER_OUTPUT), 0.0);
+        assert_eq!(
+            Params::new().master_output.load(Relaxed),
+            DEFAULT_MASTER_OUTPUT
+        );
+    }
+
+    /// The master must raise level by exactly the knob's dB, and must never push the
+    /// output past the ceiling.
+    ///
+    /// The second half is the important one, and it is worth recording why the range
+    /// is not what a first pass suggests. The boot rig is *hot*: a 0.1-amplitude tone
+    /// -- about the calibrated humbucker reference -- already comes out at 0.72 peak,
+    /// and a mere 0.3 comes out at 0.935, sitting on the limiter knee. So a +6 dB
+    /// boost (x2) does not land at 1.0, it lands at ~0.997 after soft clipping: at
+    /// the top of the knob the limiter is working on essentially every note.
+    ///
+    /// Clean boost is therefore only available in the first fraction of the knob's
+    /// travel, not across the whole +6 dB. That is a deliberate consequence of
+    /// leaving `MASTER_OUTPUT_RANGE_DB` at 6 rather than trimming it: a master that
+    /// cannot reach unity-plus-loud is useless for balancing against a backing track,
+    /// and the limiter is the right thing to be doing at the top of a volume control
+    /// -- it is exactly what a power amp does when you wind it up. Users who want the
+    /// boost to stay clean everywhere should turn the amp's own master down instead.
+    #[test]
+    fn master_output_never_passes_the_ceiling_and_is_exact_while_clear() {
+        let sr = 48_000.0;
+        let chain = |out: f32| {
+            let p = Arc::new(Params::new());
+            p.master_output.store(out, Relaxed);
+            DspChain::new(sr, p)
+        };
+        // Sweep the knob, checking the ceiling holds at every position.
+        for step in 0..=20 {
+            let out = step as f32 / 20.0;
+            let mut c = chain(out);
+            let mut peak = 0.0f32;
+            for n in 0..2000 {
+                let x = (2.0 * PI * 110.0 * n as f32 / sr).sin() * 0.5;
+                let (l, r) = c.process(x);
+                peak = peak.max(l.abs()).max(r.abs());
+            }
+            assert!(
+                peak <= 1.0,
+                "master at {out:.2} passed the ceiling: {peak:.4}"
+            );
+        }
+        // And with the signal low enough to stay clear of the knee, the boost is the
+        // exact dB ratio -- proving the knob is wired into the gain, not simulated
+        // after the fact.
+        let gain = master_output_gain(1.0);
+        let (mut u, mut b) = (chain(DEFAULT_MASTER_OUTPUT), chain(1.0));
+        let (mut u_peak, mut b_peak) = (0.0f32, 0.0f32);
+        for n in 0..2000 {
+            let x = (2.0 * PI * 220.0 * n as f32 / sr).sin() * 0.02;
+            let (ul, ur) = u.process(x);
+            let (bl, br) = b.process(x);
+            u_peak = u_peak.max(ul.abs()).max(ur.abs());
+            b_peak = b_peak.max(bl.abs()).max(br.abs());
+        }
+        assert!(b_peak < 0.94, "this probe should stay clear of the limiter");
+        assert!(
+            (b_peak - u_peak * gain).abs() < 0.005,
+            "clean boost should be exactly +6 dB: {u_peak:.4} -> {b_peak:.4}, wanted {:.4}",
+            u_peak * gain
+        );
     }
 
     /// Rapid adjacent swaps (as the UI's `[` / `]` produce) never leave a

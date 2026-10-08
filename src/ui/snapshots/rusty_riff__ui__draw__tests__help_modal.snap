@@ -7,10 +7,10 @@ expression: text
 └─────────────────────────────────────║  1 / 2 / 3 / 4  focus chain, amp, timeline, pedals (again: hide → timeline)               ║──────────────────────────────────────┘
 ┏┤ MARSHALL PLEXI ├━━━━━━━━━━━━━━━━━━━║  Tab / Shift-Tab  cycle amp/cab (2) or pedals (4) in the panel                            ║━━━━━━━━━━━━━━━━━━━━━━━━┤ 🎙 MARSH GB ├┓
 ┃                                     ║  ←/→  move inside the focused panel                                                       ║                                      ┃
-┃         ···                ···      ║  [ / ]  move the ribbon's stage earlier / later                                           ║            ···              ···      ┃
-┃        · ● ◇              · ● ·     ║  note  between AMP and CAB = line-level; a full-rig AU is post-mic                        ║           · ● ·            · ● ·     ┃
-┃         · ·                ◇ ·      ║  Space  bypass stage, pedal, or transport under focus                                     ║            ◇ ·              ◇ ·      ┃
-┃     VOL II 7.5          VOL I 0.0   ║Play & edit                                                                                ║0        BLEND 0.0        ROOM 0.0    ┃
+┃       ···              ···          ║  [ / ]  move the ribbon's stage earlier / later                                           ║            ···              ···      ┃
+┃      · ● ◇            · ● ·         ║  note  between AMP and CAB = line-level; a full-rig AU is post-mic                        ║           · ● ·            · ● ·     ┃
+┃       · ·              ◇ ·          ║  Space  bypass stage, pedal, or transport under focus                                     ║            ◇ ·              ◇ ·      ┃
+┃   VOL II 7.5        VOL I 0.0       ║Play & edit                                                                                ║0        BLEND 0.0        ROOM 0.0    ┃
 ┃                                     ║  ↑/↓  +/−  knob / adjust value                                                            ║                                      ┃
 ┃                                     ║  D  remove pedal from the board                                                           ║                                      ┃
 ┃▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚║  A  amp model browser (on the pedalboard: add a pedal)                                    ║▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚┃
@@ -18,16 +18,17 @@ expression: text
 ┌ GUITAR RIG ─────────────────────────║  I / X  IR browser / IR bypass                                                            ║──────────────────────────────────────┐
 │┌ + ADD ─────────────────────────────║  O  change audio devices                                                                  ║─────────────────────────────────────┐│
 ││                                    ║  W  studio-master width: neutral / wide                                                   ║                                     ││
-│└────────────────────────────────────║  ;  tap tempo: set the delay time by tapping                                              ║─────────────────────────────────────┘│
-││├───────────────────────────────────║  Z / U  amp-plugin bypass / browser                                                       ║────────────────────────────────────┤││
-││SELECT A PEDAL — ←→                 ║Tools                                                                                      ║                                     ││
+│└────────────────────────────────────║  MASTER knob on the amp panel: rig output level, +/-6 dB                                  ║─────────────────────────────────────┘│
+││├───────────────────────────────────║  ;  tap tempo: set the delay time by tapping                                              ║────────────────────────────────────┤││
+││SELECT A PEDAL — ←→                 ║  Z / U  amp-plugin bypass / browser                                                       ║                                     ││
+││                                    ║Tools                                                                                      ║                                     ││
 ││                                    ║  P  preset browser (rig snapshot)                                                         ║                                     ││
 ││                                    ║  S  save current rig as preset                                                            ║                                     ││
 ││                                    ║  J  session browser: new / save / save as / load (/ search)                               ║                                     ││
 ││                                    ║  T  chromatic tuner                                                                       ║                                     ││
-││                                    ║  M  practice metronome (+/− tempo, Space on/off)                                          ║                                     ││
-│└────────────────────────────────────║  N  calibrate input level                                                                 ║─────────────────────────────────────┘│
-└─────────────────────────────────────║  V  plugin browser                                                                        ║──────────────────────────────────────┘
+│└────────────────────────────────────║  M  practice metronome (+/− tempo, Space on/off)                                          ║─────────────────────────────────────┘│
+└─────────────────────────────────────║  N  calibrate input level                                                                 ║──────────────────────────────────────┘
+                                      ║  V  plugin browser                                                                        ║                                       
                                       ║  R  arm / stop a dry raw take (auto-plays; lands on the timeline)                         ║                                       
                                       ║Looper (monitor only)                                                                      ║                                       
                                       ║  Y  record / pause / resume the loop                                                      ║                                       
@@ -54,6 +55,5 @@ expression: text
                                       ║  G  selected track gain                                                                   ║                                       
                                       ║  H  move selected clip (arrows by step; +/− changes it)                                   ║                                       
                                       ║  E  export unmuted raw takes (Tab: full / loop)                                           ║                                       
-                                      ║  [ / ]  L  loop in-point / out-point, toggle loop                                         ║                                       
                                       ║                                       Esc / K close                                       ║                                       
                                       ╚═══════════════════════════════════════════════════════════════════════════════════════════╝

@@ -79,6 +79,16 @@ cabinet browser. Each built-in amp has its own front-panel knobs; the cabinet
 stage adds mic position, dynamic/ribbon blend, and room amount. `I` opens the
 external IR browser and `X` bypasses the IR.
 
+The **MASTER** knob on the amp panel is the rig's output level, `-6` to `+6 dB`
+with `0.0` (unity) at centre. It is a level control, not a tone control: unlike an
+amp's own master it does not sit in the feedback path, and it works the same on
+every amp model — including the five that have no master knob of their own. It
+scales the guitar signal only, so turning it up does not also turn up a backing
+track, the metronome, or the looper, which is what makes it useful for balancing
+the guitar against a backing track. The top of its range reaches the output
+limiter, so turning it up past the point where the signal is already loud engages
+soft limiting — just as winding up a real power amp does.
+
 `W` toggles the master-bus stereo width (neutral / wide).
 
 ## Expression pedal (MIDI)

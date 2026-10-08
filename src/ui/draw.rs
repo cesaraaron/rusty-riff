@@ -8,12 +8,12 @@ use ratatui::{
 use std::sync::atomic::Ordering::Relaxed;
 
 use crate::audio::calibration::InputCalibration;
-use crate::dsp::{AmpModel, CabModel, ChainStage, Levels, Params};
+use crate::dsp::{AmpModel, CabModel, ChainStage, Levels, Params, master_output_db};
 use crate::practice::Practice;
 
 use super::config::{
-    ADD_TILE, AMP_END, AMP_START, CHAIN_TILE, KNOBS, MIC_END, MIC_START, PEDALS, PRACTICE_TILE,
-    Panels, Pedal, PedalUi,
+    ADD_TILE, AMP_END, AMP_START, CHAIN_TILE, KNOBS, MIC_END, MIC_START, OUT_START, PEDALS,
+    PRACTICE_TILE, Panels, Pedal, PedalUi,
 };
 use super::input::rendered_stages;
 use super::practice::PracticeUi;
@@ -487,11 +487,17 @@ fn render_amp_box(
     // Amp front-panel knobs: the active model's own controls, count and labels.
     let controls = params.amp_model().controls();
     let count = controls.len();
+    // The rig master output gets the last slot on the amp panel. It sits with the
+    // amp because that is where a user looks for a master -- but it is a rig-level
+    // level, not an amp knob, which matters because only 4 of the 9 models have
+    // their own MASTER and on those that do it sits in the feedback divider and so
+    // changes tone too. This one is level only and works on every model.
+    let cells = count + 1;
     let knob_cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints(
-            (0..count)
-                .map(|_| Constraint::Ratio(1, count as u32))
+            (0..cells)
+                .map(|_| Constraint::Ratio(1, cells as u32))
                 .collect::<Vec<_>>(),
         )
         .split(parts[0]);
@@ -511,8 +517,21 @@ fn render_amp_box(
             amp_live,
             AMBER,
             !box_active,
+            None,
         );
     }
+    let out_val = (KNOBS[OUT_START].param)(params).load(Relaxed);
+    render_compact_knob(
+        f,
+        knob_cols[count],
+        "MASTER",
+        out_val,
+        focus == Some(OUT_START),
+        true,
+        AMBER,
+        !box_active,
+        Some(format!("{:+.1}", master_output_db(out_val))),
+    );
     // parts[1] stays blank: bottom margin below the knobs.
     render_grille(
         f,
@@ -608,6 +627,7 @@ fn render_cab_box(
             live,
             CHROME,
             !box_active,
+            None,
         );
     }
 
@@ -1033,8 +1053,8 @@ fn render_pedal_detail(
     for (i, ki) in (pedal.start..pedal.end).enumerate() {
         let val = (KNOBS[ki].param)(params).load(Relaxed);
         let render = match pedal.ui {
-            PedalUi::Knobs => render_compact_knob,
-            PedalUi::Sliders => render_compact_fader,
+            PedalUi::Knobs => render_compact_knob as KnobRender,
+            PedalUi::Sliders => render_compact_fader as KnobRender,
         };
         render(
             f,
@@ -1045,6 +1065,7 @@ fn render_pedal_detail(
             on,
             pedal.color,
             false,
+            None,
         );
     }
 }
@@ -1077,6 +1098,11 @@ fn knob_cell(f: &mut Frame, area: Rect, focused: bool) -> Rect {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// One widget renderer for both pedal dial styles, so the choice can be made at
+/// runtime as a plain function pointer.
+type KnobRender = fn(&mut Frame, Rect, &str, f32, bool, bool, Color, bool, Option<String>);
+
+#[allow(clippy::too_many_arguments)]
 fn render_compact_knob(
     f: &mut Frame,
     area: Rect,
@@ -1086,6 +1112,10 @@ fn render_compact_knob(
     active: bool,
     accent: Color,
     dimmed: bool,
+    // Overrides the numeric readout, which otherwise shows `value * 10`. The rig
+    // master output passes its dB here: a 0-10 readout of a +/-6 dB monitor level
+    // is unreadable, since unity at 0.5 would render as "5".
+    num: Option<String>,
 ) {
     let fade = if dimmed {
         Modifier::DIM
@@ -1119,7 +1149,7 @@ fn render_compact_knob(
         .collect();
     f.render_widget(Paragraph::new(art).alignment(Alignment::Center), rows[0]);
 
-    let num = value * 10.0;
+    let num = num.unwrap_or_else(|| format!("{:.1}", value * 10.0));
     let label_color = if focused {
         ACCENT
     } else if active {
@@ -1144,7 +1174,7 @@ fn render_compact_knob(
                 .add_modifier(fade),
         ),
         Span::styled(
-            format!("{num:.1}"),
+            num.clone(),
             Style::default()
                 .fg(value_color)
                 .add_modifier(Modifier::BOLD)
@@ -1170,6 +1200,9 @@ fn render_compact_fader(
     active: bool,
     accent: Color,
     dimmed: bool,
+    // Unused: the fader always shows `value * 10`. Present only so both pedal
+    // widget styles share one function-pointer type.
+    _num: Option<String>,
 ) {
     let fade = if dimmed {
         Modifier::DIM
@@ -1388,6 +1421,10 @@ pub(super) fn render_help_modal(f: &mut Frame) {
         row("  I / X", "  IR browser / IR bypass"),
         row("  O", "  change audio devices"),
         row("  W", "  studio-master width: neutral / wide"),
+        row(
+            "",
+            "  MASTER knob on the amp panel: rig output level, +/-6 dB",
+        ),
         row("  ;", "  tap tempo: set the delay time by tapping"),
     ];
     #[cfg(feature = "au")]
@@ -1855,7 +1892,7 @@ mod tests {
     fn knob_text(focused: bool) -> String {
         let mut term = Terminal::new(TestBackend::new(24, 8)).expect("test backend");
         term.draw(|f| {
-            render_compact_knob(f, f.area(), "GAIN", 0.5, focused, true, AMBER, false);
+            render_compact_knob(f, f.area(), "GAIN", 0.5, focused, true, AMBER, false, None);
         })
         .expect("draw");
         screen_text(&term)

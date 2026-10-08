@@ -59,6 +59,7 @@ pub enum MidiTarget {
     FlangerMix,
     PhaserMix,
     MasterWidth,
+    MasterOutput,
 }
 
 impl MidiTarget {
@@ -79,6 +80,7 @@ impl MidiTarget {
             "flanger_mix" => Self::FlangerMix,
             "phaser_mix" => Self::PhaserMix,
             "master_width" => Self::MasterWidth,
+            "master_output" => Self::MasterOutput,
             _ => return None,
         })
     }
@@ -101,6 +103,7 @@ impl MidiTarget {
             Self::FlangerMix => &p.fl_mix,
             Self::PhaserMix => &p.ph_mix,
             Self::MasterWidth => &p.master_width,
+            Self::MasterOutput => &p.master_output,
         };
         target.store(value, Relaxed);
         // An expression pedal overrides a preset's auto-wah.

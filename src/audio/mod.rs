@@ -1545,6 +1545,30 @@ mod tests {
         }
     }
 
+    /// The rig master output is applied inside the chain's master bus, *before* the
+    /// monitor-only buses are summed here — so turning the master up cannot change the
+    /// level of a backing import, the metronome click or the looper. That separation is
+    /// what makes the master usable for balancing the guitar against a backing track.
+    ///
+    /// `output_stage` is the final summing point and takes no `Params`, which is the
+    /// structural half of the guarantee. This pins the other half: the monitor buses
+    /// enter as a plain additive term carrying no gain of their own.
+    #[test]
+    fn monitor_buses_are_added_after_the_master_and_carry_no_gain() {
+        const IMPORT: f32 = 0.2;
+        // Kept below the limiter knee so the stage is transparent and the only thing
+        // under test is that the monitor bus adds at unity on top of the chain.
+        for live in [0.0f32, 0.2, 0.5, 0.7] {
+            let (with_monitor, _) = output_stage(live + IMPORT, live + IMPORT, 0.0, 0.0);
+            let (without, _) = output_stage(live, live, 0.0, 0.0);
+            assert!(
+                (with_monitor - without - IMPORT).abs() < 1e-6,
+                "monitor bus must add at unity on top of the chain output: \
+                 {without} + {IMPORT} != {with_monitor}"
+            );
+        }
+    }
+
     /// An oversized callback is split into preallocated pieces: contiguous,
     /// in-order, each at most `max` frames, covering every frame exactly once.
     #[test]

@@ -6,13 +6,17 @@ use crate::dsp::{
 };
 
 use super::config::{
-    ADD_TILE, AMP_END, AMP_START, CHAIN_TILE, KNOBS, MIC_END, MIC_START, PEDALS, PRACTICE_TILE,
-    Panels, pedal_of,
+    ADD_TILE, AMP_END, AMP_START, CHAIN_TILE, KNOBS, MIC_END, MIC_START, OUT_START, PEDALS,
+    PRACTICE_TILE, Panels, pedal_of,
 };
 
 /// A knob is reachable only if it belongs to the amp (only the active model's
 /// first `amp_count` controls) or to a pedal currently on the board.
 fn knob_visible(knob: usize, board: &[bool], amp_count: usize) -> bool {
+    if knob == OUT_START {
+        // Always reachable: a rig-level level, not tied to the amp model's count.
+        return true;
+    }
     if (AMP_START..AMP_END).contains(&knob) {
         return knob - AMP_START < amp_count;
     }
@@ -124,7 +128,10 @@ impl NavMemory {
     /// sentinel focuses.
     fn group_of(focus: Option<usize>) -> Option<usize> {
         let k = focus?;
-        if (AMP_START..AMP_END).contains(&k) {
+        // The rig master output is drawn in the amp panel, so it navigates with the
+        // amp group rather than falling through to the pedal lookup (its table index
+        // sits just past the reverb slice).
+        if k == OUT_START || (AMP_START..AMP_END).contains(&k) {
             Some(GROUP_AMP)
         } else if (MIC_START..MIC_END).contains(&k) {
             Some(GROUP_MIC)
@@ -306,9 +313,14 @@ pub(super) fn step_knob_in_panel(
     let Some((start, end)) = scoped_knob_range(focus, amp_count) else {
         return focus;
     };
-    let stops: Vec<usize> = (start..end)
+    let mut stops: Vec<usize> = (start..end)
         .filter(|&k| knob_visible(k, board, amp_count))
         .collect();
+    // The master output is drawn as the amp panel's last cell but lives at the end
+    // of the knob table, so the contiguous range misses it.
+    if start == AMP_START {
+        stops.push(OUT_START);
+    }
     match focus.and_then(|c| stops.iter().position(|&s| s == c)) {
         Some(pos) => {
             let n = stops.len() as i32;
@@ -664,22 +676,33 @@ mod tests {
     fn arrows_cycle_within_the_focused_amp_or_cab_section() {
         let b = board(true);
         let o = order();
-        // Amp group: 6 knobs.
+        // Amp group: 6 amp knobs plus the rig master output, which is drawn as the
+        // panel's last cell even though its table index sits past the pedals.
         assert_eq!(
             step_knob_in_panel(Some(AMP_START), &b, &o, 1),
             Some(AMP_START + 1)
         );
         assert_eq!(
             step_knob_in_panel(Some(AMP_START + AMP_KNOBS - 1), &b, &o, 1),
+            Some(OUT_START),
+            "→ past the last amp knob must reach the master output"
+        );
+        assert_eq!(
+            step_knob_in_panel(Some(OUT_START), &b, &o, 1),
             Some(AMP_START),
-            "→ past the last amp knob must wrap inside the amp group"
+            "→ past the master output must wrap inside the amp group"
         );
         assert_eq!(
             step_knob_in_panel(Some(AMP_START), &b, &o, -1),
-            Some(AMP_START + AMP_KNOBS - 1),
-            "← before the first amp knob must wrap inside the amp group"
+            Some(OUT_START),
+            "← before the first amp knob must wrap to the master output"
         );
-        // Cab/mic group: 6..9, never crossing into the amp.
+        assert_eq!(
+            step_knob_in_panel(Some(OUT_START), &b, &o, -1),
+            Some(AMP_START + AMP_KNOBS - 1),
+            "← from the master output must return to the last amp knob"
+        );
+        // Cab/mic group: never crossing into the amp.
         assert_eq!(
             step_knob_in_panel(Some(MIC_START), &b, &o, -1),
             Some(MIC_END - 1)
@@ -750,11 +773,13 @@ mod tests {
             Some(off),
             "an off-board pedal's arrows must not reach another pedal"
         );
-        // The mic group is unaffected by the board state.
+        // The amp/mic panel's arrows stay inside panel 2. The rig master output is
+        // part of that panel (it is drawn as the amp panel's last cell), so it is a
+        // legal landing spot even though its table index sits past the mic block.
         for k in AMP_START..MIC_END {
             let f = step_knob_in_panel(Some(k), &b, &o, 1);
             assert!(
-                f.is_some_and(|x| (AMP_START..MIC_END).contains(&x)),
+                f.is_some_and(|x| (AMP_START..MIC_END).contains(&x) || x == OUT_START),
                 "amp/mic knob {k} leaked out of panel 2: {f:?}"
             );
         }

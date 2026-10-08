@@ -340,6 +340,14 @@ pub struct ReverbSection {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct MasterSection {
     pub width: f32,
+    /// Rig master output, normalized 0.0-1.0 with unity at 0.5 (+/-6 dB).
+    ///
+    /// Optional so every preset that predates the control -- including all the
+    /// bundled artist presets -- keeps loading at exactly unity with no file edits.
+    /// Because it lives in the preset it is baked into exported WAVs, the same
+    /// contract `width` already has, so what you hear is what you export.
+    #[serde(default)]
+    pub output: Option<f32>,
 }
 
 /// Signal-chain order: stage names from input to output, e.g.
@@ -603,6 +611,7 @@ impl Preset {
             },
             master: Some(MasterSection {
                 width: params.master_width.load(Relaxed),
+                output: Some(params.master_output.load(Relaxed)),
             }),
             chain: Some(ChainSection {
                 order: params
@@ -904,6 +913,15 @@ impl Preset {
                 .master_width
                 .store(crate::dsp::DEFAULT_MASTER_WIDTH, Relaxed),
         }
+        // Same optionality as the width: a preset with no `output` loads at unity.
+        params.master_output.store(
+            self.master
+                .as_ref()
+                .and_then(|m| m.output)
+                .unwrap_or(crate::dsp::DEFAULT_MASTER_OUTPUT)
+                .clamp(0.0, 1.0),
+            Relaxed,
+        );
 
         if let Some(chain) = &self.chain {
             // Names → stage ids. `"ampcab"` is the legacy pre-split combined
@@ -1212,6 +1230,7 @@ mod tests {
         v.push(p.mic_blend.load(Relaxed));
         v.push(p.mic_room.load(Relaxed));
         v.push(p.master_width.load(Relaxed));
+        v.push(p.master_output.load(Relaxed));
         for flag in [
             &p.ng_enabled,
             &p.cmp_enabled,
@@ -1728,6 +1747,47 @@ mod tests {
         assert_eq!(
             fresh.master_width.load(Relaxed),
             crate::dsp::DEFAULT_MASTER_WIDTH
+        );
+    }
+
+    /// The rig master output round-trips, and every pre-existing preset — including
+    /// all the bundled artist ones, which have no `output` key — loads at unity.
+    /// That last part is what keeps their sound byte-identical.
+    #[test]
+    fn preset_master_output_round_trips_and_defaults_to_unity() {
+        let params = Params::new();
+        params.master_output.store(1.0, Relaxed);
+        let preset = Preset::from_params("Boosted".to_string(), None, &params);
+        assert_eq!(
+            preset.master.as_ref().expect("master saved").output,
+            Some(1.0),
+            "saved output must match"
+        );
+
+        // A preset carrying a value restores it.
+        let fresh = Params::new();
+        preset.apply(&fresh);
+        assert_eq!(fresh.master_output.load(Relaxed), 1.0);
+
+        // Omitted `[master]` section entirely → unity, not silence.
+        let mut no_master = Preset::from_params("X".to_string(), None, &params);
+        no_master.master = None;
+        fresh.master_output.store(0.0, Relaxed);
+        no_master.apply(&fresh);
+        assert_eq!(
+            fresh.master_output.load(Relaxed),
+            crate::dsp::DEFAULT_MASTER_OUTPUT
+        );
+
+        // The section present but without an `output` key → also unity. This is the
+        // case every bundled preset hits.
+        let mut legacy = Preset::from_params("Legacy".to_string(), None, &params);
+        legacy.master.as_mut().expect("master").output = None;
+        fresh.master_output.store(0.0, Relaxed);
+        legacy.apply(&fresh);
+        assert_eq!(
+            fresh.master_output.load(Relaxed),
+            crate::dsp::DEFAULT_MASTER_OUTPUT
         );
     }
 }

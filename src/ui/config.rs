@@ -456,7 +456,19 @@ pub(super) const KNOBS: &[Knob] = &[
         label: "MIX",
         param: |p| &p.rev_mix,
     },
+    // Rig master output. Lives here rather than on the amp panel because it is a
+    // rig-level monitor level: only 4 of the 9 amp models have their own MASTER
+    // knob, and on those that do it sits in the feedback divider and so changes
+    // tone as well as level. This one is level only, works on every model, and is
+    // drawn in dB because +/-6 dB is what makes it legible.
+    Knob {
+        label: "MASTER",
+        param: |p| &p.master_output,
+    },
 ];
+
+/// The rig master-output knob, the last slot in [`KNOBS`].
+pub(super) const OUT_START: usize = KNOBS.len() - 1;
 
 // Rig pedals in navigation order (mirrors the KNOBS slices above). The tile
 // grid and detail editor both iterate this table.
@@ -688,8 +700,11 @@ mod tests {
     // gaps or overlaps. The `add-pedal` skill edits these tables, so a slip here
     // would silently break navigation — fail loudly instead.
 
+    /// The pedals must tile the pedal region with no gaps or overlaps, and the only
+    /// knob past the last pedal is the rig master output — which is drawn on the amp
+    /// panel, not owned by any pedal, so it deliberately sits outside this tiling.
     #[test]
-    fn pedal_ranges_are_contiguous_and_end_at_knobs_len() {
+    fn pedal_ranges_are_contiguous_and_end_at_the_master_knob() {
         // The first pedal starts right after the amp+mic block.
         assert_eq!(
             PEDALS[0].start, MIC_END,
@@ -715,9 +730,8 @@ mod tests {
             last.name
         );
         assert_eq!(
-            last.end,
-            KNOBS.len(),
-            "KNOBS has trailing knobs that no pedal owns"
+            last.end, OUT_START,
+            "KNOBS has trailing knobs that no pedal owns beyond the rig master output"
         );
     }
 
@@ -769,7 +783,21 @@ mod tests {
         // Deliberate tripwire: bump these when you add or remove a pedal/knob so
         // the change is a conscious, reviewed edit rather than an accident.
         assert_eq!(PEDALS.len(), 19, "pedal count changed");
-        assert_eq!(KNOBS.len(), 84, "knob count changed");
+        assert_eq!(KNOBS.len(), 85, "knob count changed");
+    }
+
+    /// The rig master output is the final `KNOBS` entry, and it is the one knob
+    /// after the pedal block: it is drawn on the amp panel but sits at the end of
+    /// the table, so navigation and the pedal tiling both special-case it.
+    #[test]
+    fn the_rig_master_knob_is_the_last_entry() {
+        assert_eq!(OUT_START + 1, KNOBS.len());
+        assert_eq!(KNOBS[OUT_START].label, "MASTER");
+        assert_eq!(
+            pedal_of(OUT_START),
+            None,
+            "no pedal may own the master knob"
+        );
     }
 
     #[test]
