@@ -370,7 +370,7 @@ confirmed as *intended* by `move_selected_stage_moves_amp_and_cab_separately`
 The single biggest tone win, and the largest blast radius. Sequenced so each
 sub-step is independently listenable and re-blessable.
 
-## C1 — There is no gain staging; `gain` is a compression control · **GAP — FIXED**
+## C1 — There is no gain staging; `gain` is a compression control · **GAP — FIXED & SHIPPED**
 
 Each clip stage is normalised `clip(u*g) / sqrt(g)`. So a stage's small-signal
 gain is `0.6366*sqrt(g)` and its **saturated output is `1/sqrt(g)`**.
