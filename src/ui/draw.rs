@@ -166,20 +166,6 @@ fn render_header(
     };
 
     let arrow = Span::styled(" ──▶ ", Style::default().fg(DIM));
-
-    // The ribbon shows the live signal path in chain order: engaged stages are
-    // always lit, and bypassed on-board pedals appear dimmed while the ribbon
-    // owns focus (so the cursor stays visible while toggling) but collapse away
-    // otherwise — keeping the unfocused ribbon a compact readout. Off-board
-    // pedals stay hidden. With focus, `←`/`→` move the cursor, `[`/`]` move its
-    // stage, `Space` bypasses it.
-    let mut chain: Vec<Span> = vec![Span::raw("  ")];
-    let push_stage = |chain: &mut Vec<Span>, label: String, style: Style| {
-        if chain.len() > 1 {
-            chain.push(arrow.clone());
-        }
-        chain.push(Span::styled(label, style));
-    };
     // Reversed + bold, mirroring the selected amp-model chip.
     let selected = |color: Color| {
         Style::default()
@@ -187,8 +173,23 @@ fn render_header(
             .add_modifier(Modifier::BOLD | Modifier::REVERSED)
     };
 
+    // The chain row is one continuous, scrollable line: the live stages, then the
+    // rig master output, then the OUTPUT terminator, so the level reads directly
+    // against what it drives. Each entry carries whether it is the selected cell so
+    // the row can scroll to keep the selection visible. Bypassed on-board pedals
+    // show dimmed only while the ribbon owns focus (so the cursor stays put while
+    // toggling); when unfocused they collapse away, and off-board pedals stay hidden.
+    let mut chain: Vec<(Span<'static>, bool)> = vec![(Span::raw("  "), false)];
+    let push_stage =
+        |chain: &mut Vec<(Span<'static>, bool)>, text: String, style: Style, is_sel: bool| {
+            if chain.len() > 1 {
+                chain.push((arrow.clone(), false));
+            }
+            chain.push((Span::styled(text, style), is_sel));
+        };
+
     for &(_, slot_stage) in &rendered_stages(&params.chain_slots(), board) {
-        let selected_here = focused && cursor == slot_stage;
+        let selected_here = focused && !master_selected && cursor == slot_stage;
         let (label, lit, color) = match slot_stage {
             ChainStage::Amp => (amp_label.clone(), true, AMBER),
             ChainStage::Cab => (cab_label.clone(), !cab_from_amp, AMBER),
@@ -209,30 +210,48 @@ fn render_header(
         } else {
             Style::default().fg(DIM)
         };
-        push_stage(&mut chain, label, style);
+        push_stage(&mut chain, label, style, selected_here);
     }
     // The hosted plugin insert (if any) runs post-rack, pre-master.
     if let Some(name) = plugin {
-        push_stage(&mut chain, format!("🔌 {name}"), Style::default().fg(AMBER));
+        push_stage(
+            &mut chain,
+            format!("🔌 {name}"),
+            Style::default().fg(AMBER),
+            false,
+        );
     }
+    // The rig master output, then the OUTPUT terminator: one unit at the end of the
+    // row. The master is the panel-1 focus target: `←`/`→` select it, `↑`/`↓`
+    // adjust it, `[`/`]` leave it alone.
+    let db = master_output_db(params.master_output.load(Relaxed));
+    let master_sel = focused && master_selected;
+    let master_style = if master_sel {
+        selected(ACCENT)
+    } else {
+        Style::default().fg(CHROME)
+    };
+    push_stage(
+        &mut chain,
+        format!("MASTER {db:+.1}"),
+        master_style,
+        master_sel,
+    );
+    push_stage(
+        &mut chain,
+        "OUTPUT".to_owned(),
+        Style::default().fg(CHROME),
+        // Grouped with the master for scrolling, so revealing the level also reveals
+        // what it feeds. Styling comes from the span, so OUTPUT is not highlighted.
+        master_sel,
+    );
 
-    // Half / half-ish: live order on the left (70%), single-line input/output
-    // mini-bars on the right (30%). The chain clips at its boundary on long
-    // boards; the bars stay vertically centered on the box's content row.
+    // Live order on the left (70%), the input/output mini-bars on the right (30%).
     let halves = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Ratio(7, 10), Constraint::Ratio(3, 10)])
         .split(inner);
-    // The rig master output and the OUTPUT terminator are pinned at the right edge
-    // of the chain pane, so they stay visible however long the board gets and read
-    // as fixed chrome rather than reorderable stages. The master is the panel-1
-    // focus target: `←`/`→` select it, `↑`/`↓` adjust it, `[`/`]` leave it alone.
-    let left = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Min(0), Constraint::Length(CHAIN_TAIL_WIDTH)])
-        .split(halves[0]);
-    f.render_widget(Paragraph::new(Line::from(chain)), left[0]);
-    render_chain_tail(f, left[1], params, focused && master_selected);
+    render_chain_row(f, halves[0], &chain);
 
     let meter_rows = Layout::default()
         .direction(Direction::Vertical)
@@ -257,31 +276,41 @@ fn render_header(
     );
 }
 
-/// The rig master-output cell in the header: a compact dB readout, and also the
-/// panel-1 focus target. Highlighted while selected; `↑`/`↓` adjust it.
-fn render_chain_tail(f: &mut Frame, area: Rect, params: &Params, master_selected: bool) {
-    let db = master_output_db(params.master_output.load(Relaxed));
-    let master_style = if master_selected {
-        Style::default()
-            .fg(ACCENT)
-            .add_modifier(Modifier::BOLD | Modifier::REVERSED)
-    } else {
-        Style::default().fg(CHROME)
+/// Render the chain row into `area`, scrolled so the selected cell stays visible,
+/// marking either clipped end with an ellipsis so it is clear there is more to the
+/// left or right. The scroll is anchored at the start until the selection reaches
+/// the right edge, then follows it -- the least movement that keeps it on screen.
+fn render_chain_row(f: &mut Frame, area: Rect, chain: &[(Span<'static>, bool)]) {
+    let total: usize = chain.iter().map(|(s, _)| s.width()).sum();
+    let width = area.width as usize;
+    let max_offset = total.saturating_sub(width);
+    // The selection may span more than one entry (the master and OUTPUT scroll as a
+    // unit), so the scroll is driven by the end of the selected run.
+    let offset = match chain.iter().rposition(|(_, sel)| *sel) {
+        Some(last) => {
+            let end: usize = chain[..=last].iter().map(|(s, _)| s.width()).sum();
+            end.saturating_sub(width).min(max_offset)
+        }
+        None => 0,
     };
-    let arrow = Span::styled(" ──▶ ", Style::default().fg(DIM));
-    let line = Line::from(vec![
-        arrow.clone(),
-        Span::styled(format!("MASTER {db:+.1}"), master_style),
-        arrow,
-        Span::styled("OUTPUT ", Style::default().fg(CHROME)),
-    ]);
-    f.render_widget(Paragraph::new(line), area);
-}
 
-/// Width of the pinned chain tail: ` ──▶ MASTER +0.0 ──▶ OUTPUT` plus a trailing
-/// gap (28 cells; the master readout is always 11 wide across its whole -6..+6 dB
-/// range).
-const CHAIN_TAIL_WIDTH: u16 = 28;
+    let line = Line::from(chain.iter().map(|(s, _)| s.clone()).collect::<Vec<_>>());
+    f.render_widget(Paragraph::new(line).scroll((0, offset as u16)), area);
+
+    // Mark the clipped ends. `set_string` writes the cell directly, since the
+    // ellipsis is chrome the row itself does not carry.
+    if area.width == 0 {
+        return;
+    }
+    let ellipsis = Style::default().fg(DIM);
+    if offset > 0 {
+        f.buffer_mut().set_string(area.x, area.y, "…", ellipsis);
+    }
+    if offset < max_offset {
+        f.buffer_mut()
+            .set_string(area.right() - 1, area.y, "…", ellipsis);
+    }
+}
 
 /// Ribbon label + live on/off for a pedal stage (`None` for the amp and cab).
 fn pedal_stage_state(params: &Params, stage: ChainStage) -> Option<(&'static str, bool)> {
@@ -1917,9 +1946,16 @@ mod tests {
         screen_text(&term)
     }
 
-    /// As [`render_with`], but with the panel-1 master cell selected. Kept separate
-    /// so the common helper stays free of a flag only one golden needs.
-    fn render_with_master(params: &Params, board: &[bool], master_selected: bool) -> String {
+    /// Render the header line and return the chain row (the strip carrying `▶`).
+    /// Lets a test drive the panel-1 cursor and master selection directly, which the
+    /// goldens cannot.
+    fn render_header_line(
+        params: &Params,
+        board: &[bool],
+        cursor: ChainStage,
+        focused: bool,
+        master_selected: bool,
+    ) -> String {
         let levels = Levels::new();
         let mut term = Terminal::new(TestBackend::new(W, H)).expect("test backend");
         term.draw(|f| {
@@ -1928,7 +1964,7 @@ mod tests {
                 params,
                 &levels,
                 &InputCalibration::default(),
-                Some(CHAIN_TILE),
+                if focused { Some(CHAIN_TILE) } else { None },
                 board,
                 false,
                 false,
@@ -1937,13 +1973,17 @@ mod tests {
                 None,
                 None,
                 Panels::all_visible(),
-                ChainStage::Amp,
+                cursor,
                 master_selected,
                 None,
             );
         })
         .expect("draw");
-        screen_text(&term)
+        let text = screen_text(&term);
+        text.lines()
+            .find(|l| l.contains('▶'))
+            .unwrap_or_default()
+            .to_string()
     }
 
     /// The focused knob alone draws a full box (top, sides, bottom); an
@@ -2093,24 +2133,18 @@ mod tests {
         insta::assert_snapshot!("default_screen", text);
     }
 
-    /// The master cell is pinned just before OUTPUT, and is drawn reversed when the
-    /// panel-1 cursor is on it. The goldens cannot check this -- `screen_text` drops
-    /// styling -- so the selected style is inspected from the buffer directly.
+    /// The master cell sits directly before OUTPUT, and is drawn reversed when the
+    /// panel-1 cursor is on it. The goldens cannot check the styling -- `screen_text`
+    /// drops it -- so the selected style is inspected from the buffer directly.
     #[test]
-    fn master_cell_is_pinned_before_output_and_highlights_when_selected() {
+    fn master_cell_sits_before_output_and_highlights_when_selected() {
         let params = Params::new();
         params.master_output.store(0.75, Relaxed); // +3.0 dB
 
-        // Unselected: the tail reads `──▶ MASTER +3.0 ──▶ OUTPUT` with a gap before
-        // the meters (so it does not run into `IN uncal`).
-        let plain = render_with_master(&params, &board_all(false), false);
-        let line = plain
-            .lines()
-            .find(|l| l.contains("MASTER"))
-            .expect("header line");
+        let plain = render_header_line(&params, &board_all(false), ChainStage::Amp, true, false);
         assert!(
-            line.contains("──▶ MASTER +3.0 ──▶ OUTPUT"),
-            "master must sit before OUTPUT: {line}"
+            plain.contains("──▶ MASTER +3.0 ──▶ OUTPUT"),
+            "master must sit directly before OUTPUT: {plain}"
         );
 
         // Selected: the MASTER span itself carries REVERSED.
@@ -2145,9 +2179,11 @@ mod tests {
             // The arrows are multi-byte, so a byte offset is not a cell column.
             if let Some(byte) = row.find("MASTER") {
                 let col = row[..byte].chars().count() as u16;
-                let style = buf[(col, y)].style();
                 assert!(
-                    style.add_modifier.contains(Modifier::REVERSED),
+                    buf[(col, y)]
+                        .style()
+                        .add_modifier
+                        .contains(Modifier::REVERSED),
                     "the selected master cell must be reversed"
                 );
                 found = true;
@@ -2156,6 +2192,37 @@ mod tests {
         assert!(found, "the MASTER cell must be rendered");
     }
 
+    /// A board too long for the header scrolls to keep the selection visible, and
+    /// marks whichever end is clipped with an ellipsis.
+    #[test]
+    fn chain_row_scrolls_and_marks_clipped_ends() {
+        let params = Params::new();
+        let board = board_all(true); // every pedal on: the row overflows the pane
+
+        // Selected at the front: the start shows and the right end is clipped.
+        let head = render_header_line(&params, &board, ChainStage::Amp, true, false);
+        assert!(head.contains("AMP"), "the start must be visible: {head}");
+        assert!(
+            head.contains('…'),
+            "a clipped right end must be marked: {head}"
+        );
+
+        // Selected on the master cell: the row scrolls to the end, revealing the
+        // master and OUTPUT, with the clipped left end marked.
+        let tail = render_header_line(&params, &board, ChainStage::Reverb, true, true);
+        assert!(
+            tail.contains("MASTER"),
+            "scrolling must reveal the master: {tail}"
+        );
+        assert!(
+            tail.contains("OUTPUT"),
+            "scrolling must reveal OUTPUT: {tail}"
+        );
+        assert!(
+            tail.contains('…'),
+            "a clipped left end must be marked: {tail}"
+        );
+    }
     /// Rendering must never panic across a spread of states: empty board, full
     /// board, focus on a pedal knob, focus on the +ADD tile, and recording on.
     #[test]
