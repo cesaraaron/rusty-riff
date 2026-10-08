@@ -42,9 +42,9 @@ use draw::{
 };
 use input::{
     PanelMemory, add_pedal, amp_choices, cab_choices, cycle_panel, ensure_focus_visible,
-    init_amp_cursor, init_cab_cursor, move_chain_cursor, move_selected_stage, nudge, panel_of,
-    press_number, remove_pedal, select_amp, select_cab, step_knob_in_panel, toggle_pedal,
-    toggle_stage,
+    init_amp_cursor, init_cab_cursor, move_selected_stage, nudge, nudge_master, panel_of,
+    press_number, remove_pedal, select_amp, select_cab, step_header, step_knob_in_panel,
+    toggle_pedal, toggle_stage,
 };
 use practice::{PracticeUi, SaveContext};
 use presets::{
@@ -280,6 +280,8 @@ pub fn run(
     let mut focus: Option<usize> = Some(PRACTICE_TILE);
     // Selected stage within the ribbon; follows its stage through moves.
     let mut chain_cursor: ChainStage = ChainStage::Amp;
+    // Panel 1: whether the header cursor is on the master-output cell.
+    let mut header_on_master = false;
     // Last-focused knob per amp/mic/pedal group, so panel-local `Tab` returns
     // to where you left off.
     let mut panel_mem = PanelMemory::new();
@@ -554,6 +556,7 @@ pub fn run(
                     ext_amp_name,
                     panels,
                     chain_cursor,
+                    header_on_master,
                     Some((&practice, &practice_ui)),
                 );
                 if add_open {
@@ -1599,16 +1602,27 @@ pub fn run(
                                 params.amp_knob_count(),
                             );
                         }
-                        // ←/→ inside the focused panel: the ribbon moves its
-                        // stage cursor, panels 2/4 walk their knobs, and the
-                        // timeline's seek arms above already claimed it there.
+                        // ←/→ inside the focused panel: the ribbon walks its
+                        // stages and then the master cell, panels 2/4 walk their
+                        // knobs, and the timeline's seek arms above already
+                        // claimed it there.
                         KeyCode::Right if focus == Some(CHAIN_TILE) => {
-                            chain_cursor =
-                                move_chain_cursor(&params.chain_slots(), &board, chain_cursor, 1);
+                            (chain_cursor, header_on_master) = step_header(
+                                &params.chain_slots(),
+                                &board,
+                                chain_cursor,
+                                header_on_master,
+                                1,
+                            );
                         }
                         KeyCode::Left if focus == Some(CHAIN_TILE) => {
-                            chain_cursor =
-                                move_chain_cursor(&params.chain_slots(), &board, chain_cursor, -1);
+                            (chain_cursor, header_on_master) = step_header(
+                                &params.chain_slots(),
+                                &board,
+                                chain_cursor,
+                                header_on_master,
+                                -1,
+                            );
                         }
                         KeyCode::Right => {
                             focus = step_knob_in_panel(
@@ -1629,10 +1643,12 @@ pub fn run(
                             );
                         }
                         KeyCode::Up | KeyCode::Char('+') | KeyCode::Char('=') => match focus {
+                            Some(CHAIN_TILE) if header_on_master => nudge_master(&params, 0.05),
                             Some(ADD_TILE | PRACTICE_TILE | CHAIN_TILE) | None => {}
                             Some(i) => nudge(&params, i, 0.05),
                         },
                         KeyCode::Down | KeyCode::Char('-') => match focus {
+                            Some(CHAIN_TILE) if header_on_master => nudge_master(&params, -0.05),
                             Some(ADD_TILE | PRACTICE_TILE | CHAIN_TILE) | None => {}
                             Some(i) => nudge(&params, i, -0.05),
                         },
@@ -1649,16 +1665,27 @@ pub fn run(
                             }
                         }
                         // Reorder the chain from the ribbon: move the selected
-                        // stage one slot earlier / later. The timeline's `[`/`]`
+                        // stage one slot earlier / later. Only while a stage (not
+                        // the master cell) is selected. The timeline's `[`/`]`
                         // arms above match first while it owns focus.
-                        KeyCode::Char('[') if focus == Some(CHAIN_TILE) => {
+                        KeyCode::Char('[') if focus == Some(CHAIN_TILE) && !header_on_master => {
                             move_selected_stage(&params, &board, chain_cursor, -1);
                         }
-                        KeyCode::Char(']') if focus == Some(CHAIN_TILE) => {
+                        KeyCode::Char(']') if focus == Some(CHAIN_TILE) && !header_on_master => {
                             move_selected_stage(&params, &board, chain_cursor, 1);
                         }
-                        KeyCode::Char(' ') if focus == Some(CHAIN_TILE) => {
+                        // Space bypasses the selected stage; on the master cell it
+                        // resets the rig output to unity, the one neutral value.
+                        KeyCode::Char(' ') if focus == Some(CHAIN_TILE) && !header_on_master => {
                             toggle_stage(&params, &board, chain_cursor);
+                        }
+                        KeyCode::Char(' ') if focus == Some(CHAIN_TILE) => {
+                            params.master_output.store(
+                                crate::dsp::DEFAULT_MASTER_OUTPUT,
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+                            save_msg =
+                                Some(("Master: +0.0 dB".to_string(), std::time::Instant::now()));
                         }
                         KeyCode::Char(' ') => match focus {
                             Some(ADD_TILE) => {

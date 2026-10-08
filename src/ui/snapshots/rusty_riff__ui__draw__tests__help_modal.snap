@@ -7,10 +7,10 @@ expression: text
 └─────────────────────────────────────║  1 / 2 / 3 / 4  focus chain, amp, timeline, pedals (again: hide → timeline)               ║──────────────────────────────────────┘
 ┏┤ MARSHALL PLEXI ├━━━━━━━━━━━━━━━━━━━║  Tab / Shift-Tab  cycle focus through the visible panels                                  ║━━━━━━━━━━━━━━━━━━━━━━━━┤ 🎙 MARSH GB ├┓
 ┃                                     ║  ←/→  move inside the focused panel                                                       ║                                      ┃
-┃       ···              ···          ║  [ / ]  move the ribbon's stage earlier / later                                           ║            ···              ···      ┃
-┃      · ● ◇            · ● ·         ║  note  between AMP and CAB = line-level; a full-rig AU is post-mic                        ║           · ● ·            · ● ·     ┃
-┃       · ·              ◇ ·          ║  Space  bypass stage, pedal, or transport under focus                                     ║            ◇ ·              ◇ ·      ┃
-┃   VOL II 7.5        VOL I 0.0       ║Play & edit                                                                                ║0        BLEND 0.0        ROOM 0.0    ┃
+┃         ···                ···      ║  [ / ]  move the ribbon's stage earlier / later                                           ║            ···              ···      ┃
+┃        · ● ◇              · ● ·     ║  note  between AMP and CAB = line-level; a full-rig AU is post-mic                        ║           · ● ·            · ● ·     ┃
+┃         · ·                ◇ ·      ║  Space  bypass stage, pedal, or transport under focus                                     ║            ◇ ·              ◇ ·      ┃
+┃     VOL II 7.5          VOL I 0.0   ║Play & edit                                                                                ║0        BLEND 0.0        ROOM 0.0    ┃
 ┃                                     ║  ↑/↓  +/−  knob / adjust value                                                            ║                                      ┃
 ┃                                     ║  D  remove pedal from the board                                                           ║                                      ┃
 ┃▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚║  A  amp model browser (on the pedalboard: add a pedal)                                    ║▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚▞▚┃
@@ -18,7 +18,7 @@ expression: text
 ┌ GUITAR RIG ─────────────────────────║  I / X  IR browser / IR bypass                                                            ║──────────────────────────────────────┐
 │┌ + ADD ─────────────────────────────║  O  change audio devices                                                                  ║─────────────────────────────────────┐│
 ││                                    ║  W  studio-master width: neutral / wide                                                   ║                                     ││
-│└────────────────────────────────────║  MASTER knob on the amp panel: rig output level, +/-6 dB                                  ║─────────────────────────────────────┘│
+│└────────────────────────────────────║  panel 1 master cell: ←/→ select it, ↑/↓ set the rig output                               ║─────────────────────────────────────┘│
 ││├───────────────────────────────────║  ;  tap tempo: set the delay time by tapping                                              ║────────────────────────────────────┤││
 ││SELECT A PEDAL — ←→                 ║  Z / U  amp-plugin bypass / browser                                                       ║                                     ││
 ││                                    ║Tools                                                                                      ║                                     ││

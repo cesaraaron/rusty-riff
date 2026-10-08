@@ -12,8 +12,8 @@ use crate::dsp::{AmpModel, CabModel, ChainStage, Levels, Params, master_output_d
 use crate::practice::Practice;
 
 use super::config::{
-    ADD_TILE, AMP_END, AMP_START, CHAIN_TILE, KNOBS, MIC_END, MIC_START, OUT_START, PEDALS,
-    PRACTICE_TILE, Panels, Pedal, PedalUi,
+    ADD_TILE, AMP_END, AMP_START, CHAIN_TILE, KNOBS, MIC_END, MIC_START, PEDALS, PRACTICE_TILE,
+    Panels, Pedal, PedalUi,
 };
 use super::input::rendered_stages;
 use super::practice::PracticeUi;
@@ -35,6 +35,7 @@ pub(super) fn draw(
     ext_amp: Option<&str>,
     panels: Panels,
     chain_cursor: ChainStage,
+    master_selected: bool,
     timeline: Option<(&Practice, &PracticeUi)>,
 ) {
     let area = f.area();
@@ -89,6 +90,7 @@ pub(super) fn draw(
         ext_amp,
         focus == Some(CHAIN_TILE),
         chain_cursor,
+        master_selected,
     );
     i += 1;
     if panels.amp {
@@ -133,6 +135,7 @@ fn render_header(
     ext_amp: Option<&str>,
     focused: bool,
     cursor: ChainStage,
+    master_selected: bool,
 ) {
     let block = Block::default()
         .borders(Borders::ALL)
@@ -221,7 +224,15 @@ fn render_header(
         .direction(Direction::Horizontal)
         .constraints([Constraint::Ratio(7, 10), Constraint::Ratio(3, 10)])
         .split(inner);
-    f.render_widget(Paragraph::new(Line::from(chain)), halves[0]);
+    // The left pane holds the live chain and, at its right edge, the rig master
+    // output. The master gets a fixed cell so it stays put as the chain scrolls or
+    // clips, and it is the panel-1 focus target: `←`/`→` select it, `↑`/`↓` adjust.
+    let left = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(0), Constraint::Length(15)])
+        .split(halves[0]);
+    f.render_widget(Paragraph::new(Line::from(chain)), left[0]);
+    render_master_cell(f, left[1], params, focused && master_selected);
 
     let meter_rows = Layout::default()
         .direction(Direction::Vertical)
@@ -243,6 +254,26 @@ fn render_header(
         levels.output.load(Relaxed),
         Some(levels.output_peak.load(Relaxed)),
         Some(levels.limiting.load(Relaxed)),
+    );
+}
+
+/// The rig master-output cell in the header: a compact dB readout, and also the
+/// panel-1 focus target. Highlighted while selected; `↑`/`↓` adjust it.
+fn render_master_cell(f: &mut Frame, area: Rect, params: &Params, selected: bool) {
+    let db = master_output_db(params.master_output.load(Relaxed));
+    let style = if selected {
+        Style::default()
+            .fg(ACCENT)
+            .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+    } else {
+        Style::default().fg(CHROME)
+    };
+    // Trailing space so the readout keeps a one-cell gap from the meters that
+    // follow it in the header.
+    let text = format!("MASTER {db:+.1} ");
+    f.render_widget(
+        Paragraph::new(Line::from(Span::styled(text, style))).alignment(Alignment::Right),
+        area,
     );
 }
 
@@ -487,17 +518,11 @@ fn render_amp_box(
     // Amp front-panel knobs: the active model's own controls, count and labels.
     let controls = params.amp_model().controls();
     let count = controls.len();
-    // The rig master output gets the last slot on the amp panel. It sits with the
-    // amp because that is where a user looks for a master -- but it is a rig-level
-    // level, not an amp knob, which matters because only 4 of the 9 models have
-    // their own MASTER and on those that do it sits in the feedback divider and so
-    // changes tone too. This one is level only and works on every model.
-    let cells = count + 1;
     let knob_cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints(
-            (0..cells)
-                .map(|_| Constraint::Ratio(1, cells as u32))
+            (0..count)
+                .map(|_| Constraint::Ratio(1, count as u32))
                 .collect::<Vec<_>>(),
         )
         .split(parts[0]);
@@ -520,18 +545,6 @@ fn render_amp_box(
             None,
         );
     }
-    let out_val = (KNOBS[OUT_START].param)(params).load(Relaxed);
-    render_compact_knob(
-        f,
-        knob_cols[count],
-        "MASTER",
-        out_val,
-        focus == Some(OUT_START),
-        true,
-        AMBER,
-        !box_active,
-        Some(format!("{:+.1}", master_output_db(out_val))),
-    );
     // parts[1] stays blank: bottom margin below the knobs.
     render_grille(
         f,
@@ -1423,7 +1436,7 @@ pub(super) fn render_help_modal(f: &mut Frame) {
         row("  W", "  studio-master width: neutral / wide"),
         row(
             "",
-            "  MASTER knob on the amp panel: rig output level, +/-6 dB",
+            "  panel 1 master cell: ←/→ select it, ↑/↓ set the rig output",
         ),
         row("  ;", "  tap tempo: set the delay time by tapping"),
     ];
@@ -1992,6 +2005,7 @@ mod tests {
                 None,
                 Panels::all_visible(),
                 ChainStage::Amp,
+                false,
                 None,
             );
             overlay(f);
@@ -2074,6 +2088,7 @@ mod tests {
                     None,
                     Panels::all_visible(),
                     ChainStage::Amp,
+                    false,
                     None,
                 );
             })
@@ -2150,6 +2165,7 @@ mod tests {
                 Some("Silver Jubilee"),
                 Panels::all_visible(),
                 ChainStage::Amp,
+                false,
                 None,
             );
         })
@@ -2214,6 +2230,7 @@ mod tests {
                 None,
                 Panels::all_visible(),
                 ChainStage::Amp,
+                false,
                 None,
             );
             render_add_pedal_modal(f, &available, 0);
@@ -2439,6 +2456,7 @@ mod tests {
                 None,
                 panels,
                 ChainStage::Amp,
+                false,
                 Some((&practice, &ui)),
             );
         })

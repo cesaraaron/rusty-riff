@@ -6,17 +6,13 @@ use crate::dsp::{
 };
 
 use super::config::{
-    ADD_TILE, AMP_END, AMP_START, CHAIN_TILE, KNOBS, MIC_END, MIC_START, OUT_START, PEDALS,
-    PRACTICE_TILE, Panels, pedal_of,
+    ADD_TILE, AMP_END, AMP_START, CHAIN_TILE, KNOBS, MIC_END, MIC_START, PEDALS, PRACTICE_TILE,
+    Panels, pedal_of,
 };
 
 /// A knob is reachable only if it belongs to the amp (only the active model's
 /// first `amp_count` controls) or to a pedal currently on the board.
 fn knob_visible(knob: usize, board: &[bool], amp_count: usize) -> bool {
-    if knob == OUT_START {
-        // Always reachable: a rig-level level, not tied to the amp model's count.
-        return true;
-    }
     if (AMP_START..AMP_END).contains(&knob) {
         return knob - AMP_START < amp_count;
     }
@@ -244,9 +240,6 @@ fn panel_stops(
     match panel_of(focus) {
         2 => {
             let mut stops: Vec<usize> = (AMP_START..AMP_START + amp_count).collect();
-            // The rig master output is drawn as the amp panel's last cell but lives
-            // at the end of the knob table, so it is appended explicitly.
-            stops.push(OUT_START);
             stops.extend(MIC_START..MIC_END);
             stops
         }
@@ -300,29 +293,59 @@ pub(super) fn ensure_focus_visible(
     }
 }
 
-/// Move the ribbon cursor to the neighbouring rendered stage (wrapping around
-/// the ends). A stale cursor (its pedal left the board) re-anchors at the
-/// nearest end instead.
-pub(super) fn move_chain_cursor(
+/// Step the header selection (panel 1) one cell, wrapping across the rendered
+/// chain stages and the rig master output that sits after them. Returns the new
+/// stage cursor plus whether the master cell is now selected.
+///
+/// The master is a single extra cell, so it is adjacent to both ends of the wrap:
+/// stepping off the first or last stage selects it, and stepping off it returns to
+/// the opposite end of the chain.
+pub(super) fn step_header(
     order: &[u8; CHAIN_LEN],
     board: &[bool],
     cursor: ChainStage,
+    on_master: bool,
     dir: i32,
-) -> ChainStage {
-    let rendered = rendered_stages(order, board);
-    if rendered.is_empty() {
-        return cursor;
+) -> (ChainStage, bool) {
+    let stages: Vec<ChainStage> = rendered_stages(order, board)
+        .into_iter()
+        .map(|(_, s)| s)
+        .collect();
+    if stages.is_empty() {
+        return (cursor, true);
     }
-    if let Some(pos) = rendered.iter().position(|&(_, s)| s == cursor) {
-        let n = rendered.len() as i32;
-        rendered[(((pos as i32 + dir) % n + n) % n) as usize].1
-    } else if dir < 0 {
-        rendered.last().map(|&(_, s)| s).unwrap_or(cursor)
-    } else {
-        rendered.first().map(|&(_, s)| s).unwrap_or(cursor)
+    if on_master {
+        return if dir > 0 {
+            (stages[0], false)
+        } else {
+            (stages[stages.len() - 1], false)
+        };
+    }
+    match stages.iter().position(|&s| s == cursor) {
+        Some(p) => {
+            let np = p as i32 + dir.signum();
+            if np < 0 || np >= stages.len() as i32 {
+                (cursor, true) // stepped off either end -> the master cell
+            } else {
+                (stages[np as usize], false)
+            }
+        }
+        // A stale cursor re-anchors at the first stage.
+        None => (stages[0], false),
     }
 }
 
+/// Nudge the rig master output by `delta` (normalized), clamped to its range.
+pub(super) fn nudge_master(params: &Params, delta: f32) {
+    let v = params.master_output.load(Relaxed);
+    params
+        .master_output
+        .store((v + delta).clamp(0.0, 1.0), Relaxed);
+}
+
+/// Move the ribbon cursor to the neighbouring rendered stage (wrapping around
+/// the ends). A stale cursor (its pedal left the board) re-anchors at the
+/// nearest end instead.
 /// Move the cursor's stage one rendered slot earlier (`dir < 0`, `[`) or later
 /// (`dir > 0`, `]`). The cursor follows its stage. Off-board stages hold their
 /// slots silently; the ends refuse, and a move that would place the cab before
@@ -605,6 +628,27 @@ mod tests {
         assert_eq!(mem.recall(2, &b, AMP_KNOBS), Some(AMP_START + 5));
     }
 
+    /// The header master cell adjusts the rig output and clamps at both ends.
+    #[test]
+    fn nudge_master_moves_and_clamps() {
+        let p = Params::new();
+        p.master_output
+            .store(crate::dsp::DEFAULT_MASTER_OUTPUT, Relaxed);
+        nudge_master(&p, 0.1);
+        assert!((p.master_output.load(Relaxed) - 0.6).abs() < 1e-6);
+        nudge_master(&p, -0.5);
+        assert!((p.master_output.load(Relaxed) - 0.1).abs() < 1e-6);
+        // Clamps rather than wrapping or overshooting.
+        for _ in 0..40 {
+            nudge_master(&p, 0.1);
+        }
+        assert_eq!(p.master_output.load(Relaxed), 1.0);
+        for _ in 0..40 {
+            nudge_master(&p, -0.1);
+        }
+        assert_eq!(p.master_output.load(Relaxed), 0.0);
+    }
+
     #[test]
     fn panel_entry_lands_on_first_onboard_pedal_in_chain_order() {
         let mut b = board(false);
@@ -625,8 +669,8 @@ mod tests {
         );
     }
 
-    /// Panel 2 `←`/`→` walks the amp knobs, the master output and the cab/mic
-    /// knobs as one continuous, wrapping run.
+    /// Panel 2 `←`/`→` walks the amp knobs and the cab/mic knobs as one
+    /// continuous, wrapping run.
     #[test]
     fn arrows_walk_the_amp_panel_continuously() {
         let b = board(true);
@@ -635,16 +679,11 @@ mod tests {
             step_knob_in_panel(Some(AMP_START), &b, &o, 1),
             Some(AMP_START + 1)
         );
-        // The amp block runs into the master output, then the mic block.
+        // The last amp knob leads straight into the cab/mic block.
         assert_eq!(
             step_knob_in_panel(Some(AMP_START + AMP_KNOBS - 1), &b, &o, 1),
-            Some(OUT_START),
-            "the last amp knob must lead to the master output"
-        );
-        assert_eq!(
-            step_knob_in_panel(Some(OUT_START), &b, &o, 1),
             Some(MIC_START),
-            "the master output must lead into the cab/mic knobs"
+            "the last amp knob must lead into the cab/mic knobs"
         );
         // And the mic block wraps back to the first amp knob.
         assert_eq!(
@@ -652,10 +691,10 @@ mod tests {
             Some(AMP_START),
             "the last mic knob must wrap to the first amp knob"
         );
-        // Backwards crosses the same boundaries.
+        // Backwards crosses the same boundary.
         assert_eq!(
             step_knob_in_panel(Some(MIC_START), &b, &o, -1),
-            Some(OUT_START)
+            Some(AMP_START + AMP_KNOBS - 1)
         );
         assert_eq!(
             step_knob_in_panel(Some(AMP_START), &b, &o, -1),
@@ -711,11 +750,11 @@ mod tests {
             Some(PEDALS[3].start),
             "an off-board pedal's arrows must re-anchor on the board"
         );
-        // Panel 2 loops within amp + master + mic.
+        // Panel 2 loops within amp + mic.
         for k in AMP_START..MIC_END {
             let f = step_knob_in_panel(Some(k), &b, &o, 1);
             assert!(
-                f.is_some_and(|x| (AMP_START..MIC_END).contains(&x) || x == OUT_START),
+                f.is_some_and(|x| (AMP_START..MIC_END).contains(&x)),
                 "amp/mic knob {k} leaked out of panel 2: {f:?}"
             );
         }
@@ -957,45 +996,59 @@ mod tests {
 
     // ── ribbon cursor moves ───────────────────────────────────────────────────
 
+    /// `←`/`→` in panel 1 walk the rendered stages and then the master cell,
+    /// wrapping; stepping off either end of the chain selects the master.
     #[test]
-    fn cursor_steps_through_rendered_stages_and_wraps() {
+    fn header_cursor_walks_stages_then_master_and_wraps() {
         let b = board(true);
         let o = order();
         // Full board: every slot renders, so the cursor walks raw order.
         assert_eq!(
-            move_chain_cursor(&o, &b, ChainStage::Gate, 1),
-            ChainStage::Whammy
+            step_header(&o, &b, ChainStage::Gate, false, 1),
+            (ChainStage::Whammy, false)
+        );
+        // Stepping back from the first stage selects the master, not the last stage.
+        assert_eq!(
+            step_header(&o, &b, ChainStage::Gate, false, -1),
+            (ChainStage::Gate, true),
+            "stepping off the front selects the master cell"
+        );
+        // From the master, → goes to the first stage and ← to the last.
+        assert_eq!(
+            step_header(&o, &b, ChainStage::Gate, true, 1),
+            (ChainStage::Gate, false)
         );
         assert_eq!(
-            move_chain_cursor(&o, &b, ChainStage::Gate, -1),
-            ChainStage::Reverb,
-            "cursor must wrap around the ends"
+            step_header(&o, &b, ChainStage::Gate, true, -1),
+            (ChainStage::Reverb, false)
         );
-        // Sparse board: only on-board pedals + the amp and cab render.
+        // The last stage steps onto the master.
+        assert_eq!(
+            step_header(&o, &b, ChainStage::Reverb, false, 1),
+            (ChainStage::Reverb, true)
+        );
+
+        // Sparse board: rendered is COMP (slot 3), AMP (10), CAB (11).
         let mut sparse = board(false);
-        sparse[3] = true; // COMP only
-        // Rendered: COMP (slot 3), AMP (10), CAB (11).
+        sparse[3] = true;
         assert_eq!(
-            move_chain_cursor(&o, &sparse, ChainStage::Amp, 1),
-            ChainStage::Cab
+            step_header(&o, &sparse, ChainStage::Amp, false, 1),
+            (ChainStage::Cab, false)
         );
         assert_eq!(
-            move_chain_cursor(&o, &sparse, ChainStage::Cab, 1),
-            ChainStage::Comp,
-            "cursor must wrap with three rendered stages"
+            step_header(&o, &sparse, ChainStage::Cab, false, 1),
+            (ChainStage::Cab, true),
+            "the last rendered stage leads to the master"
         );
         assert_eq!(
-            move_chain_cursor(&o, &sparse, ChainStage::Comp, 1),
-            ChainStage::Amp
+            step_header(&o, &sparse, ChainStage::Cab, true, 1),
+            (ChainStage::Comp, false),
+            "the master wraps to the first rendered stage"
         );
-        // Stale cursor (pedal left the board) re-anchors at the nearest end.
+        // Stale cursor (pedal left the board) re-anchors at the first stage.
         assert_eq!(
-            move_chain_cursor(&o, &sparse, ChainStage::Fuzz, 1),
-            ChainStage::Comp
-        );
-        assert_eq!(
-            move_chain_cursor(&o, &sparse, ChainStage::Fuzz, -1),
-            ChainStage::Cab
+            step_header(&o, &sparse, ChainStage::Fuzz, false, 1),
+            (ChainStage::Comp, false)
         );
     }
 

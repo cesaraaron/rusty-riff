@@ -73,6 +73,7 @@ pub fn run(
                 None,
                 super::config::Panels::all_visible(),
                 crate::dsp::ChainStage::Amp,
+                false,
                 None,
             );
             match step_ref {
