@@ -772,9 +772,8 @@ fn render_rig(f: &mut Frame, area: Rect, params: &Params, board: &[bool], focus:
         .constraints(vec![Constraint::Length(TILE_H); tile_rows])
         .split(parts[0]);
 
-    // Notch span for the editor's top edge: the focused tile's cell, but only
-    // when it sits in the last grid row (directly above the editor).
-    let mut notch: Option<(u16, u16)> = None;
+    // No notch any more: every tile is a closed box, so the editor's top edge is a
+    // full rule joining the side borders rather than an open join under the tile.
     for r in 0..tile_rows {
         let base = r * cols;
         let n = cols.min(tile_count - base);
@@ -786,23 +785,14 @@ fn render_rig(f: &mut Frame, area: Rect, params: &Params, board: &[bool], focus:
             match on_board.get(base + c) {
                 Some(&pi) => {
                     let pedal = &PEDALS[pi];
-                    let focused_here = focus.is_some_and(|i| (pedal.start..pedal.end).contains(&i));
-                    if focused_here && r + 1 == tile_rows {
-                        notch = Some((cell.x, cell.width));
-                    }
                     render_pedal_tile(f, *cell, pedal, focus, params, !rig_active)
                 }
-                None => {
-                    if focus == Some(ADD_TILE) && r + 1 == tile_rows {
-                        notch = Some((cell.x, cell.width));
-                    }
-                    render_add_tile(f, *cell, focus == Some(ADD_TILE))
-                }
+                None => render_add_tile(f, *cell, focus == Some(ADD_TILE)),
             }
         }
     }
 
-    render_pedal_detail(f, parts[1], params, focus, notch);
+    render_pedal_detail(f, parts[1], params, focus);
 }
 
 /// The "+ ADD" tile: an empty slot inviting the user to add a pedal.
@@ -813,14 +803,9 @@ fn render_add_tile(f: &mut Frame, area: Rect, focused: bool) {
     } else {
         Modifier::DIM
     };
-    // Like a focused pedal tile: open bottom facing the editor's open top.
-    let add_borders = if focused {
-        Borders::TOP | Borders::LEFT | Borders::RIGHT
-    } else {
-        Borders::ALL
-    };
+    // A closed box like every other tile; focus shows in the border colour.
     let block = Block::default()
-        .borders(add_borders)
+        .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(Style::default().fg(color).add_modifier(dim))
         .title(Line::from(Span::styled(
@@ -915,16 +900,10 @@ fn render_pedal_tile(
         Span::raw(" "),
     ]);
 
-    // The focused tile drops its bottom border: open bottom facing the editor's
-    // open top reads as one connected flow, and the side borders run the full
-    // cell height toward the body.
-    let tile_borders = if active {
-        Borders::TOP | Borders::LEFT | Borders::RIGHT
-    } else {
-        Borders::ALL
-    };
+    // Every tile is a closed box, focused or not. The focused tile is set apart by
+    // colour, not by shape, so selecting a pedal never reflows or opens its border.
     let block = Block::default()
-        .borders(tile_borders)
+        .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(Style::default().fg(body).add_modifier(dim))
         .title(title)
@@ -958,69 +937,30 @@ fn render_pedal_tile(
 
 /// The detail editor: full-size dials for whichever pedal currently has focus.
 /// When focus is elsewhere (amp/mic/selectors) it shows a hint instead.
-/// The tile above already names the pedal, so the editor carries no title: an
-/// open-topped box (left/right/bottom only) facing the focused tile's open
-/// bottom, knobs filling the whole interior. The editor takes on the focused
-/// pedal's livery.
-/// Top edge of the detail editor, drawn on the rule row *inside* the side
-/// borders: a full `├──┤` rule, or — when `gap` carries the focused tile's
-/// `(lo, hi)` column range in rule-local coordinates — the same rule with a
-/// gap exactly under the tile, joined with `┘`/`└`. A degenerate gap falls
-/// back to the full rule.
-fn editor_top_edge(rule: Rect, gap: Option<(usize, usize)>, color: Color) -> Line<'static> {
+/// The tile above already names the pedal, so the editor carries no title. Its top
+/// edge is a full rule joining the side borders, and the knobs fill the interior.
+/// The editor takes on the focused pedal's livery.
+///
+/// Top edge of the detail editor, drawn on the rule row *inside* the side borders,
+/// as a full `├──┤` rule.
+fn editor_top_edge(rule: Rect, color: Color) -> Line<'static> {
     let style = Style::default().fg(color);
     let w = rule.width as usize;
     if w == 0 {
         return Line::from(Span::raw(""));
     }
-    let full = || {
-        let mut s = String::with_capacity(w);
-        s.push('├');
-        for _ in 1..w.saturating_sub(1) {
-            s.push('─');
-        }
-        if w > 1 {
-            s.push('┤');
-        }
-        s
-    };
-    let Some((gx0, gx1)) = gap else {
-        return Line::from(Span::styled(full(), style));
-    };
-    // Clamp the gap into the rule row; a degenerate gap means a full rule.
-    let (gx0, gx1) = (gx0.min(w), gx1.min(w));
-    if gx1 <= gx0 {
-        return Line::from(Span::styled(full(), style));
+    let mut s = String::with_capacity(w);
+    s.push('├');
+    for _ in 1..w.saturating_sub(1) {
+        s.push('─');
     }
-    let mut out = String::with_capacity(w);
-    for col in 0..w {
-        let ch = if col < gx0 || col >= gx1 {
-            if col == 0 {
-                '├'
-            } else if col + 1 == w {
-                '┤'
-            } else {
-                '─'
-            }
-        } else if col == gx0 && gx0 > 0 {
-            '┘'
-        } else if col + 1 == gx1 && gx1 < w {
-            '└'
-        } else {
-            ' '
-        };
-        out.push(ch);
+    if w > 1 {
+        s.push('┤');
     }
-    Line::from(Span::styled(out, style))
+    Line::from(Span::styled(s, style))
 }
 
-fn render_pedal_detail(
-    f: &mut Frame,
-    area: Rect,
-    params: &Params,
-    focus: Option<usize>,
-    notch: Option<(u16, u16)>,
-) {
+fn render_pedal_detail(f: &mut Frame, area: Rect, params: &Params, focus: Option<usize>) {
     let pedal = PEDALS
         .iter()
         .find(|p| focus.is_some_and(|i| (p.start..p.end).contains(&i)));
@@ -1037,25 +977,13 @@ fn render_pedal_detail(
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    // Rule row on top (inside the side borders), knobs below: the rule never
-    // shares a row with knob boxes, so the notch can't be overwritten.
+    // Rule row on top (inside the side borders), knobs below.
     let body = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(1), Constraint::Min(6)])
         .split(inner);
-    // Notch span into rule-row coordinates as an explicit interval, so the far
-    // joint lands exactly under the tile's right edge (width-preserving shifts
-    // would drift it by a column at the box edge).
-    let gap = notch.map(|(x, w)| {
-        let rx = body[0].x as usize;
-        let rw = body[0].width as usize;
-        (
-            (x as usize).saturating_sub(rx),
-            (x as usize + w as usize).saturating_sub(rx).min(rw),
-        )
-    });
     f.render_widget(
-        Paragraph::new(editor_top_edge(body[0], gap, border_color)),
+        Paragraph::new(editor_top_edge(body[0], border_color)),
         body[0],
     );
 
@@ -1118,31 +1046,43 @@ fn render_pedal_detail(
     }
 }
 
-/// Knob cell frame: every knob permanently reserves a 1-cell border footprint
-/// on all four sides, and the focused knob alone draws its full box — a
-/// `Plain` ACCENT frame. Geometry is identical boxed or not, so moving focus
-/// never shifts the layout and dial art stays the same size.
+/// Width of the focused-knob frame. Capped so the frame stays a neat box rather
+/// than stretching to fill its cell -- a two-knob pedal would otherwise frame an
+/// ~80-cell box around a 9-cell dial. It must be at least the widest knob label
+/// plus its value readout plus the two border cells; `knob_frame_fits_every_label`
+/// guards that so a future long label fails loudly instead of spilling outside.
+const KNOB_FRAME_W: u16 = 17;
+
+/// Knob cell frame. Every knob reserves a 1-cell inset on all four sides, focused
+/// or not, so the dial and label never shift when focus moves. The focused knob
+/// additionally draws its box, but only [`KNOB_FRAME_W`] cells wide, centred on the
+/// cell, so a wide cell gets a consistent frame rather than a stretched one.
 fn knob_cell(f: &mut Frame, area: Rect, focused: bool) -> Rect {
     if area.height < 3 || area.width < 3 {
         return area; // too squeezed for a frame: content full-bleed
     }
     if focused {
+        // Cap the frame width and centre it, so a wide cell gets a neat box rather
+        // than one stretched across the whole cell.
+        let w = area.width.min(KNOB_FRAME_W);
+        let frame = Rect::new(area.x + (area.width - w) / 2, area.y, w, area.height);
         let block = Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Plain)
             .border_style(Style::default().fg(ACCENT).add_modifier(Modifier::BOLD))
             .style(panel_style());
-        let inner = block.inner(area);
-        f.render_widget(block, area);
-        inner
-    } else {
-        Rect::new(
-            area.x.saturating_add(1),
-            area.y.saturating_add(1),
-            area.width.saturating_sub(2),
-            area.height.saturating_sub(2),
-        )
+        f.render_widget(block, frame);
     }
+    // The content rect is the same inset whether or not the frame is drawn, so
+    // focusing a knob never moves its dial or label. It stays centred on the cell,
+    // which is also the frame's centre, so the content keeps clear of the borders
+    // as long as `KNOB_FRAME_W` fits the widest label.
+    Rect::new(
+        area.x.saturating_add(1),
+        area.y.saturating_add(1),
+        area.width.saturating_sub(2),
+        area.height.saturating_sub(2),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1946,6 +1886,17 @@ mod tests {
         screen_text(&term)
     }
 
+    /// A single knob rendered into a deliberately over-wide cell, so the focused
+    /// frame can be checked for stretching.
+    fn knob_text_wide(focused: bool) -> String {
+        let mut term = Terminal::new(TestBackend::new(120, 8)).expect("test backend");
+        term.draw(|f| {
+            render_compact_knob(f, f.area(), "GAIN", 0.5, focused, true, AMBER, false, None);
+        })
+        .expect("draw");
+        screen_text(&term)
+    }
+
     /// Render the header line and return the chain row (the strip carrying `▶`).
     /// Lets a test drive the panel-1 cursor and master selection directly, which the
     /// goldens cannot.
@@ -2004,42 +1955,74 @@ mod tests {
         assert!(off.contains("GAIN"), "unfocused knob lost its label");
     }
 
+    /// On a wide cell the focused frame is capped, not stretched across the cell.
+    #[test]
+    fn focused_knob_frame_is_capped_on_wide_cells() {
+        let text = knob_text_wide(true);
+        let top = text
+            .lines()
+            .find(|l| l.contains('┌'))
+            .expect("frame top row");
+        let chars: Vec<char> = top.chars().collect();
+        let lo = chars.iter().position(|&c| c == '┌').expect("top-left");
+        let hi = chars.iter().position(|&c| c == '┐').expect("top-right");
+        let width = hi - lo + 1;
+        assert_eq!(
+            width, KNOB_FRAME_W as usize,
+            "frame must be exactly the cap on a wide cell, got {width}"
+        );
+        // And it is horizontally centred in the 120-cell area.
+        let left_margin = lo;
+        let right_margin = chars.len() - 1 - hi;
+        assert!(
+            left_margin.abs_diff(right_margin) <= 1,
+            "frame is not centred: {left_margin} left vs {right_margin} right"
+        );
+    }
+
+    /// The frame cap must be wide enough for every knob label plus its value, or
+    /// text would spill outside the frame. Amp labels are not in `KNOBS` (they
+    /// resolve per model), so both tables are checked.
+    #[test]
+    fn knob_frame_fits_every_label() {
+        let mut widest = 0usize;
+        for k in KNOBS {
+            widest = widest.max(k.label.len());
+        }
+        for model in AmpModel::ALL {
+            for k in model.controls() {
+                widest = widest.max(k.label.len());
+            }
+        }
+        // label + one space + the widest value readout ("10.0") + two border cells.
+        let needed = widest + 1 + "10.0".len() + 2;
+        assert!(
+            needed <= KNOB_FRAME_W as usize,
+            "KNOB_FRAME_W={KNOB_FRAME_W} is too narrow: a {widest}-char label needs {needed} cells"
+        );
+    }
+
     /// Flatten a [`Line`] to plain text for glyph assertions.
     fn line_text(line: Line<'_>) -> String {
         line.spans.iter().map(|s| s.content.as_ref()).collect()
     }
 
-    /// The editor top edge is a full rule without a notch, and a gapped rule
-    /// with `┘`/`└` joints exactly under the focused tile's span with one.
-    /// (The rule row lives inside the side borders, so its ends join them
-    /// with `├`/`┤`.)
+    /// The editor top edge is always a full `├──┤` rule joining the side borders.
     #[test]
-    fn editor_top_edge_notches_under_the_focused_tile() {
+    fn editor_top_edge_is_a_full_rule() {
         use ratatui::layout::Rect;
-        // Rule row 20 wide: gap is a rule-local (lo, hi) interval.
-        let rule = Rect::new(30, 0, 20, 1);
-        // No notch: full rule joining both sides.
         assert_eq!(
-            line_text(editor_top_edge(rule, None, ACCENT)),
+            line_text(editor_top_edge(Rect::new(30, 0, 20, 1), ACCENT)),
             "├──────────────────┤"
         );
-        // Gap at columns 5..13: joints meet the tile sides.
+        // Degenerate widths still emit a sane, non-panicking glyph.
         assert_eq!(
-            line_text(editor_top_edge(rule, Some((5, 13)), ACCENT)),
-            "├────┘      └──────┤"
-        );
-        // Gap flush with an edge drops that join; degenerate gaps fall back.
-        assert_eq!(
-            line_text(editor_top_edge(rule, Some((0, 4)), ACCENT)),
-            "   └───────────────┤"
+            line_text(editor_top_edge(Rect::new(0, 0, 0, 1), ACCENT)),
+            ""
         );
         assert_eq!(
-            line_text(editor_top_edge(rule, Some((40, 44)), ACCENT)),
-            "├──────────────────┤"
-        );
-        assert_eq!(
-            line_text(editor_top_edge(rule, Some((5, 5)), ACCENT)),
-            "├──────────────────┤"
+            line_text(editor_top_edge(Rect::new(0, 0, 1, 1), ACCENT)),
+            "├"
         );
     }
 
@@ -2131,6 +2114,22 @@ mod tests {
             .unwrap_or(AMP_START);
         let text = render_with(&params, &board, Some(focus), |_| {});
         insta::assert_snapshot!("default_screen", text);
+    }
+
+    /// The pedalboard with a focused pedal. Guards that every tile is a closed box
+    /// (the focused one included) and the detail editor's rule is full, so selecting
+    /// a pedal never opens its border -- the boot board is empty, so no other golden
+    /// shows filled tiles.
+    #[cfg(feature = "clap")]
+    #[test]
+    fn snapshot_pedalboard_focused_pedal() {
+        let params = Params::new();
+        let mut board = board_all(false);
+        for &pi in &[0usize, 1, 3] {
+            board[pi] = true; // GATE, WHAMMY, COMP
+        }
+        let text = render_with(&params, &board, Some(PEDALS[1].start), |_| {});
+        insta::assert_snapshot!("pedalboard_focused", text);
     }
 
     /// The master cell sits directly before OUTPUT, and is drawn reversed when the
