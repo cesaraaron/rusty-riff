@@ -1,7 +1,7 @@
 use super::{
     AMP_MAX, AmpKnob, Amplifier, Bloom, BrightCap, Cached, CathodeBias, DynamicPresence, FrontEnd,
-    OutputTransformer, PowerOs, SpeakerLoad, ToneCache, TubeClip, VoiceBalance, sagged_rail,
-    split_gain,
+    GlobalNfb, OutputTransformer, PowerOs, SpeakerLoad, ToneCache, TubeClip, VoiceBalance,
+    sagged_rail, split_gain,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::oversample::Oversampler8;
@@ -11,6 +11,11 @@ use crate::dsp::tonestack::{Components, ToneStack};
 /// Bass, Treble, Middle, Presence, Master.
 /// `6.0 / pregain_max` puts the top of the gain knob well past the stage's clipping
 /// rail, so the knob spans clean to slammed on every model.
+/// Global negative feedback around the power stage -- the DR103 is famously cleaner: less loop, wider LF corner.
+const NFB_BETA: f32 = 0.33;
+const NFB_FLOOR: f32 = 0.3;
+const NFB_LF_CORNER: f32 = 260.0;
+
 const PREAMP_GAIN_COEFF: f32 = 6.0 / 238.0;
 
 pub const KNOBS: &[AmpKnob] = &[
@@ -76,6 +81,10 @@ pub const KNOBS: &[AmpKnob] = &[
 ///     the bloom is present but gentle, true to the amp's clean headroom.
 pub struct Hiwatt {
     sr: f32,
+    /// Global NFB around the power stage, with the master pot in the divider.
+    nfb: GlobalNfb,
+    /// The power stage's previous output — the divider reads this.
+    pf_out: f32,
     // Pre-gain front end: DC block + input HP (base rate)
     front: FrontEnd,
     // 8× oversampling for the nonlinear section
@@ -128,6 +137,8 @@ impl Hiwatt {
         let sr8 = sr * 8.0;
         let mut h = Self {
             sr,
+            nfb: GlobalNfb::new(sr, NFB_BETA, NFB_FLOOR, NFB_LF_CORNER),
+            pf_out: 0.0,
             front: FrontEnd::new(sr, 50.0),
             os: Oversampler8::new(sr),
             os_power: PowerOs::new(sr),
@@ -189,7 +200,7 @@ impl Hiwatt {
     }
 
     #[inline]
-    fn power_amp(&mut self, x: f32) -> f32 {
+    fn power_amp(&mut self, x: f32, master: f32, presence: f32) -> f32 {
         let abs_x = x.abs();
         let coeff = if abs_x > self.envelope {
             1.0 - (-200.0 / self.sr).exp()
@@ -209,8 +220,14 @@ impl Hiwatt {
         let (drive_up, rail) = sagged_rail(sag, 1.8);
         // `sag` is a rail voltage: as it falls the drive rises and the output
         // comes back down, so sag compresses *harder* under load. See `sagged_rail`.
-        self.os_power
-            .shape(x, |u| TubeClip::PUSH_PULL.shape(u * drive_up) * rail * 0.73)
+        // Subtract the divider's feedback from the stage's own input, read from
+        // `pf_out` so the loop stays causal.
+        let fb = self.nfb.feedback(self.pf_out, master, presence);
+        let out = self.os_power.shape(x - fb, |u| {
+            TubeClip::PUSH_PULL.shape(u * drive_up) * rail * 0.73
+        });
+        self.pf_out = out;
+        out
     }
 }
 
@@ -279,7 +296,7 @@ impl Amplifier for Hiwatt {
         let x = self.voice.process(x);
 
         // Power amp: transformer sag + light saturation
-        let x = self.power_amp(x);
+        let x = self.power_amp(x, master, presence);
         // Output transformer: low-frequency core saturation + push-pull crossover.
         let x = self.xfmr.process(x);
 

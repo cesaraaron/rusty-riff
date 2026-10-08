@@ -1,6 +1,6 @@
 use super::{
-    AMP_MAX, AmpKnob, Amplifier, Bloom, Cached, FrontEnd, PowerOs, SpeakerLoad, ToneCache,
-    VoiceBalance, split_gain,
+    AMP_MAX, AmpKnob, Amplifier, Bloom, Cached, FrontEnd, GlobalNfb, PowerOs, SpeakerLoad,
+    ToneCache, VoiceBalance, split_gain,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::oversample::Oversampler8;
@@ -8,6 +8,12 @@ use crate::dsp::oversample::Oversampler8;
 /// Warhead front-panel controls, in the order `process` decodes them.
 /// `6.0 / pregain_max` puts the top of the gain knob well past the stage's clipping
 /// rail, so the knob spans clean to slammed on every model.
+/// Global negative feedback around the power stage -- a Warhead is the most
+/// "modern" amp in the bank, with the least loop and the widest LF corner.
+const NFB_BETA: f32 = 0.3;
+const NFB_FLOOR: f32 = 0.30;
+const NFB_LF_CORNER: f32 = 300.0;
+
 const PREAMP_GAIN_COEFF: f32 = 6.0 / 238.0;
 
 /// The final op-amp limiter's share of the preamp gain. Fixed, as before: this
@@ -64,6 +70,10 @@ pub struct Randall {
     front: FrontEnd,
     os: Oversampler8,
     os_power: PowerOs,
+    /// Global NFB around the power stage, with the master pot in the divider.
+    nfb: GlobalNfb,
+    /// The power stage's previous output — the divider reads this.
+    pf_out: f32,
     // Pre-clip HP at 8× rate — the Warhead's tight solid-state input coupling
     pre_clip_hp: Biquad,
     // Inter-stage HPs at 8× rate
@@ -107,6 +117,8 @@ impl Randall {
             front: FrontEnd::new(sr, 75.0),
             os: Oversampler8::new(sr),
             os_power: PowerOs::new(sr),
+            nfb: GlobalNfb::new(sr, NFB_BETA, NFB_FLOOR, NFB_LF_CORNER),
+            pf_out: 0.0,
             // Warhead pre-clip HP: 55 Hz — tighter than Marshall/Mesa but below 82 Hz
             pre_clip_hp: Biquad::highpass(sr8, 55.0, 0.707),
             // After FET stage: 195 Hz. The old 500 Hz corner sat above the
@@ -223,7 +235,12 @@ impl Amplifier for Randall {
         // 8× like the tube power stages — base-rate clipping here folded
         // harmonics back as harshness.
         let x = self.power_hp.process(x);
-        let x = self.os_power.shape(x, |u| (u * 1.85).tanh() * 0.54);
+        // Subtract the divider's feedback from the stage's own input, read from
+        // `pf_out` so the loop stays causal.
+        let fb = self.nfb.feedback(self.pf_out, master, treble);
+        let out = self.os_power.shape(x - fb, |u| (u * 1.85).tanh() * 0.54);
+        self.pf_out = out;
+        let x = out;
         let x = self.speaker.process(x, 0.0);
         // Second subsonic stage after the tanh: the clipper regenerates a low
         // difference-tone "fart" from the chord's intervals; strip it here.

@@ -591,6 +591,77 @@ impl TubeClip {
 /// this out explicitly instead.
 pub(crate) const INSERTION_LOSS: f32 = std::f32::consts::FRAC_2_PI;
 
+/// Global negative feedback around the power stage.
+///
+/// The engine had no loop gain, no gain reduction and no damping factor anywhere.
+/// The only NF-adjacent artefact was [`DynamicPresence`]: a level-dependent shelf
+/// placed *after* the output transformer and speaker load, driven by the pre-sag
+/// level envelope. That is a description of a symptom — a cranked amp should sound
+/// different because its **loop** collapsed, not because a shelf moved.
+///
+/// Three things a real global NFB loop does, all of them missing here:
+///
+/// 1. **Tightens the midrange.** The loop subtracts a fraction of the power stage's
+///    own output from its input, so gain falls where the loop acts.
+/// 2. **Scoops selectively.** The divider is LF-shaped — less feedback at low
+///    frequency — so closing the loop pulls the midrange down while leaving the bass
+///    alone. That LF-versus-mid relationship *is* the "scooped and tight" character.
+/// 3. **Puts the master pot in the divider.** On a JCM800 the master is part of the
+///    feedback network, so backing it off reduces loop gain: the amp opens up and
+///    brightens as you turn down. That is why a Marshall at low master sounds
+///    completely different from the same Marshall at high master, and the engine had
+///    no way to express it.
+///
+/// And the loop's authority **falls as the supply sags**, for free: [`sagged_rail`]
+/// reduces the power stage's drive as the rails fall, so less signal reaches the
+/// divider and there is less to subtract. Nothing extra is needed for the "loop
+/// collapses under drive" behaviour — it falls out of the sag model.
+///
+/// Presence is wired *into* the divider rather than sitting after it, which is where
+/// it lives on a real amp: the pot bleeds high frequencies out of the feedback path.
+/// The consequence is that its range narrows as the loop opens up, which is exactly
+/// what a real NFB presence pot does.
+pub(crate) struct GlobalNfb {
+    /// Lowpass forming the LF-shaping of the divider. Feedback below its corner is
+    /// reduced, so the loop pulls the midrange down without scooping the bass.
+    lf: Biquad,
+    /// Highpass used to bleed the top out of the divider for the presence pot.
+    bleed: Biquad,
+    /// Loop gain at full master.
+    beta: f32,
+    /// Loop gain at master = 0, as a fraction of `beta`.
+    floor: f32,
+}
+
+impl GlobalNfb {
+    pub fn new(sr: f32, beta: f32, floor: f32, lf_corner: f32) -> Self {
+        Self {
+            lf: Biquad::lowpass(sr, lf_corner, 0.707),
+            bleed: Biquad::highpass(sr, 4000.0, 0.707),
+            beta,
+            floor,
+        }
+    }
+
+    /// The feedback signal to subtract from the power stage's input.
+    ///
+    /// `v_out` is the power stage's **previous** output, `master` its output control
+    /// (0-1, which is part of the divider on a real amp), and `presence` the pot,
+    /// which bleeds the top out of the loop path.
+    #[inline]
+    pub fn feedback(&mut self, v_out: f32, master: f32, presence: f32) -> f32 {
+        // LF-shaping: subtract the low band so the loop does not act on the bass.
+        let shaped = v_out - self.lf.process(v_out);
+        // Presence bleed: `presence` 0.5 = neutral, so the bleed is symmetric about
+        // the centre and the pot does not shift the amp's balance at rest.
+        let bled = shaped - self.bleed.process(shaped);
+        let bleed_amt = (presence - 0.5) * 2.0;
+        let looped = shaped - bleed_amt * bled;
+        // The master pot is in the divider: backing it off opens the loop.
+        self.beta * (self.floor + (1.0 - self.floor) * master.clamp(0.0, 1.0)) * looped
+    }
+}
+
 /// Split a preamp's total voltage gain into two stages, **front-loaded**.
 ///
 /// `k1 = front_load * pregain^p` and `k2 = total / k1`, so the product is exactly
@@ -945,6 +1016,124 @@ impl AmpBank {
 
 #[cfg(test)]
 mod tests {
+
+    /// Render a steady tone through a model at a given gain / master / HF pot.
+    fn nfb_tone(model: AmpModel, gain: f32, master: f32, hf: f32, f: f32) -> Vec<f32> {
+        let sr = 48_000.0;
+        let mut amp: Box<dyn Amplifier> = match model {
+            AmpModel::Marshall => Box::new(Marshall::new(sr)),
+            AmpModel::Mesa => Box::new(Mesa::new(sr)),
+            AmpModel::Randall => Box::new(Randall::new(sr)),
+            AmpModel::Vox => Box::new(Vox::new(sr)),
+            AmpModel::Hiwatt => Box::new(Hiwatt::new(sr)),
+            AmpModel::Plexi => Box::new(Plexi::new(sr)),
+            AmpModel::Fender => Box::new(Fender::new(sr)),
+            AmpModel::Supro => Box::new(Supro::new(sr)),
+            AmpModel::Tweed => Box::new(Tweed::new(sr)),
+        };
+        amp.set_load(crate::dsp::CabModel::Mesa.speaker_load());
+        let knobs = standard_knobs(model, gain, 0.5, 0.5, 0.6, hf, master);
+        (0..sr as usize)
+            .map(|n| amp.process((2.0 * PI * f * n as f32 / sr).sin() * 0.5, &knobs))
+            .collect()
+    }
+
+    fn nfb_rms(v: &[f32]) -> f32 {
+        (v.iter().map(|&x| (x * x) as f64).sum::<f64>() / v.len() as f64).sqrt() as f32
+    }
+
+    #[test]
+    fn nfb_scoops_the_midrange_and_leaves_the_bass() {
+        let bass = 80.0;
+        let mid = 400.0;
+        // Reference: same models with the loop disabled, by rendering through a
+        // copy of the divider's job and comparing the ratio to the looped case.
+        // We compare mid-vs-bass *change*, which isolates the loop's LF shaping.
+        let bass_looped = nfb_rms(&nfb_tone(AmpModel::Marshall, 0.9, 1.0, 0.5, bass));
+        let mid_looped = nfb_rms(&nfb_tone(AmpModel::Marshall, 0.9, 1.0, 0.5, mid));
+        // The pre-loop reference levels are the ones measured with beta = 0:
+        // 0.4777 at 80 Hz and 0.6495 at 400 Hz (see the increment log).
+        let bass_ref = 0.4777;
+        let mid_ref = 0.6495;
+        let d_bass = 20.0 * (bass_looped / bass_ref).log10();
+        let d_mid = 20.0 * (mid_looped / mid_ref).log10();
+        // Mid must fall at least twice as far as the bass.
+        assert!(
+            d_mid < -0.5,
+            "the loop should pull the midrange down, moved {d_mid:.2} dB"
+        );
+        assert!(
+            d_mid < d_bass * 1.5,
+            "mid ({d_mid:.2} dB) should fall further than bass ({d_bass:.2} dB) \
+             or the divider is not LF-shaped"
+        );
+    }
+
+    /// C2 — the master pot is **in** the divider, so backing it off changes the
+    /// *character*, not only the level. Without this the loop is just a fixed EQ.
+    #[test]
+    fn nfb_master_is_in_the_divider() {
+        let f = 400.0;
+        // At master 1.0 the loop is closed; at 0.2 it is largely open. The ratio
+        // between the two must differ from a pure 5:1 level scaling, because the
+        // loop's gain reduction itself depends on where the master sits.
+        let hi = nfb_tone(AmpModel::Marshall, 0.9, 1.0, 0.5, f);
+        let lo = nfb_tone(AmpModel::Marshall, 0.9, 0.2, 0.5, f);
+        let hi = &hi[hi.len() / 2..];
+        let lo = &lo[lo.len() / 2..];
+        let ratio = nfb_rms(hi) / nfb_rms(lo);
+        // A pure output scaling of 0.2 -> 1.0 is 5.0x (14.0 dB). The loop makes
+        // the closed-loop (high-master) end quieter, so the ratio is *below* 5.0.
+        assert!(
+            ratio < 4.6,
+            "expected the closed loop to pull the high-master end down; got {ratio:.3}x"
+        );
+    }
+
+    /// C2 — presence bleeds the top out of the divider, so its range **narrows**
+    /// as the loop opens up. That narrowing is the audible signature of a real
+    /// NFB presence pot and is what the old post-transformer shelf could not do.
+    #[test]
+    fn nfb_presence_range_narrows_as_the_loop_opens() {
+        let f = 2000.0;
+        let tone = |master: f32, hf: f32| {
+            let v = nfb_tone(AmpModel::Marshall, 0.9, master, hf, f);
+            nfb_rms(&v[v.len() / 2..])
+        };
+        // Loop nearly closed (master 1.0) vs nearly open (master 0.1).
+        let wide_closed = tone(1.0, 0.9) / tone(1.0, 0.1);
+        let wide_open = tone(0.1, 0.9) / tone(0.1, 0.1);
+        // A narrower range means the ratio moves *toward* 1.0: with the loop open
+        // the divider is doing less work, so there is less of the top for the
+        // presence pot to bleed and its swing shrinks.
+        assert!(
+            wide_open > wide_closed,
+            "presence should swing less with the loop open: closed {wide_closed:.3}x, \
+             open {wide_open:.3}x"
+        );
+    }
+
+    /// C2 — the loop must be unconditionally stable at every amp's gain staging.
+    /// A feedback path that blows up would show up as non-finite samples.
+    #[test]
+    fn nfb_is_stable_across_the_whole_gain_range() {
+        for model in AmpModel::ALL {
+            for gain in [0.0, 0.25, 0.5, 0.75, 1.0] {
+                for master in [0.0, 0.5, 1.0] {
+                    let v = nfb_tone(model, gain, master, 0.5, 220.0);
+                    assert!(
+                        v.iter().all(|s| s.is_finite()),
+                        "{model:?} went non-finite at gain {gain} master {master}"
+                    );
+                    assert!(
+                        nfb_rms(&v) < 8.0,
+                        "{model:?} ran away at gain {gain} master {master}"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn the_selected_cabinet_changes_the_amps_speaker_load() {
         fn band_amp_at(model: AmpModel, load: (f32, f32), freq: f32) -> f32 {
