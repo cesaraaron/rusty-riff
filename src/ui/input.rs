@@ -278,6 +278,63 @@ pub(super) fn step_knob_in_panel(
     }
 }
 
+/// The sub-groups within the focused panel, as `[start, end)` cell ranges:
+/// panel 2 the amp block and the cab/mic block; panel 4 one block per on-board
+/// pedal in chain order, then `+ ADD`. `←`/`→` walks across these flat;
+/// `Shift+←`/`→` jumps between their first cells. Panels 1 and 3 have none.
+fn panel_groups(
+    focus: Option<usize>,
+    board: &[bool],
+    order: &[u8; CHAIN_LEN],
+    amp_count: usize,
+) -> Vec<(usize, usize)> {
+    match panel_of(focus) {
+        2 => {
+            let mut groups = Vec::new();
+            if amp_count > 0 {
+                groups.push((AMP_START, AMP_START + amp_count));
+            }
+            groups.push((MIC_START, MIC_END));
+            groups
+        }
+        4 => {
+            let mut groups: Vec<(usize, usize)> = rendered_stages(order, board)
+                .into_iter()
+                .filter_map(|(_, stage)| stage.pedal_index())
+                .map(|pi| (PEDALS[pi].start, PEDALS[pi].end))
+                .collect();
+            groups.push((ADD_TILE, ADD_TILE + 1));
+            groups
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// `Shift+←`/`→`: jump to the first cell of the previous/next sub-group in the
+/// focused panel, wrapping. Used to cross amp ↔ cab/mic in one press, or step
+/// pedal to pedal, where plain `←`/`→` walks knob by knob. Panels with no
+/// sub-groups (the ribbon, the timeline) are left untouched.
+pub(super) fn jump_group(
+    focus: Option<usize>,
+    board: &[bool],
+    order: &[u8; CHAIN_LEN],
+    dir: i32,
+    amp_count: usize,
+) -> Option<usize> {
+    let groups = panel_groups(focus, board, order, amp_count);
+    if groups.is_empty() {
+        return focus;
+    }
+    // The group whose block contains the focus; a stale focus re-anchors at the
+    // first group.
+    let cur = focus
+        .and_then(|f| groups.iter().position(|&(s, e)| f >= s && f < e))
+        .unwrap_or(0);
+    let n = groups.len() as i32;
+    let next = (((cur as i32 + dir.signum()) % n + n) % n) as usize;
+    Some(groups[next].0)
+}
+
 /// Keep `focus` on a visible panel after one hides: focus inside a hidden panel
 /// jumps to the first visible panel's entry, everything else stays put.
 pub(super) fn ensure_focus_visible(
@@ -528,7 +585,67 @@ mod tests {
         super::step_knob_in_panel(focus, board, order, dir, AMP_KNOBS)
     }
 
+    fn jump_group(
+        focus: Option<usize>,
+        board: &[bool],
+        order: &[u8; CHAIN_LEN],
+        dir: i32,
+    ) -> Option<usize> {
+        super::jump_group(focus, board, order, dir, AMP_KNOBS)
+    }
+
     // ── navigation ────────────────────────────────────────────────────────────
+
+    /// `Shift+←`/`→` in panel 2 jumps amp ↔ cab/mic, landing on each group's first
+    /// knob and wrapping.
+    #[test]
+    fn shift_arrow_jumps_between_amp_and_cab() {
+        let b = board(true);
+        let o = order();
+        // From anywhere in the amp block, → lands on the first cab/mic knob.
+        assert_eq!(jump_group(Some(AMP_START), &b, &o, 1), Some(MIC_START));
+        assert_eq!(jump_group(Some(AMP_START + 3), &b, &o, 1), Some(MIC_START));
+        // From the cab/mic block, → wraps back to the first amp knob.
+        assert_eq!(jump_group(Some(MIC_START), &b, &o, 1), Some(AMP_START));
+        assert_eq!(jump_group(Some(MIC_END - 1), &b, &o, 1), Some(AMP_START));
+        // Backwards mirrors it.
+        assert_eq!(jump_group(Some(MIC_START), &b, &o, -1), Some(AMP_START));
+        assert_eq!(jump_group(Some(AMP_START), &b, &o, -1), Some(MIC_START));
+    }
+
+    /// `Shift+←`/`→` in panel 4 steps pedal to pedal in chain order, visiting
+    /// `+ ADD`, and wraps.
+    #[test]
+    fn shift_arrow_jumps_pedal_to_pedal() {
+        let b = board(true);
+        let o = order();
+        // From inside a pedal, → lands on the next pedal's first knob.
+        assert_eq!(
+            jump_group(Some(PEDALS[0].start + 1), &b, &o, 1),
+            Some(PEDALS[1].start)
+        );
+        // The last pedal's successor is +ADD, and +ADD wraps to the first pedal.
+        let last_start = PEDALS[PEDALS.len() - 1].start;
+        assert_eq!(jump_group(Some(last_start), &b, &o, 1), Some(ADD_TILE));
+        assert_eq!(jump_group(Some(ADD_TILE), &b, &o, 1), Some(PEDALS[0].start));
+        assert_eq!(
+            jump_group(Some(PEDALS[0].start), &b, &o, -1),
+            Some(ADD_TILE)
+        );
+    }
+
+    /// `Shift+←`/`→` does nothing on the ribbon or the timeline, which own their
+    /// own arrow behaviour.
+    #[test]
+    fn shift_arrow_is_inert_on_ribbon_and_timeline() {
+        let b = board(true);
+        let o = order();
+        assert_eq!(jump_group(Some(CHAIN_TILE), &b, &o, 1), Some(CHAIN_TILE));
+        assert_eq!(
+            jump_group(Some(PRACTICE_TILE), &b, &o, -1),
+            Some(PRACTICE_TILE)
+        );
+    }
 
     /// `Tab` cycles through the visible panels and wraps at both ends.
     #[test]

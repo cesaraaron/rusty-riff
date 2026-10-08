@@ -1391,7 +1391,10 @@ pub(super) fn render_help_modal(f: &mut Frame) {
             "  Tab / Shift-Tab",
             "  cycle focus through the visible panels",
         ),
-        row("  ←/→", "  move inside the focused panel"),
+        row(
+            "  ←/→",
+            "  move within the panel · Shift+←/→ jumps amp↔cab / pedal-to-pedal",
+        ),
         row("  [ / ]", "  move the ribbon's stage earlier / later"),
         row(
             "  note",

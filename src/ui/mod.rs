@@ -42,8 +42,8 @@ use draw::{
 };
 use input::{
     PanelMemory, add_pedal, amp_choices, cab_choices, cycle_panel, ensure_focus_visible,
-    init_amp_cursor, init_cab_cursor, move_selected_stage, nudge, nudge_master, panel_of,
-    press_number, remove_pedal, select_amp, select_cab, step_header, step_knob_in_panel,
+    init_amp_cursor, init_cab_cursor, jump_group, move_selected_stage, nudge, nudge_master,
+    panel_of, press_number, remove_pedal, select_amp, select_cab, step_header, step_knob_in_panel,
     toggle_pedal, toggle_stage,
 };
 use practice::{PracticeUi, SaveContext};
@@ -1599,6 +1599,28 @@ pub fn run(
                                 &params.chain_slots(),
                                 -1,
                                 &mut panel_mem,
+                                params.amp_knob_count(),
+                            );
+                        }
+                        // Shift+←/→ jumps between sub-groups within the focused
+                        // panel: amp <-> cab/mic in panel 2, pedal-to-pedal (and
+                        // `+ ADD`) in panel 4. The ribbon and timeline own their
+                        // arrows, so it is a no-op there.
+                        KeyCode::Right if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                            focus = jump_group(
+                                focus,
+                                &board,
+                                &params.chain_slots(),
+                                1,
+                                params.amp_knob_count(),
+                            );
+                        }
+                        KeyCode::Left if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                            focus = jump_group(
+                                focus,
+                                &board,
+                                &params.chain_slots(),
+                                -1,
                                 params.amp_knob_count(),
                             );
                         }

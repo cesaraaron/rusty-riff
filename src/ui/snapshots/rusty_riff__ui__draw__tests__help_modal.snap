@@ -6,7 +6,7 @@ expression: text
 │  AMP ──▶ CAB ──▶ MASTER +0.0 ──▶ OUT║Panels & chain                                                                             ║░░▌          OUT ▐░░░░░▌LIM           │
 └─────────────────────────────────────║  1 / 2 / 3 / 4  focus chain, amp, timeline, pedals (again: hide → timeline)               ║──────────────────────────────────────┘
 ┏┤ MARSHALL PLEXI ├━━━━━━━━━━━━━━━━━━━║  Tab / Shift-Tab  cycle focus through the visible panels                                  ║━━━━━━━━━━━━━━━━━━━━━━━━┤ 🎙 MARSH GB ├┓
-┃                                     ║  ←/→  move inside the focused panel                                                       ║                                      ┃
+┃                                     ║  ←/→  move within the panel · Shift+←/→ jumps amp↔cab / pedal-to-pedal                    ║                                      ┃
 ┃         ···                ···      ║  [ / ]  move the ribbon's stage earlier / later                                           ║            ···              ···      ┃
 ┃        · ● ◇              · ● ·     ║  note  between AMP and CAB = line-level; a full-rig AU is post-mic                        ║           · ● ·            · ● ·     ┃
 ┃         · ·                ◇ ·      ║  Space  bypass stage, pedal, or transport under focus                                     ║            ◇ ·              ◇ ·      ┃
