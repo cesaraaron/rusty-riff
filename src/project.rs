@@ -320,6 +320,13 @@ pub fn write_session(
     }
     for asset in assets {
         let dst = dir.join(&asset.rel);
+        // A vanished source must never abort the whole save. If the destination
+        // already holds a copy it is kept as-is (the caller retargets the track at
+        // it); otherwise the asset is skipped rather than failing every other
+        // track and the manifest with it.
+        if !asset.source.exists() {
+            continue;
+        }
         // Re-saving a loaded project would otherwise copy a file onto itself,
         // truncating the source before it is read. Identical files are a no-op.
         if dst.exists()
@@ -788,6 +795,60 @@ mod tests {
         assert_eq!(
             after, payload,
             "in-place resave must not truncate the asset"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A track whose source file is gone must not fail the whole save. The
+    /// existing project copy is kept; with no copy at all the asset is skipped.
+    #[test]
+    fn a_missing_asset_source_does_not_abort_the_save() {
+        let dir = tmp_dir("missing-asset");
+        let params = crate::dsp::Params::new();
+        let rig = Preset::from_params("rig".into(), None, &params);
+        let manifest = build_manifest(
+            "S".into(),
+            48_000,
+            TransportSection::default(),
+            MetronomeSection::default(),
+            rig,
+            None,
+            false,
+            None,
+            None,
+            Vec::new(),
+        )
+        .expect("manifest");
+
+        // Source gone, no destination copy: skipped, not an error.
+        write_session(
+            &dir,
+            &manifest,
+            &[AssetCopy {
+                source: dir.join("gone.wav"),
+                rel: "audio/track-1.wav".into(),
+            }],
+            &[],
+        )
+        .expect("a missing source must not abort the save");
+
+        // Source gone but a copy is already in the project: kept intact.
+        std::fs::create_dir_all(dir.join("audio")).expect("mkdir");
+        std::fs::write(dir.join("audio/track-2.wav"), b"kept").expect("seed copy");
+        write_session(
+            &dir,
+            &manifest,
+            &[AssetCopy {
+                source: dir.join("gone2.wav"),
+                rel: "audio/track-2.wav".into(),
+            }],
+            &[],
+        )
+        .expect("a missing source with an existing copy must not abort");
+        assert_eq!(
+            std::fs::read(dir.join("audio/track-2.wav")).expect("read"),
+            b"kept",
+            "an existing project copy must survive a missing source"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -902,8 +902,19 @@ pub fn run(
                             session_browser.open = false;
                         }
                         SessionAction::Discard(take) => {
-                            crate::project::discard_recovery_file(&take.wav);
-                            session_browser.message = Some(format!("Discarded {}", take.label()));
+                            // Never delete a recovery WAV a session track still
+                            // points at: that leaves the track with a dangling asset
+                            // and the next save fails copying the missing file.
+                            if practice_ui.references_recovery(&take.wav) {
+                                session_browser.message = Some(
+                                    "That take is in the session — remove it there first"
+                                        .to_owned(),
+                                );
+                            } else {
+                                crate::project::discard_recovery_file(&take.wav);
+                                session_browser.message =
+                                    Some(format!("Discarded {}", take.label()));
+                            }
                             session_browser.refresh();
                         }
                     }

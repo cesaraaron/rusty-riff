@@ -1108,15 +1108,30 @@ impl PracticeUi {
                         .and_then(|e| e.to_str())
                         .unwrap_or("wav");
                     let rel = format!("audio/track-{}.{}", track.id, ext);
-                    assets.push(AssetCopy {
-                        source: asset.path.clone(),
-                        rel: rel.clone(),
-                    });
-                    if project::is_recovery_asset(&asset.path) {
-                        gc.push(asset.path.clone());
+                    let dst = ctx.dir.join(&rel);
+                    if asset.path.exists() {
+                        assets.push(AssetCopy {
+                            source: asset.path.clone(),
+                            rel: rel.clone(),
+                        });
+                        if project::is_recovery_asset(&asset.path) {
+                            gc.push(asset.path.clone());
+                        }
+                        written.push((track.id, rel.clone()));
+                        Some(rel)
+                    } else if dst.exists() {
+                        // The source vanished but the project already holds the copy
+                        // -- e.g. a recovery take discarded after being restored into
+                        // the session. Keep the copy and retarget the track at it.
+                        written.push((track.id, rel.clone()));
+                        Some(rel)
+                    } else {
+                        // No source and no copy: the audio is unrecoverable. Save the
+                        // track without it rather than failing the whole save, which
+                        // is what used to happen.
+                        skipped += 1;
+                        None
                     }
-                    written.push((track.id, rel.clone()));
-                    Some(rel)
                 }
                 _ => {
                     skipped += 1;
@@ -1338,13 +1353,17 @@ impl PracticeUi {
     /// Bring an abandoned recovery take into the current session as a new raw-take
     /// row, decoding it off-thread. It is not deleted until a session save
     /// incorporates it (verified incorporation).
-    pub(super) fn restore_recovery(&mut self, take: &project::RecoveryTake) {
-        if self
-            .session
+    /// True when a session track already plays this recovery WAV, so it must not
+    /// be restored twice or discarded out from under the track that uses it.
+    pub(super) fn references_recovery(&self, wav: &Path) -> bool {
+        self.session
             .tracks()
             .iter()
-            .any(|t| t.asset.as_ref().is_some_and(|a| a.path == take.wav))
-        {
+            .any(|t| t.asset.as_ref().is_some_and(|a| a.path == wav))
+    }
+
+    pub(super) fn restore_recovery(&mut self, take: &project::RecoveryTake) {
+        if self.references_recovery(&take.wav) {
             self.note("That take is already in the session".to_owned());
             return;
         }
@@ -3045,6 +3064,103 @@ mod tests {
             }),
             TrackKind::RawTake,
         )
+    }
+
+    fn scratch_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "rusty-riff-practice-{}-{}-{}",
+            tag,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    /// A recovery WAV referenced by a session track must be recognised, so the
+    /// browser's discard can refuse to delete it out from under the track.
+    #[test]
+    fn references_recovery_matches_session_tracks() {
+        let mut ui = PracticeUi::new();
+        let wav = PathBuf::from("/some/recovery/take-1.wav");
+        assert!(!ui.references_recovery(&wav));
+        ui.session.push(
+            1,
+            "take".into(),
+            TrackKind::RawTake,
+            Some(AssetRef {
+                path: wav.clone(),
+                source_sample_rate: 48_000,
+                source_channels: 1,
+            }),
+            0,
+            48_000,
+            TrackLifecycle::Ready,
+        );
+        assert!(ui.references_recovery(&wav));
+        assert!(!ui.references_recovery(Path::new("/other/take-2.wav")));
+    }
+
+    /// A track whose recovery source vanished (e.g. the recovery row was discarded
+    /// after the take was restored) must not fail the whole save: the existing
+    /// project copy is kept and the track retargeted at it.
+    #[test]
+    fn save_heals_a_track_whose_source_vanished() {
+        let dir = scratch_dir("heal");
+        let mut ui = PracticeUi::new();
+        let missing = ui
+            .session
+            .recovery_dir()
+            .expect("recovery dir")
+            .join("take-9.wav");
+        assert!(!missing.exists(), "the probe asset must not exist");
+        ui.session.push(
+            9,
+            "take".into(),
+            TrackKind::RawTake,
+            Some(AssetRef {
+                path: missing,
+                source_sample_rate: 48_000,
+                source_channels: 1,
+            }),
+            0,
+            48_000,
+            TrackLifecycle::Ready,
+        );
+        // A copy from an earlier save is already in the project folder.
+        std::fs::create_dir_all(dir.join("audio")).expect("mkdir");
+        std::fs::write(dir.join("audio/track-9.wav"), b"audio").expect("seed copy");
+
+        let params = Params::new();
+        let practice = Practice::new();
+        let metronome = Metronome::new();
+        let ctx = SaveContext {
+            dir: &dir,
+            params: &params,
+            practice: &practice,
+            metronome: &metronome,
+            external_ir: None,
+            external_ir_active: false,
+            clap: None,
+            au: None,
+        };
+        ui.save_session(ctx)
+            .expect("a vanished source must not fail the save");
+        assert_eq!(
+            ui.session
+                .track(9)
+                .expect("track 9")
+                .asset
+                .as_ref()
+                .expect("asset")
+                .path,
+            dir.join("audio/track-9.wav"),
+            "the track must be retargeted at the existing project copy"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
