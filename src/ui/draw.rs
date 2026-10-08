@@ -1401,7 +1401,7 @@ pub(super) fn render_help_modal(f: &mut Frame) {
         ),
         row(
             "  Tab / Shift-Tab",
-            "  cycle amp/cab (2) or pedals (4) in the panel",
+            "  cycle focus through the visible panels",
         ),
         row("  ←/→", "  move inside the focused panel"),
         row("  [ / ]", "  move the ribbon's stage earlier / later"),
@@ -1477,7 +1477,7 @@ pub(super) fn render_help_modal(f: &mut Frame) {
             "  +/−",
             "  step (seek & move): 0.01/0.05/0.1/0.5/1/5/10/30 s",
         ),
-        row("  Tab / Shift+Tab", "  row height / waveform glyph style"),
+        row("  z / v", "  row height / waveform glyph style"),
         row("  Shift+A / Shift+↑↓", "  waveform gain / time zoom"),
         row("  G", "  selected track gain"),
         row(

@@ -41,9 +41,9 @@ use draw::{
     render_help_modal,
 };
 use input::{
-    NavMemory, add_pedal, amp_choices, cab_choices, ensure_focus_visible, init_amp_cursor,
-    init_cab_cursor, move_chain_cursor, move_selected_stage, nudge, panel_of, press_number,
-    remove_pedal, select_amp, select_cab, step_knob_in_panel, tab_in_panel, toggle_pedal,
+    PanelMemory, add_pedal, amp_choices, cab_choices, cycle_panel, ensure_focus_visible,
+    init_amp_cursor, init_cab_cursor, move_chain_cursor, move_selected_stage, nudge, panel_of,
+    press_number, remove_pedal, select_amp, select_cab, step_knob_in_panel, toggle_pedal,
     toggle_stage,
 };
 use practice::{PracticeUi, SaveContext};
@@ -282,7 +282,7 @@ pub fn run(
     let mut chain_cursor: ChainStage = ChainStage::Amp;
     // Last-focused knob per amp/mic/pedal group, so panel-local `Tab` returns
     // to where you left off.
-    let mut nav_mem = NavMemory::new();
+    let mut panel_mem = PanelMemory::new();
     // Board membership: a pedal is on the board iff it is enabled. Off-board
     // pedals are bypassed in the DSP and hidden from the rig. Rebuilt with
     // `sync_board` whenever a preset rewrites the enabled flags.
@@ -1366,12 +1366,15 @@ pub fn run(
                         KeyCode::Char('l') | KeyCode::Char('L') if focus == Some(PRACTICE_TILE) => {
                             practice_ui.toggle_loop(&practice);
                         }
-                        // `Tab` cycles the selected row's height; `Shift+Tab`
-                        // cycles the waveform glyph style.
-                        KeyCode::Tab if focus == Some(PRACTICE_TILE) => {
+                        // `z` cycles the selected row's height; `v` cycles the
+                        // waveform glyph style. These were `Tab`/`Shift+Tab` until
+                        // `Tab` became the global panel walk, so they are
+                        // timeline-local now and shadow global `Z`/`V` only while
+                        // the timeline has focus -- the same pattern as `g`/`h`/`m`.
+                        KeyCode::Char('z') | KeyCode::Char('Z') if focus == Some(PRACTICE_TILE) => {
                             practice_ui.tab_zoom();
                         }
-                        KeyCode::BackTab if focus == Some(PRACTICE_TILE) => {
+                        KeyCode::Char('v') | KeyCode::Char('V') if focus == Some(PRACTICE_TILE) => {
                             practice_ui.cycle_glyphs();
                         }
                         // `Shift+A` toggles the waveform's amplitude mapping
@@ -1570,26 +1573,29 @@ pub fn run(
                             cab_open = true;
                             cab_cursor = init_cab_cursor(&params);
                         }
-                        // `Tab` is panel-local: it cycles amp↔cab in panel 2 and
-                        // pedals in panel 4, and is inert on the ribbon/timeline.
-                        // Panels are switched with the number keys.
+                        // `Tab` / `Shift+Tab` cycle focus through the visible
+                        // panels (1 ribbon, 2 amp/cab, 3 timeline, 4 pedalboard),
+                        // skipping hidden ones. Panels are shown/hidden with the
+                        // number keys; arrows move within a panel.
                         KeyCode::Tab => {
-                            focus = tab_in_panel(
+                            focus = cycle_panel(
                                 focus,
                                 &board,
+                                &panels,
                                 &params.chain_slots(),
                                 1,
-                                &mut nav_mem,
+                                &mut panel_mem,
                                 params.amp_knob_count(),
                             );
                         }
                         KeyCode::BackTab => {
-                            focus = tab_in_panel(
+                            focus = cycle_panel(
                                 focus,
                                 &board,
+                                &panels,
                                 &params.chain_slots(),
                                 -1,
-                                &mut nav_mem,
+                                &mut panel_mem,
                                 params.amp_knob_count(),
                             );
                         }

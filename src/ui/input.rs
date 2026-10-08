@@ -101,126 +101,75 @@ pub(super) fn panel_entry(panel: u8, board: &[bool], order: &[u8; CHAIN_LEN]) ->
     }
 }
 
-/// Group ids for [`NavMemory`]: the amp knob block, the cab/mic knob block, and
-/// one group per `PEDALS` entry (`2 + pi`).
-const GROUP_AMP: usize = 0;
-const GROUP_MIC: usize = 1;
-const GROUP_COUNT: usize = 2 + PEDALS.len();
+/// Number of top-level panels `Tab` can cycle (1 ribbon, 2 amp/cab, 3 timeline,
+/// 4 pedalboard). Panel 1 is always visible; 2-4 are toggled with the number keys.
+const PANEL_COUNT: usize = 4;
 
-fn group_pedal(pi: usize) -> usize {
-    2 + pi
+/// Last-focused cell per panel, so `Tab` back into a panel lands where you left
+/// off instead of snapping to its first cell. Owned by the UI thread.
+pub(super) struct PanelMemory {
+    last: [Option<usize>; PANEL_COUNT + 1],
 }
 
-/// Last-focused knob per group, so `Tab` back into a section lands where you
-/// left off instead of snapping to its first knob. Owned by the UI thread.
-pub(super) struct NavMemory {
-    last: [Option<usize>; GROUP_COUNT],
-}
-
-impl NavMemory {
+impl PanelMemory {
     pub(super) fn new() -> Self {
         Self {
-            last: [None; GROUP_COUNT],
-        }
-    }
-
-    /// The group a knob belongs to (amp / mic / pedal), or `None` for the
-    /// sentinel focuses.
-    fn group_of(focus: Option<usize>) -> Option<usize> {
-        let k = focus?;
-        // The rig master output is drawn in the amp panel, so it navigates with the
-        // amp group rather than falling through to the pedal lookup (its table index
-        // sits just past the reverb slice).
-        if k == OUT_START || (AMP_START..AMP_END).contains(&k) {
-            Some(GROUP_AMP)
-        } else if (MIC_START..MIC_END).contains(&k) {
-            Some(GROUP_MIC)
-        } else {
-            pedal_of(k).map(group_pedal)
+            last: [None; PANEL_COUNT + 1],
         }
     }
 
     fn remember(&mut self, focus: Option<usize>) {
-        if let Some(group) = Self::group_of(focus) {
-            self.last[group] = focus;
-        }
-    }
-
-    /// The remembered knob for `group`, if it is still reachable (its pedal may
-    /// have left the board, or the amp model may expose fewer knobs), else `None`.
-    fn recall(&self, group: usize, board: &[bool], amp_count: usize) -> Option<usize> {
-        self.last[group].filter(|&k| knob_visible(k, board, amp_count))
-    }
-}
-
-/// First knob of a group, used when there is nothing to recall.
-fn group_first(group: usize) -> Option<usize> {
-    match group {
-        GROUP_AMP => Some(AMP_START),
-        GROUP_MIC => Some(MIC_START),
-        g => PEDALS.get(g.checked_sub(2)?).map(|p| p.start),
-    }
-}
-
-/// `Tab` / `Shift-Tab` inside the focused panel:
-/// - panel 1 (ribbon) and panel 3 (timeline): inert;
-/// - panel 2: toggle between the amp and cab/mic knob groups;
-/// - panel 4: step to the next/previous on-board pedal in chain order, ending
-///   on the `+ ADD` tile and wrapping.
-///
-/// The current group's knob is remembered first, so returning to a section
-/// lands on the knob you last touched there.
-pub(super) fn tab_in_panel(
-    focus: Option<usize>,
-    board: &[bool],
-    order: &[u8; CHAIN_LEN],
-    dir: i32,
-    mem: &mut NavMemory,
-    amp_count: usize,
-) -> Option<usize> {
-    match panel_of(focus) {
-        1 | 3 => focus,
-        2 => {
-            mem.remember(focus);
-            let current = NavMemory::group_of(focus).unwrap_or(GROUP_AMP);
-            let target = if current == GROUP_AMP {
-                GROUP_MIC
-            } else {
-                GROUP_AMP
-            };
-            mem.recall(target, board, amp_count)
-                .or_else(|| group_first(target))
-        }
-        _ => {
-            mem.remember(focus);
-            // On-board pedals in chain order, then the +ADD tile.
-            let pedals: Vec<usize> = order
-                .iter()
-                .filter_map(|&raw| ChainStage::from_u8(raw))
-                .filter_map(|stage| stage.pedal_index())
-                .filter(|&pi| board.get(pi).copied().unwrap_or(false))
-                .collect();
-            let cur = match focus {
-                Some(ADD_TILE) => Some(pedals.len()),
-                Some(k) => pedal_of(k).and_then(|pi| pedals.iter().position(|&p| p == pi)),
-                None => None,
-            };
-            let next = match cur {
-                Some(pos) => {
-                    let n = (pedals.len() + 1) as i32;
-                    (((pos as i32 + dir.signum()) % n + n) % n) as usize
-                }
-                None if dir < 0 => pedals.len(),
-                None => 0,
-            };
-            match pedals.get(next) {
-                Some(&pi) => mem
-                    .recall(group_pedal(pi), board, amp_count)
-                    .or_else(|| group_first(group_pedal(pi))),
-                None => Some(ADD_TILE),
+        if let Some(k) = focus {
+            let p = panel_of(Some(k));
+            if (1..=PANEL_COUNT as u8).contains(&p) {
+                self.last[p as usize] = Some(k);
             }
         }
     }
+
+    /// The remembered cell for `panel`, if it still belongs to that panel and is
+    /// still reachable (its pedal may have left the board, or the amp model may
+    /// expose fewer knobs than the one it was set on).
+    fn recall(&self, panel: u8, board: &[bool], amp_count: usize) -> Option<usize> {
+        self.last[panel as usize]
+            .filter(|&k| panel_of(Some(k)) == panel && focus_reachable(k, board, amp_count))
+    }
+}
+
+/// A focus target is reachable if it is a sentinel tile or a visible knob.
+fn focus_reachable(k: usize, board: &[bool], amp_count: usize) -> bool {
+    match k {
+        CHAIN_TILE | PRACTICE_TILE | ADD_TILE => true,
+        _ => knob_visible(k, board, amp_count),
+    }
+}
+
+/// `Tab` / `Shift+Tab` cycle focus forward/backward through the **visible**
+/// panels (1 ribbon, 2 amp/cab, 3 timeline, 4 pedalboard), wrapping and skipping
+/// hidden ones. Each panel is revisited at its remembered cell, or its entry
+/// when there is nothing to recall.
+pub(super) fn cycle_panel(
+    focus: Option<usize>,
+    board: &[bool],
+    panels: &Panels,
+    order: &[u8; CHAIN_LEN],
+    dir: i32,
+    mem: &mut PanelMemory,
+    amp_count: usize,
+) -> Option<usize> {
+    let visible: Vec<u8> = (1..=PANEL_COUNT as u8)
+        .filter(|&p| panel_visible(panels, p))
+        .collect();
+    if visible.is_empty() {
+        return focus;
+    }
+    let cur = panel_of(focus);
+    let pos = visible.iter().position(|&p| p == cur).unwrap_or(0) as i32;
+    let n = visible.len() as i32;
+    let next = visible[(((pos + dir.signum()) % n + n) % n) as usize];
+    mem.remember(focus);
+    mem.recall(next, board, amp_count)
+        .or_else(|| panel_entry(next, board, order))
 }
 
 /// First entry scanning panels 1→2→3→4, for focus repair after a panel hides.
@@ -276,7 +225,7 @@ fn focus_after_hide(
     first_visible_entry(panels, board, order)
 }
 
-// `Tab` / `Shift-Tab` are panel-local now (see `tab_in_panel`); panels are
+// `Tab` / `Shift-Tab` cycle the visible panels (see `cycle_panel`).
 // switched with the number keys, so the old global panel walk is gone.
 
 /// Knob range for the section a focus owns scoped `←`/`→` navigation in:
@@ -533,16 +482,16 @@ mod tests {
     /// Amp knob count the nav tests exercise (the default model, Mesa, exposes 6).
     const AMP_KNOBS: usize = 6;
 
-    /// Test-local wrappers pin the default model's amp-knob count so the
-    /// navigation tests keep reading without threading it through every call.
-    fn tab_in_panel(
+    /// Test-local wrapper pinning the default model's amp-knob count.
+    fn cycle_panel(
         focus: Option<usize>,
         board: &[bool],
+        panels: &Panels,
         order: &[u8; CHAIN_LEN],
         dir: i32,
-        mem: &mut NavMemory,
+        mem: &mut PanelMemory,
     ) -> Option<usize> {
-        super::tab_in_panel(focus, board, order, dir, mem, AMP_KNOBS)
+        super::cycle_panel(focus, board, panels, order, dir, mem, AMP_KNOBS)
     }
 
     fn step_knob_in_panel(
@@ -556,99 +505,102 @@ mod tests {
 
     // ── navigation ────────────────────────────────────────────────────────────
 
-    /// `Tab` is inert on the ribbon (panel 1) and the timeline (panel 3).
+    /// `Tab` cycles through the visible panels and wraps at both ends.
     #[test]
-    fn tab_is_inert_on_ribbon_and_timeline() {
+    fn tab_cycles_visible_panels() {
         let b = board(true);
         let o = order();
-        let mut mem = NavMemory::new();
+        let all = Panels::all_visible();
+        let mut mem = PanelMemory::new();
         assert_eq!(
-            tab_in_panel(Some(CHAIN_TILE), &b, &o, 1, &mut mem),
-            Some(CHAIN_TILE)
+            cycle_panel(Some(CHAIN_TILE), &b, &all, &o, 1, &mut mem),
+            Some(AMP_START),
+            "1 -> 2"
         );
         assert_eq!(
-            tab_in_panel(Some(CHAIN_TILE), &b, &o, -1, &mut mem),
-            Some(CHAIN_TILE)
+            cycle_panel(Some(AMP_START), &b, &all, &o, 1, &mut mem),
+            Some(PRACTICE_TILE),
+            "2 -> 3"
         );
         assert_eq!(
-            tab_in_panel(Some(PRACTICE_TILE), &b, &o, 1, &mut mem),
-            Some(PRACTICE_TILE)
+            cycle_panel(Some(PRACTICE_TILE), &b, &all, &o, 1, &mut mem),
+            Some(PEDALS[0].start),
+            "3 -> 4"
+        );
+        assert_eq!(
+            cycle_panel(Some(PEDALS[0].start), &b, &all, &o, 1, &mut mem),
+            Some(CHAIN_TILE),
+            "4 -> 1 wraps"
+        );
+        assert_eq!(
+            cycle_panel(Some(CHAIN_TILE), &b, &all, &o, -1, &mut mem),
+            Some(PEDALS[0].start),
+            "1 -> 4 backwards wraps"
         );
     }
 
-    /// Panel 2: `Tab` toggles amp ↔ cab, and each section remembers the knob it
-    /// was last left on.
+    /// `Tab` skips hidden panels, and is inert when only the ribbon is left.
     #[test]
-    fn tab_toggles_amp_and_cab_and_remembers_knobs() {
+    fn tab_skips_hidden_panels() {
         let b = board(true);
         let o = order();
-        let mut mem = NavMemory::new();
-        // From an amp knob, first Tab enters the cab group at its first knob.
-        let cab_first = tab_in_panel(Some(AMP_START + 2), &b, &o, 1, &mut mem).unwrap();
-        assert_eq!(cab_first, MIC_START);
-        // Move within the cab, then Tab back: the amp knob we left is restored.
-        let cab_moved = step_knob_in_panel(Some(cab_first), &b, &o, 1).unwrap();
-        assert_eq!(cab_moved, MIC_START + 1);
-        let back = tab_in_panel(Some(cab_moved), &b, &o, 1, &mut mem).unwrap();
-        assert_eq!(back, AMP_START + 2, "amp section must recall its last knob");
-        // And the cab section recalls MIC_START + 1.
+        let mut mem = PanelMemory::new();
+        let no_timeline = Panels {
+            amp: true,
+            rig: true,
+            timeline: false,
+        };
         assert_eq!(
-            tab_in_panel(Some(back), &b, &o, 1, &mut mem),
-            Some(MIC_START + 1)
+            cycle_panel(Some(AMP_START), &b, &no_timeline, &o, 1, &mut mem),
+            Some(PEDALS[0].start),
+            "2 -> 4 when the timeline is hidden"
+        );
+        let ribbon_only = Panels {
+            amp: false,
+            rig: false,
+            timeline: false,
+        };
+        assert_eq!(
+            cycle_panel(Some(CHAIN_TILE), &b, &ribbon_only, &o, 1, &mut mem),
+            Some(CHAIN_TILE),
+            "with only the ribbon visible Tab stays put"
         );
     }
 
-    /// Panel 4: `Tab` steps pedals in chain order, ends on `+ ADD`, wraps, and
-    /// remembers each pedal's last knob.
+    /// A full lap of the panels returns to the cell each was left on.
     #[test]
-    fn tab_cycles_pedals_then_add_and_remembers_knobs() {
+    fn tab_remembers_the_cell_per_panel() {
         let b = board(true);
         let o = order();
-        let mut mem = NavMemory::new();
-        // The first on-board pedal leads the chain (Gate).
-        let gate = PEDALS[0].start;
-        let second = tab_in_panel(Some(gate), &b, &o, 1, &mut mem).unwrap();
-        assert_eq!(second, PEDALS[1].start, "Tab advances to the next pedal");
-        // Leave the second pedal on a later knob, step away and back: restored.
-        let moved = PEDALS[1].start + 1;
-        let third = tab_in_panel(Some(moved), &b, &o, 1, &mut mem).unwrap();
-        assert_eq!(third, PEDALS[2].start);
-        assert_eq!(
-            tab_in_panel(Some(third), &b, &o, -1, &mut mem),
-            Some(moved),
-            "a pedal must recall its last knob"
-        );
-        // The last pedal's successor is +ADD; from +ADD it wraps both ways.
-        let last = PEDALS[PEDALS.len() - 1].start;
-        assert_eq!(
-            tab_in_panel(Some(last), &b, &o, 1, &mut mem),
-            Some(ADD_TILE),
-            "the pedal cycle must end on + ADD"
-        );
-        assert_eq!(
-            tab_in_panel(Some(ADD_TILE), &b, &o, 1, &mut mem),
-            Some(gate)
-        );
-        assert_eq!(
-            tab_in_panel(Some(ADD_TILE), &b, &o, -1, &mut mem),
-            Some(last)
-        );
+        let all = Panels::all_visible();
+        let mut mem = PanelMemory::new();
+        let on_amp = AMP_START + 2;
+        let mut f = Some(on_amp);
+        for _ in 0..4 {
+            f = cycle_panel(f, &b, &all, &o, 1, &mut mem);
+        }
+        assert_eq!(f, Some(on_amp), "a full lap must recall each panel's knob");
     }
 
-    /// With an empty board, panel 4's `Tab` sits on `+ ADD` (the only step).
+    /// A remembered cell that is no longer reachable is not recalled.
     #[test]
-    fn tab_on_empty_board_stays_on_add() {
-        let b = board(false);
-        let o = order();
-        let mut mem = NavMemory::new();
+    fn panel_memory_recall_rejects_stale_cells() {
+        let mut b = board(true);
+        let mut mem = PanelMemory::new();
+        mem.remember(Some(PEDALS[0].start));
+        assert_eq!(mem.recall(4, &b, AMP_KNOBS), Some(PEDALS[0].start));
+        b[0] = false; // the gate leaves the board
         assert_eq!(
-            tab_in_panel(Some(ADD_TILE), &b, &o, 1, &mut mem),
-            Some(ADD_TILE)
+            mem.recall(4, &b, AMP_KNOBS),
+            None,
+            "a stale pedal must not be recalled"
         );
-        assert_eq!(
-            tab_in_panel(Some(ADD_TILE), &b, &o, -1, &mut mem),
-            Some(ADD_TILE)
-        );
+
+        // A knob past the active model's control count is also rejected.
+        let mut mem = PanelMemory::new();
+        mem.remember(Some(AMP_START + 5));
+        assert_eq!(mem.recall(2, &b, 3), None);
+        assert_eq!(mem.recall(2, &b, AMP_KNOBS), Some(AMP_START + 5));
     }
 
     #[test]

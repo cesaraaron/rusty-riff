@@ -2272,7 +2272,7 @@ impl PracticeUi {
                 Span::styled(" gain  ", Style::default().fg(DIM)),
                 Span::styled("H", Style::default().fg(AMBER)),
                 Span::styled(" move  ", Style::default().fg(DIM)),
-                Span::styled("Tab", Style::default().fg(AMBER)),
+                Span::styled("z", Style::default().fg(AMBER)),
                 Span::styled(" zoom  ", Style::default().fg(DIM)),
                 Span::styled("[ ] L", Style::default().fg(AMBER)),
                 Span::styled(" loop  ", Style::default().fg(DIM)),

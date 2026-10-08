@@ -5,7 +5,7 @@ expression: text
 ┌─────────────────────────────────────╔ K E Y B I N D I N G S ════════════════════════════════════════════════════════════════════╗──────────────────────────────[ ] move┐
 │  AMP ──▶ CAB ──▶ OUTPUT             ║Panels & chain                                                                             ║░░▌          OUT ▐░░░░░▌LIM           │
 └─────────────────────────────────────║  1 / 2 / 3 / 4  focus chain, amp, timeline, pedals (again: hide → timeline)               ║──────────────────────────────────────┘
-┏┤ MARSHALL PLEXI ├━━━━━━━━━━━━━━━━━━━║  Tab / Shift-Tab  cycle amp/cab (2) or pedals (4) in the panel                            ║━━━━━━━━━━━━━━━━━━━━━━━━┤ 🎙 MARSH GB ├┓
+┏┤ MARSHALL PLEXI ├━━━━━━━━━━━━━━━━━━━║  Tab / Shift-Tab  cycle focus through the visible panels                                  ║━━━━━━━━━━━━━━━━━━━━━━━━┤ 🎙 MARSH GB ├┓
 ┃                                     ║  ←/→  move inside the focused panel                                                       ║                                      ┃
 ┃       ···              ···          ║  [ / ]  move the ribbon's stage earlier / later                                           ║            ···              ···      ┃
 ┃      · ● ◇            · ● ·         ║  note  between AMP and CAB = line-level; a full-rig AU is post-mic                        ║           · ● ·            · ● ·     ┃
@@ -50,7 +50,7 @@ expression: text
                                       ║  Enter  jump to start (loop in-point if looped)                                           ║                                       
                                       ║  ↑/↓  ←/→  select row / seek by the step                                                  ║                                       
                                       ║  +/−  step (seek & move): 0.01/0.05/0.1/0.5/1/5/10/30 s                                   ║                                       
-                                      ║  Tab / Shift+Tab  row height / waveform glyph style                                       ║                                       
+                                      ║  z / v  row height / waveform glyph style                                                 ║                                       
                                       ║  Shift+A / Shift+↑↓  waveform gain / time zoom                                            ║                                       
                                       ║  G  selected track gain                                                                   ║                                       
                                       ║  H  move selected clip (arrows by step; +/− changes it)                                   ║                                       
