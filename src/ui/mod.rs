@@ -61,6 +61,29 @@ fn sync_board(params: &Params) -> Vec<bool> {
         .collect()
 }
 
+/// Rebuild the pedalboard from the live enabled flags after the rig changed
+/// underneath the UI -- a preset applied, or a session loaded -- and repair focus
+/// if it landed on a pedal that is now off the board or a hidden panel.
+///
+/// `board` is a UI-side cache of the enabled flags, so every path that rewrites the
+/// rig must call this or the chain ribbon (panel 1) and the pedalboard (panel 4)
+/// keep showing the previous rig even though the DSP has already switched.
+fn resync_board_after_rig_change(
+    params: &Params,
+    board: &mut Vec<bool>,
+    focus: &mut Option<usize>,
+    panels: &Panels,
+) {
+    *board = sync_board(params);
+    if let Some(i) = *focus
+        && let Some(pi) = pedal_of(i)
+        && !board[pi]
+    {
+        *focus = Some(AMP_START);
+    }
+    *focus = ensure_focus_visible(*focus, board, panels, &params.chain_slots());
+}
+
 /// Reset the rig to factory defaults and repair the board + focus, mirroring the
 /// preset browser's "Default values" row. Used at startup and for a new session.
 fn apply_factory_defaults(
@@ -70,14 +93,7 @@ fn apply_factory_defaults(
     panels: &Panels,
 ) {
     params.reset_to_defaults();
-    *board = sync_board(params);
-    if let Some(i) = *focus
-        && let Some(pi) = pedal_of(i)
-        && !board[pi]
-    {
-        *focus = Some(AMP_START);
-    }
-    *focus = ensure_focus_visible(*focus, board, panels, &params.chain_slots());
+    resync_board_after_rig_change(params, board, focus, panels);
 }
 
 /// Lists devices, logs them, and returns the user's choice — either the saved
@@ -557,6 +573,14 @@ pub fn run(
                         ) {
                             Ok(external) => {
                                 sync_revision = true;
+                                // The loaded rig rewrote the enabled flags and
+                                // chain order; rebuild the UI's board cache and put
+                                // the ribbon cursor back on a real stage.
+                                resync_board_after_rig_change(
+                                    &params, &mut board, &mut focus, &panels,
+                                );
+                                chain_cursor = ChainStage::Amp;
+                                header_on_master = false;
                                 if let Some(ext) = external {
                                     #[cfg(feature = "clap")]
                                     if let Some(spec) = ext.clap {
@@ -1351,18 +1375,8 @@ pub fn run(
                             prev_preset = applied_preset.take();
                             applied_preset = applied;
                             // The preset rewrote the enabled flags (and maybe the
-                            // chain order), so rebuild the board and repair
-                            // focus if it landed on a removed pedal or a
-                            // hidden panel.
-                            board = sync_board(&params);
-                            if let Some(i) = focus
-                                && let Some(pi) = pedal_of(i)
-                                && !board[pi]
-                            {
-                                focus = Some(AMP_START);
-                            }
-                            focus =
-                                ensure_focus_visible(focus, &board, &panels, &params.chain_slots());
+                            // chain order), so rebuild the board and repair focus.
+                            resync_board_after_rig_change(&params, &mut board, &mut focus, &panels);
                             preset_open = false;
                             preset_filter.clear();
                         }
@@ -1387,18 +1401,8 @@ pub fn run(
                                 let new_applied = p.name.clone();
                                 prev_preset = applied_preset.take();
                                 applied_preset = Some(new_applied);
-                                board = sync_board(&params);
-                                if let Some(i) = focus
-                                    && let Some(pi) = pedal_of(i)
-                                    && !board[pi]
-                                {
-                                    focus = Some(AMP_START);
-                                }
-                                focus = ensure_focus_visible(
-                                    focus,
-                                    &board,
-                                    &panels,
-                                    &params.chain_slots(),
+                                resync_board_after_rig_change(
+                                    &params, &mut board, &mut focus, &panels,
                                 );
                             }
                         }
@@ -2005,6 +2009,7 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::Ordering::Relaxed;
 
     /// The prompt names the pending action; the load label uses the folder name.
     #[test]
@@ -2014,6 +2019,36 @@ mod tests {
         assert_eq!(
             UnsavedAction::Load(PathBuf::from("/x/sessions/My_Set")).label(),
             "Load My_Set"
+        );
+    }
+
+    /// A rig change must rebuild the board cache and repair focus -- this is the
+    /// fix for loading a session whose pedals did not appear in the UI.
+    #[test]
+    fn resync_board_reflects_enabled_flags_and_repairs_focus() {
+        let params = Params::new();
+        // Start from a stale, all-off board with focus on the pedal that comes on.
+        let mut board = vec![false; PEDALS.len()];
+        let mut focus = Some(PEDALS[3].start);
+        let panels = Panels::all_visible();
+
+        params.cmp_enabled.store(true, Relaxed);
+        resync_board_after_rig_change(&params, &mut board, &mut focus, &panels);
+        assert!(board[3], "the board must reflect the rig's enabled flags");
+        assert_eq!(
+            focus,
+            Some(PEDALS[3].start),
+            "focus on a still-present pedal must not move"
+        );
+
+        // Turning the pedal off moves focus off the removed tile.
+        params.cmp_enabled.store(false, Relaxed);
+        resync_board_after_rig_change(&params, &mut board, &mut focus, &panels);
+        assert!(!board[3]);
+        assert_eq!(
+            focus,
+            Some(AMP_START),
+            "focus on a pedal that left the board must move to the amp"
         );
     }
 }
