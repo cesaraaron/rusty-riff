@@ -177,6 +177,37 @@ fn save_current_session(
     }
 }
 
+/// Autosave debounce: after the last observed change, wait this long with no
+/// further change before writing. Long enough that dragging a knob is one save,
+/// short enough that a crash loses almost nothing.
+const AUTOSAVE_DEBOUNCE: Duration = Duration::from_secs(2);
+
+/// Hash of everything an autosave persists -- the rig, the session's name and
+/// tracks, the loop, and the metronome. Compared each UI tick against the
+/// revision captured at the last save to decide whether the session is dirty.
+/// Playhead/seek are excluded so playback alone never dirties it.
+fn session_revision(
+    params: &Params,
+    ui: &PracticeUi,
+    practice: &Practice,
+    metronome: &Metronome,
+) -> u64 {
+    use std::sync::atomic::Ordering::Relaxed;
+    let mut h = crate::preset::rig_revision(params) ^ ui.session.revision();
+    macro_rules! mix {
+        ($x:expr) => {{
+            h ^= $x;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }};
+    }
+    mix!(practice.loop_enabled.load(Relaxed) as u64);
+    mix!(practice.loop_start.load(Relaxed));
+    mix!(practice.loop_end.load(Relaxed));
+    mix!(metronome.active.load(Relaxed) as u64);
+    mix!(metronome.get_bpm() as u64);
+    h
+}
+
 /// Resolve a leading `~` against the home directory.
 fn expand_tilde(input: &str) -> PathBuf {
     if let Some(home) = dirs::home_dir() {
@@ -451,6 +482,14 @@ pub fn run(
 
         // ── Main UI loop ──────────────────────────────────────────────────────────
         let mut change_device = false;
+        // Autosave bookkeeping: the revision captured as the saved baseline, the
+        // time of the most recent unsaved edit, and a flag set by a save/load/new
+        // so the next tick re-baselines. `quit_confirm` blocks `q` on an unnamed,
+        // dirty session until the user decides.
+        let mut saved_revision = session_revision(&params, &practice_ui, &practice, &metronome);
+        let mut last_edit: Option<std::time::Instant> = None;
+        let mut sync_revision = false;
+        let mut quit_confirm = false;
         loop {
             tick = tick.wrapping_add(1);
             let blink = (tick / 15).is_multiple_of(2);
@@ -487,6 +526,62 @@ pub fn run(
             {
                 save_msg = None;
             }
+
+            // ── Autosave ─────────────────────────────────────────────────────
+            // A cheap revision hash says whether the rig or session changed. A
+            // named session writes itself a couple of seconds after the edits
+            // settle; an unnamed one just stays dirty (the quit guard covers it).
+            let revision = session_revision(&params, &practice_ui, &practice, &metronome);
+            if sync_revision {
+                saved_revision = revision;
+                last_edit = None;
+                sync_revision = false;
+            } else if revision != saved_revision {
+                last_edit = Some(std::time::Instant::now());
+            }
+            let session_dirty = revision != saved_revision || last_edit.is_some();
+            if let Some(since) = last_edit
+                && since.elapsed() >= AUTOSAVE_DEBOUNCE
+                && let Some(dir) = practice_ui.session.saved_dir().cloned()
+            {
+                #[allow(unused_mut)]
+                let mut clap_spec: Option<crate::project::ClapSpec> = None;
+                #[allow(unused_mut)]
+                let mut au_spec: Option<crate::project::AuSpec> = None;
+                #[cfg(feature = "clap")]
+                if browser.loaded_name().is_some() {
+                    clap_spec = browser.export_spec();
+                }
+                #[cfg(all(feature = "au", target_os = "macos"))]
+                if params
+                    .amp_external_loaded
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                {
+                    au_spec = amp_browser.export_spec(&params);
+                }
+                if save_current_session(
+                    &mut practice_ui,
+                    &dir,
+                    &params,
+                    &practice,
+                    &metronome,
+                    &ir_browser,
+                    clap_spec,
+                    au_spec,
+                )
+                .is_some_and(|m| !m.starts_with("Save failed"))
+                {
+                    saved_revision = revision;
+                    last_edit = None;
+                }
+            }
+
+            // The footer's left cell: the session name, with `*` while unsaved.
+            let session_label = format!(
+                "{}{}",
+                practice_ui.session.name(),
+                if session_dirty { "*" } else { "" }
+            );
 
             // Looper transport readout (footer, since the looper has no panel). It
             // takes precedence over a transient save message so an active loop is
@@ -557,6 +652,8 @@ pub fn run(
                     panels,
                     chain_cursor,
                     header_on_master,
+                    Some((session_label.as_str(), session_dirty)),
+                    quit_confirm,
                     Some((&practice, &practice_ui)),
                 );
                 if add_open {
@@ -672,6 +769,28 @@ pub fn run(
                 if let Some(handle) = &export_handle {
                     if key.code == KeyCode::Esc {
                         handle.cancel();
+                    }
+                    continue;
+                }
+
+                // Quit guard: an unnamed session with unsaved changes blocks the
+                // quit until the user saves, discards, or cancels.
+                if quit_confirm {
+                    match key.code {
+                        KeyCode::Esc => quit_confirm = false,
+                        KeyCode::Char('d') | KeyCode::Char('D') => {
+                            if practice_ui.is_recording() {
+                                practice_ui.abort_capture(&capture);
+                            }
+                            break;
+                        }
+                        KeyCode::Char('s') | KeyCode::Char('S') => {
+                            quit_confirm = false;
+                            session_browser.open();
+                            let name = practice_ui.session.name().to_owned();
+                            session_browser.prompt_name(&name);
+                        }
+                        _ => {}
                     }
                     continue;
                 }
@@ -815,6 +934,7 @@ pub fn run(
                             apply_factory_defaults(&params, &mut board, &mut focus, &panels);
                             session_browser.refresh();
                             session_browser.open = false;
+                            sync_revision = true;
                         }
                         SessionAction::Save => {
                             if let Some(dir) = practice_ui.session.saved_dir().cloned() {
@@ -828,6 +948,9 @@ pub fn run(
                                     clap_spec,
                                     au_spec,
                                 );
+                                sync_revision = msg
+                                    .as_deref()
+                                    .is_some_and(|m| !m.starts_with("Save failed"));
                                 session_browser.message = msg;
                                 session_browser.refresh();
                             } else {
@@ -849,6 +972,9 @@ pub fn run(
                                 clap_spec,
                                 au_spec,
                             );
+                            sync_revision = msg
+                                .as_deref()
+                                .is_some_and(|m| !m.starts_with("Save failed"));
                             session_browser.message = msg;
                             session_browser.refresh();
                             session_browser.view_list();
@@ -863,6 +989,7 @@ pub fn run(
                                 &capture,
                             ) {
                                 Ok(external) => {
+                                    sync_revision = true;
                                     if let Some(ext) = external {
                                         #[cfg(feature = "clap")]
                                         if let Some(spec) = ext.clap {
@@ -1450,19 +1577,29 @@ pub fn run(
                                 press_number(4, focus, &board, &panels, &params.chain_slots());
                         }
                         KeyCode::Char('q') => {
-                            if practice_ui.is_recording() {
-                                practice_ui.abort_capture(&capture);
+                            // Guard an unnamed session with unsaved changes: alert
+                            // instead of dropping the work.
+                            if practice_ui.session.saved_dir().is_none() && session_dirty {
+                                quit_confirm = true;
+                            } else {
+                                if practice_ui.is_recording() {
+                                    practice_ui.abort_capture(&capture);
+                                }
+                                break;
                             }
-                            break;
                         }
                         KeyCode::Char('k') | KeyCode::Char('K') => {
                             help_open = true;
                         }
                         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            if practice_ui.is_recording() {
-                                practice_ui.abort_capture(&capture);
+                            if practice_ui.session.saved_dir().is_none() && session_dirty {
+                                quit_confirm = true;
+                            } else {
+                                if practice_ui.is_recording() {
+                                    practice_ui.abort_capture(&capture);
+                                }
+                                break;
                             }
-                            break;
                         }
                         // Reopen the device picker at runtime. The engine is dropped
                         // when this session loops, freeing the devices for the picker.

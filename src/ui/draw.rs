@@ -36,6 +36,8 @@ pub(super) fn draw(
     panels: Panels,
     chain_cursor: ChainStage,
     master_selected: bool,
+    session: Option<(&str, bool)>,
+    quit_confirm: bool,
     timeline: Option<(&Practice, &PracticeUi)>,
 ) {
     let area = f.area();
@@ -119,7 +121,11 @@ pub(super) fn draw(
         rows[i],
         status,
         (params.midi_clock_bpm.load(Relaxed) > 1.0).then(|| params.midi_clock_bpm.load(Relaxed)),
+        session,
     );
+    if quit_confirm {
+        render_quit_confirm(f);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1289,27 +1295,55 @@ fn build_fader(value: f32, rows: usize) -> Vec<String> {
 /// Single-row footer. The full key list lives in the `K` cheat-sheet modal, so
 /// this only advertises it (plus quit); transient status messages take over the
 /// row while they are shown. A running MIDI clock is shown right-aligned.
-fn render_help(f: &mut Frame, area: Rect, status: Option<&str>, midi_bpm: Option<f32>) {
-    if let Some(msg) = status {
-        let help = Paragraph::new(Line::from(vec![Span::styled(
-            format!(" {msg} "),
-            Style::default().fg(SAFE).add_modifier(Modifier::BOLD),
-        )]))
-        .alignment(Alignment::Center)
-        .style(panel_style());
-        f.render_widget(help, area);
-        return;
+fn render_help(
+    f: &mut Frame,
+    area: Rect,
+    status: Option<&str>,
+    midi_bpm: Option<f32>,
+    session: Option<(&str, bool)>,
+) {
+    // Three columns: the session name on the left, the key hint (or a transient
+    // status) centred, the MIDI clock on the right. The name stays put even while
+    // a status message shows.
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Ratio(1, 3),
+            Constraint::Ratio(1, 3),
+            Constraint::Ratio(1, 3),
+        ])
+        .split(area);
+
+    if let Some((name, dirty)) = session {
+        // Trim so a long name cannot bleed into the centre column.
+        let room = cols[0].width.saturating_sub(3) as usize;
+        let shown: String = name.chars().take(room).collect();
+        let label = format!(" {shown}{} ", if dirty { "*" } else { "" });
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                label,
+                Style::default().fg(if dirty { WARN } else { DIM }),
+            )))
+            .style(panel_style()),
+            cols[0],
+        );
     }
 
-    let help = Paragraph::new(Line::from(vec![
-        Span::styled("K", Style::default().fg(AMBER)),
-        Span::styled(" keybindings  ", Style::default().fg(DIM)),
-        Span::styled("Q", Style::default().fg(AMBER)),
-        Span::styled(" quit", Style::default().fg(DIM)),
-    ]))
+    let centre = match status {
+        Some(msg) => Paragraph::new(Line::from(Span::styled(
+            format!(" {msg} "),
+            Style::default().fg(SAFE).add_modifier(Modifier::BOLD),
+        ))),
+        None => Paragraph::new(Line::from(vec![
+            Span::styled("K", Style::default().fg(AMBER)),
+            Span::styled(" keybindings  ", Style::default().fg(DIM)),
+            Span::styled("Q", Style::default().fg(AMBER)),
+            Span::styled(" quit", Style::default().fg(DIM)),
+        ])),
+    }
     .alignment(Alignment::Center)
     .style(panel_style());
-    f.render_widget(help, area);
+    f.render_widget(centre, cols[1]);
 
     if let Some(bpm) = midi_bpm {
         let clock = Paragraph::new(Line::from(vec![
@@ -1319,8 +1353,47 @@ fn render_help(f: &mut Frame, area: Rect, status: Option<&str>, midi_bpm: Option
         ]))
         .alignment(Alignment::Right)
         .style(panel_style());
-        f.render_widget(clock, area);
+        f.render_widget(clock, cols[2]);
     }
+}
+
+/// The quit guard: shown when `q` is pressed on an unnamed session with unsaved
+/// changes. Blocks the quit until the user saves, discards, or cancels.
+pub(super) fn render_quit_confirm(f: &mut Frame) {
+    let area = f.area();
+    let width = 54.min(area.width);
+    let height = 5.min(area.height);
+    let rect = Rect {
+        x: area.x + (area.width.saturating_sub(width)) / 2,
+        y: area.y + (area.height.saturating_sub(height)) / 2,
+        width,
+        height,
+    };
+    f.render_widget(Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .border_style(Style::default().fg(WARN))
+        .title(Span::styled(
+            " U N S A V E D   S E S S I O N ",
+            Style::default().fg(WARN).add_modifier(Modifier::BOLD),
+        ))
+        .style(panel_style());
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("S", Style::default().fg(AMBER)),
+            Span::styled(" save  ", Style::default().fg(DIM)),
+            Span::styled("D", Style::default().fg(AMBER)),
+            Span::styled(" discard & quit  ", Style::default().fg(DIM)),
+            Span::styled("Esc", Style::default().fg(AMBER)),
+            Span::styled(" cancel", Style::default().fg(DIM)),
+        ]))
+        .alignment(Alignment::Center)
+        .style(panel_style()),
+        inner,
+    );
 }
 
 /// Full keybinding cheat-sheet, opened with `K`. Sections mirror the footer
@@ -1879,6 +1952,39 @@ mod tests {
         out
     }
 
+    /// The footer's left cell shows the session name, with `*` while it has
+    /// unsaved changes.
+    #[test]
+    fn footer_shows_the_session_name_and_dirty_marker() {
+        let mut term = Terminal::new(TestBackend::new(80, 1)).expect("test backend");
+        term.draw(|f| render_help(f, f.area(), None, None, Some(("My Set", true))))
+            .expect("draw");
+        let text = screen_text(&term);
+        assert!(
+            text.contains("My Set*"),
+            "dirty session name missing: {text:?}"
+        );
+
+        term.draw(|f| render_help(f, f.area(), None, None, Some(("Saved Set", false))))
+            .expect("draw");
+        let text = screen_text(&term);
+        assert!(text.contains("Saved Set"), "session name missing: {text:?}");
+        assert!(
+            !text.contains("Saved Set*"),
+            "a clean session must not carry the marker: {text:?}"
+        );
+    }
+
+    /// The quit guard names its three choices.
+    #[test]
+    fn quit_guard_modal_lists_its_options() {
+        let mut term = Terminal::new(TestBackend::new(80, 24)).expect("test backend");
+        term.draw(render_quit_confirm).expect("draw");
+        let text = screen_text(&term);
+        assert!(text.contains("U N S A V E D"), "missing title: {text:?}");
+        assert!(text.contains("discard"), "missing discard option: {text:?}");
+        assert!(text.contains("cancel"), "missing cancel option: {text:?}");
+    }
     /// Render one knob cell into a scratch area and return its glyphs.
     fn knob_text(focused: bool) -> String {
         let mut term = Terminal::new(TestBackend::new(24, 8)).expect("test backend");
@@ -1929,6 +2035,8 @@ mod tests {
                 Panels::all_visible(),
                 cursor,
                 master_selected,
+                None,
+                false,
                 None,
             );
         })
@@ -2068,6 +2176,8 @@ mod tests {
                 ChainStage::Amp,
                 false,
                 None,
+                false,
+                None,
             );
             overlay(f);
         })
@@ -2170,6 +2280,8 @@ mod tests {
                 ChainStage::Amp,
                 true,
                 None,
+                false,
+                None,
             );
         })
         .expect("draw");
@@ -2257,6 +2369,8 @@ mod tests {
                     ChainStage::Amp,
                     false,
                     None,
+                    false,
+                    None,
                 );
             })
             .expect("draw");
@@ -2334,6 +2448,8 @@ mod tests {
                 ChainStage::Amp,
                 false,
                 None,
+                false,
+                None,
             );
         })
         .expect("draw");
@@ -2397,6 +2513,8 @@ mod tests {
                 None,
                 Panels::all_visible(),
                 ChainStage::Amp,
+                false,
+                None,
                 false,
                 None,
             );
@@ -2623,6 +2741,8 @@ mod tests {
                 None,
                 panels,
                 ChainStage::Amp,
+                false,
+                None,
                 false,
                 Some((&practice, &ui)),
             );

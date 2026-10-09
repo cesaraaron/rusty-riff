@@ -1097,6 +1097,125 @@ pub fn load_all() -> Vec<Preset> {
     }
 }
 
+/// Every sound-determining parameter of the rig, appended to `v` in a stable
+/// order: chain order, amp/cab/mic/master selectors, every stage's on/off flag,
+/// the active amp's full knob bank, and every knob (including `fz_type` /
+/// `delay_type`) of each **enabled** stage. Knobs of *disabled* effects are
+/// retained by `apply` but are not audible, so they are excluded.
+///
+/// Shared by the test-only `rig_fingerprint` (as a value list) and
+/// [`rig_revision`] (as a hash), so the two can never drift apart.
+pub(crate) fn rig_values(p: &Params, v: &mut Vec<f32>) {
+    v.extend(p.chain_slots().iter().map(|&b| f32::from(b)));
+    v.push((p.amp_model() as u8) as f32);
+    v.push((p.cab_model() as u8) as f32);
+    v.push(p.mic_pos.load(Relaxed));
+    v.push(p.mic_blend.load(Relaxed));
+    v.push(p.mic_room.load(Relaxed));
+    v.push(p.master_width.load(Relaxed));
+    v.push(p.master_output.load(Relaxed));
+    for flag in [
+        &p.ng_enabled,
+        &p.cmp_enabled,
+        &p.pitch_enabled,
+        &p.wah_enabled,
+        &p.fz_enabled,
+        &p.ts_enabled,
+        &p.ds_enabled,
+        &p.ml_enabled,
+        &p.peq_enabled,
+        &p.uv_enabled,
+        &p.boost_enabled,
+        &p.geq_enabled,
+        &p.eq_enabled,
+        &p.fl_enabled,
+        &p.ch_enabled,
+        &p.ph_enabled,
+        &p.trem_enabled,
+        &p.delay_enabled,
+        &p.rev_enabled,
+    ] {
+        v.push(if flag.load(Relaxed) { 1.0 } else { 0.0 });
+    }
+
+    // The active amp's *used* knob bank (the amp is always live). Slots beyond
+    // the model's control count are padding and are not audible, so they are
+    // excluded (a preset legitimately leaves them at the prior value).
+    let model = p.amp_model();
+    for i in 0..model.controls().len() {
+        v.push(p.amp_params[model as usize][i].load(Relaxed));
+    }
+
+    // Every knob of each enabled stage, read through the same fields the
+    // `mono_stage!` / `stereo_stage!` macros use.
+    macro_rules! knobs {
+        ($enabled:ident, $($param:ident),+) => {
+            if p.$enabled.load(Relaxed) {
+                $( v.push(p.$param.load(Relaxed)); )+
+            }
+        };
+    }
+    knobs!(ng_enabled, ng_threshold, ng_release);
+    knobs!(pitch_enabled, pitch_pitch, pitch_mix, pitch_tone);
+    knobs!(
+        wah_enabled,
+        wah_freq,
+        wah_sens,
+        wah_q,
+        wah_mix,
+        wah_mode,
+        wah_position
+    );
+    knobs!(cmp_enabled, cmp_sustain, cmp_attack, cmp_level);
+    knobs!(fz_enabled, fz_fuzz, fz_tone, fz_level, fz_type, fz_guitar);
+    knobs!(ts_enabled, ts_drive, ts_tone, ts_level);
+    knobs!(ds_enabled, ds_drive, ds_tone, ds_level);
+    knobs!(ml_enabled, ml_dist, ml_low, ml_high, ml_level);
+    knobs!(peq_enabled, peq_low, peq_mid, peq_high);
+    knobs!(uv_enabled, uv_rate, uv_depth, uv_mix, uv_mode);
+    knobs!(boost_enabled, boost_gain, boost_treble, boost_bass);
+    knobs!(
+        geq_enabled,
+        geq_b1,
+        geq_b2,
+        geq_b3,
+        geq_b4,
+        geq_b5,
+        geq_b6,
+        geq_b7,
+        geq_level
+    );
+    knobs!(eq_enabled, eq_low, eq_mid, eq_high);
+    knobs!(fl_enabled, fl_rate, fl_depth, fl_feedback, fl_mix, fl_type);
+    knobs!(ch_enabled, ch_rate, ch_depth, ch_mix);
+    knobs!(ph_enabled, ph_rate, ph_depth, ph_feedback, ph_mix, ph_type);
+    knobs!(trem_enabled, trem_rate, trem_depth, trem_shape, trem_mode);
+    knobs!(
+        delay_enabled,
+        delay_time,
+        delay_feedback,
+        delay_mix,
+        delay_type
+    );
+    knobs!(rev_enabled, rev_room, rev_damp, rev_mix);
+}
+
+/// A cheap FNV-1a hash of [`rig_values`], for autosave dirty detection. Not
+/// cryptographic: a collision only means a change waits until the next edit,
+/// and any real change to a knob, model, or flag moves the hash.
+pub(crate) fn rig_revision(p: &Params) -> u64 {
+    let mut v = Vec::new();
+    rig_values(p, &mut v);
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for value in v {
+        for byte in value.to_bits().to_le_bytes() {
+            h ^= byte as u64;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    h
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1217,104 +1336,10 @@ mod tests {
         }
     }
 
-    /// A sound-determining fingerprint: chain order, amp/cab/mic/master
-    /// selectors, every stage's on/off flag, the active amp's full knob bank, and
-    /// every knob (including `fz_type`/`delay_type`) of each **enabled** stage.
-    /// Knob values of *disabled* effects are intentionally retained by `apply`,
-    /// so they are not part of the audible rig and are excluded.
+    /// The value form of [`super::rig_values`], for A/B comparisons.
     fn rig_fingerprint(p: &Params) -> Vec<f32> {
-        let mut v: Vec<f32> = p.chain_slots().iter().map(|&b| f32::from(b)).collect();
-        v.push((p.amp_model() as u8) as f32);
-        v.push((p.cab_model() as u8) as f32);
-        v.push(p.mic_pos.load(Relaxed));
-        v.push(p.mic_blend.load(Relaxed));
-        v.push(p.mic_room.load(Relaxed));
-        v.push(p.master_width.load(Relaxed));
-        v.push(p.master_output.load(Relaxed));
-        for flag in [
-            &p.ng_enabled,
-            &p.cmp_enabled,
-            &p.pitch_enabled,
-            &p.wah_enabled,
-            &p.fz_enabled,
-            &p.ts_enabled,
-            &p.ds_enabled,
-            &p.ml_enabled,
-            &p.peq_enabled,
-            &p.uv_enabled,
-            &p.boost_enabled,
-            &p.geq_enabled,
-            &p.eq_enabled,
-            &p.fl_enabled,
-            &p.ch_enabled,
-            &p.ph_enabled,
-            &p.trem_enabled,
-            &p.delay_enabled,
-            &p.rev_enabled,
-        ] {
-            v.push(if flag.load(Relaxed) { 1.0 } else { 0.0 });
-        }
-
-        // The active amp's *used* knob bank (the amp is always live). Slots beyond
-        // the model's control count are padding and are not audible, so they are
-        // excluded (a preset legitimately leaves them at the prior value).
-        let model = p.amp_model();
-        for i in 0..model.controls().len() {
-            v.push(p.amp_params[model as usize][i].load(Relaxed));
-        }
-
-        // Every knob of each enabled stage, read through the same fields the
-        // `mono_stage!` / `stereo_stage!` macros use.
-        macro_rules! knobs {
-            ($enabled:ident, $($param:ident),+) => {
-                if p.$enabled.load(Relaxed) {
-                    $( v.push(p.$param.load(Relaxed)); )+
-                }
-            };
-        }
-        knobs!(ng_enabled, ng_threshold, ng_release);
-        knobs!(pitch_enabled, pitch_pitch, pitch_mix, pitch_tone);
-        knobs!(
-            wah_enabled,
-            wah_freq,
-            wah_sens,
-            wah_q,
-            wah_mix,
-            wah_mode,
-            wah_position
-        );
-        knobs!(cmp_enabled, cmp_sustain, cmp_attack, cmp_level);
-        knobs!(fz_enabled, fz_fuzz, fz_tone, fz_level, fz_type, fz_guitar);
-        knobs!(ts_enabled, ts_drive, ts_tone, ts_level);
-        knobs!(ds_enabled, ds_drive, ds_tone, ds_level);
-        knobs!(ml_enabled, ml_dist, ml_low, ml_high, ml_level);
-        knobs!(peq_enabled, peq_low, peq_mid, peq_high);
-        knobs!(uv_enabled, uv_rate, uv_depth, uv_mix, uv_mode);
-        knobs!(boost_enabled, boost_gain, boost_treble, boost_bass);
-        knobs!(
-            geq_enabled,
-            geq_b1,
-            geq_b2,
-            geq_b3,
-            geq_b4,
-            geq_b5,
-            geq_b6,
-            geq_b7,
-            geq_level
-        );
-        knobs!(eq_enabled, eq_low, eq_mid, eq_high);
-        knobs!(fl_enabled, fl_rate, fl_depth, fl_feedback, fl_mix, fl_type);
-        knobs!(ch_enabled, ch_rate, ch_depth, ch_mix);
-        knobs!(ph_enabled, ph_rate, ph_depth, ph_feedback, ph_mix, ph_type);
-        knobs!(trem_enabled, trem_rate, trem_depth, trem_shape, trem_mode);
-        knobs!(
-            delay_enabled,
-            delay_time,
-            delay_feedback,
-            delay_mix,
-            delay_type
-        );
-        knobs!(rev_enabled, rev_room, rev_damp, rev_mix);
+        let mut v = Vec::new();
+        super::rig_values(p, &mut v);
         v
     }
 

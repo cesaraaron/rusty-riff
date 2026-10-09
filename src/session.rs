@@ -188,6 +188,43 @@ impl Session {
         self.saved_dir = dir;
     }
 
+    /// A cheap FNV-1a hash of the session's persisted, non-transport state: its
+    /// name and every track's identity, placement, gain and mute. Used for autosave
+    /// dirty detection. Playhead/seek are deliberately excluded so playback alone
+    /// never marks the session dirty.
+    pub fn revision(&self) -> u64 {
+        fn mix(h: &mut u64, x: u64) {
+            for byte in x.to_le_bytes() {
+                *h ^= byte as u64;
+                *h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        mix(&mut h, self.project_sample_rate as u64);
+        for byte in self.name.as_bytes() {
+            mix(&mut h, *byte as u64);
+        }
+        mix(&mut h, self.tracks.len() as u64);
+        for t in &self.tracks {
+            mix(&mut h, t.id);
+            mix(
+                &mut h,
+                match t.kind {
+                    TrackKind::Import => 0,
+                    TrackKind::RawTake => 1,
+                },
+            );
+            mix(&mut h, t.start_ticks);
+            mix(&mut h, t.length_ticks);
+            mix(&mut h, t.gain.to_bits() as u64);
+            mix(&mut h, t.muted as u64);
+            for byte in t.name.as_bytes() {
+                mix(&mut h, *byte as u64);
+            }
+        }
+        h
+    }
+
     /// Replace the whole track list (used when loading a project) and move the id
     /// counter past every restored id.
     pub fn restore_tracks(&mut self, tracks: Vec<Track>) {
@@ -410,6 +447,39 @@ mod tests {
             input_trim_db: None,
             calibration_ref: None,
         }
+    }
+
+    /// The revision moves when the name or a track's placement/gain/mute changes,
+    /// and not when the transport moves: it drives autosave dirty detection.
+    #[test]
+    fn revision_tracks_content_but_not_transport() {
+        let mut s = Session::new(48_000);
+        let base = s.revision();
+        assert_eq!(s.revision(), base, "stable across calls");
+        s.set_name("Take 1".into());
+        assert_ne!(s.revision(), base, "a rename dirties the session");
+        let after_name = s.revision();
+        s.push(
+            1,
+            "t".into(),
+            TrackKind::RawTake,
+            None,
+            0,
+            100,
+            TrackLifecycle::Loading,
+        );
+        assert_ne!(s.revision(), after_name, "a new track dirties the session");
+        let after_track = s.revision();
+        s.track_mut(1).unwrap().gain = 0.5;
+        assert_ne!(
+            s.revision(),
+            after_track,
+            "a gain change dirties the session"
+        );
+        // Transport position is not persisted as session content.
+        let before_seek = s.revision();
+        s.set_seek_seconds(123.0);
+        assert_eq!(s.revision(), before_seek, "seek must not dirty the session");
     }
 
     #[test]

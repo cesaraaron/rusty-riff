@@ -150,6 +150,15 @@ as, `Enter` load, `D` delete, and `/` to search. A new session starts on the
 factory rig. Abandoned dry takes also appear here as "recoverable takes" you can
 restore into the current session.
 
+The session's name is shown at the bottom-left, with a `*` while there are unsaved
+changes. Once a session has been named, it **autosaves** — a couple of seconds
+after you stop changing things (a knob, a pedal, a cab, a track, the metronome) the
+manifest is rewritten, so there is nothing to remember to save. A session that has
+never been saved has no name to save to, so it stays `Untitled*`; quitting with one
+of those opens a guard (`S` save · `D` discard & quit · `Esc` cancel) rather than
+dropping the work. Recoverable takes are therefore only offered after a crash, not
+after a normal quit.
+
 ## Practice & recording
 
 - **Metronome** — `M` opens it. `←`/`→` set the tempo, `Space` starts/stops. The

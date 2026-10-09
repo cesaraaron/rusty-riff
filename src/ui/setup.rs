@@ -75,6 +75,8 @@ pub fn run(
                 crate::dsp::ChainStage::Amp,
                 false,
                 None,
+                false,
+                None,
             );
             match step_ref {
                 Step::InputDevice { cursor } => {
