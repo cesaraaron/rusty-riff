@@ -896,10 +896,27 @@ impl PracticeUi {
         if self.recording_id == Some(id) {
             self.abort_capture(capture);
         }
+        // A deleted take's recovery file must go too, or it is offered back as a
+        // "recoverable take" on the next launch even though it was discarded.
+        let recovery = self.track_recovery_file(id);
         let _ = engine.remove_track(id);
+        if let Some(path) = recovery {
+            project::discard_recovery_file(&path);
+        }
         self.session.remove(id);
         self.reselect_after_removal();
         self.sanitize_zoom();
+    }
+
+    /// The recovery WAV a track points at, if it is one, so removing the track can
+    /// discard it. Imported assets and takes already saved into a project live
+    /// elsewhere, so those return `None` and their files are never touched.
+    fn track_recovery_file(&self, id: TrackId) -> Option<PathBuf> {
+        self.session
+            .track(id)
+            .and_then(|t| t.asset.as_ref())
+            .map(|a| a.path.clone())
+            .filter(|p| project::is_recovery_asset(p))
     }
 
     fn selected_track(&self) -> Option<TrackId> {
@@ -3723,6 +3740,68 @@ mod tests {
         assert!(
             normalized > absolute,
             "normalized ({normalized}) should fill more than absolute ({absolute})"
+        );
+    }
+
+    /// Deleting a take must identify its recovery WAV so it can be discarded, but
+    /// never an import's original file or a take already saved into a project.
+    #[test]
+    fn deleted_takes_identify_their_recovery_file() {
+        let mut ui = PracticeUi::new();
+        let recovery = ui
+            .session
+            .recovery_dir()
+            .expect("recovery dir")
+            .join("take-1.wav");
+        ui.session.push(
+            1,
+            "take".into(),
+            TrackKind::RawTake,
+            Some(AssetRef {
+                path: recovery.clone(),
+                source_sample_rate: 48_000,
+                source_channels: 1,
+            }),
+            0,
+            48_000,
+            TrackLifecycle::Ready,
+        );
+        ui.session.push(
+            2,
+            "backing".into(),
+            TrackKind::Import,
+            Some(AssetRef {
+                path: PathBuf::from("/music/song.wav"),
+                source_sample_rate: 48_000,
+                source_channels: 2,
+            }),
+            0,
+            48_000,
+            TrackLifecycle::Ready,
+        );
+        ui.session.push(
+            3,
+            "saved".into(),
+            TrackKind::RawTake,
+            Some(AssetRef {
+                path: PathBuf::from("/projects/My_Set/audio/track-3.wav"),
+                source_sample_rate: 48_000,
+                source_channels: 1,
+            }),
+            0,
+            48_000,
+            TrackLifecycle::Ready,
+        );
+        assert_eq!(ui.track_recovery_file(1), Some(recovery));
+        assert_eq!(
+            ui.track_recovery_file(2),
+            None,
+            "an import's file is not a recovery file"
+        );
+        assert_eq!(
+            ui.track_recovery_file(3),
+            None,
+            "a saved take lives in its project, not recovery"
         );
     }
 
