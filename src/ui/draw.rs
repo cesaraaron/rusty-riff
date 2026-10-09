@@ -37,7 +37,7 @@ pub(super) fn draw(
     chain_cursor: ChainStage,
     master_selected: bool,
     session: Option<(&str, bool)>,
-    quit_confirm: bool,
+    unsaved: Option<&UnsavedPrompt>,
     timeline: Option<(&Practice, &PracticeUi)>,
 ) {
     let area = f.area();
@@ -123,8 +123,8 @@ pub(super) fn draw(
         (params.midi_clock_bpm.load(Relaxed) > 1.0).then(|| params.midi_clock_bpm.load(Relaxed)),
         session,
     );
-    if quit_confirm {
-        render_quit_confirm(f);
+    if let Some(prompt) = unsaved {
+        render_unsaved_prompt(f, prompt);
     }
 }
 
@@ -1357,12 +1357,20 @@ fn render_help(
     }
 }
 
-/// The quit guard: shown when `q` is pressed on an unnamed session with unsaved
-/// changes. Blocks the quit until the user saves, discards, or cancels.
-pub(super) fn render_quit_confirm(f: &mut Frame) {
+/// The unsaved-changes prompt's display form, built by the caller from its state.
+pub(super) enum UnsavedPrompt {
+    /// Choose what to do with the pending action; `label` names it ("Quit", …).
+    Choice(String),
+    /// Type a name to save the session under before continuing.
+    Naming(String),
+}
+
+/// The unsaved-changes prompt: shown when quitting or changing session while the
+/// session has changes that were not saved. Blocks until the user decides.
+pub(super) fn render_unsaved_prompt(f: &mut Frame, prompt: &UnsavedPrompt) {
     let area = f.area();
-    let width = 54.min(area.width);
-    let height = 5.min(area.height);
+    let width = 60.min(area.width);
+    let height = 6.min(area.height);
     let rect = Rect {
         x: area.x + (area.width.saturating_sub(width)) / 2,
         y: area.y + (area.height.saturating_sub(height)) / 2,
@@ -1370,30 +1378,59 @@ pub(super) fn render_quit_confirm(f: &mut Frame) {
         height,
     };
     f.render_widget(Clear, rect);
+
+    let (title, lines) = match prompt {
+        UnsavedPrompt::Choice(action) => (
+            " U N S A V E D   C H A N G E S ",
+            vec![
+                Line::from(Span::styled(
+                    format!("{action} with unsaved changes?"),
+                    Style::default().fg(CHROME),
+                )),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("S", Style::default().fg(AMBER)),
+                    Span::styled(" save  ", Style::default().fg(DIM)),
+                    Span::styled("D", Style::default().fg(AMBER)),
+                    Span::styled(" discard  ", Style::default().fg(DIM)),
+                    Span::styled("Esc", Style::default().fg(AMBER)),
+                    Span::styled(" cancel", Style::default().fg(DIM)),
+                ]),
+            ],
+        ),
+        UnsavedPrompt::Naming(text) => (
+            " S A V E   S E S S I O N ",
+            vec![
+                Line::from(Span::styled(
+                    "Name this session:",
+                    Style::default().fg(CHROME),
+                )),
+                Line::from(Span::styled(
+                    format!(" {text}_"),
+                    Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
+                )),
+                Line::from(vec![
+                    Span::styled("Enter", Style::default().fg(AMBER)),
+                    Span::styled(" save  ", Style::default().fg(DIM)),
+                    Span::styled("Esc", Style::default().fg(AMBER)),
+                    Span::styled(" back", Style::default().fg(DIM)),
+                ]),
+            ],
+        ),
+    };
+
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Double)
         .border_style(Style::default().fg(WARN))
         .title(Span::styled(
-            " U N S A V E D   S E S S I O N ",
+            title,
             Style::default().fg(WARN).add_modifier(Modifier::BOLD),
         ))
         .style(panel_style());
     let inner = block.inner(rect);
     f.render_widget(block, rect);
-    f.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled("S", Style::default().fg(AMBER)),
-            Span::styled(" save  ", Style::default().fg(DIM)),
-            Span::styled("D", Style::default().fg(AMBER)),
-            Span::styled(" discard & quit  ", Style::default().fg(DIM)),
-            Span::styled("Esc", Style::default().fg(AMBER)),
-            Span::styled(" cancel", Style::default().fg(DIM)),
-        ]))
-        .alignment(Alignment::Center)
-        .style(panel_style()),
-        inner,
-    );
+    f.render_widget(Paragraph::new(lines).alignment(Alignment::Center), inner);
 }
 
 /// Full keybinding cheat-sheet, opened with `K`. Sections mirror the footer
@@ -1975,15 +2012,23 @@ mod tests {
         );
     }
 
-    /// The quit guard names its three choices.
+    /// The unsaved-changes prompt names the pending action and its choices; the
+    /// naming variant shows the text field.
     #[test]
-    fn quit_guard_modal_lists_its_options() {
+    fn unsaved_prompt_lists_the_options() {
         let mut term = Terminal::new(TestBackend::new(80, 24)).expect("test backend");
-        term.draw(render_quit_confirm).expect("draw");
+        term.draw(|f| render_unsaved_prompt(f, &UnsavedPrompt::Choice("Quit".into())))
+            .expect("draw");
         let text = screen_text(&term);
         assert!(text.contains("U N S A V E D"), "missing title: {text:?}");
+        assert!(text.contains("Quit"), "missing action: {text:?}");
         assert!(text.contains("discard"), "missing discard option: {text:?}");
         assert!(text.contains("cancel"), "missing cancel option: {text:?}");
+
+        term.draw(|f| render_unsaved_prompt(f, &UnsavedPrompt::Naming("My Set".into())))
+            .expect("draw");
+        let text = screen_text(&term);
+        assert!(text.contains("My Set_"), "missing name field: {text:?}");
     }
     /// Render one knob cell into a scratch area and return its glyphs.
     fn knob_text(focused: bool) -> String {
@@ -2036,7 +2081,7 @@ mod tests {
                 cursor,
                 master_selected,
                 None,
-                false,
+                None,
                 None,
             );
         })
@@ -2176,7 +2221,7 @@ mod tests {
                 ChainStage::Amp,
                 false,
                 None,
-                false,
+                None,
                 None,
             );
             overlay(f);
@@ -2280,7 +2325,7 @@ mod tests {
                 ChainStage::Amp,
                 true,
                 None,
-                false,
+                None,
                 None,
             );
         })
@@ -2369,7 +2414,7 @@ mod tests {
                     ChainStage::Amp,
                     false,
                     None,
-                    false,
+                    None,
                     None,
                 );
             })
@@ -2448,7 +2493,7 @@ mod tests {
                 ChainStage::Amp,
                 false,
                 None,
-                false,
+                None,
                 None,
             );
         })
@@ -2515,7 +2560,7 @@ mod tests {
                 ChainStage::Amp,
                 false,
                 None,
-                false,
+                None,
                 None,
             );
             render_add_pedal_modal(f, &available, 0);
@@ -2743,7 +2788,7 @@ mod tests {
                 ChainStage::Amp,
                 false,
                 None,
-                false,
+                None,
                 Some((&practice, &ui)),
             );
         })

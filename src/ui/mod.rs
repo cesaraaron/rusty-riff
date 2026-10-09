@@ -177,14 +177,42 @@ fn save_current_session(
     }
 }
 
-/// Autosave debounce: after the last observed change, wait this long with no
-/// further change before writing. Long enough that dragging a knob is one save,
-/// short enough that a crash loses almost nothing.
-const AUTOSAVE_DEBOUNCE: Duration = Duration::from_secs(2);
+/// What the user asked to do when the session turned out to have unsaved changes.
+/// The action is held until the user decides (save, discard, or cancel).
+#[derive(Clone)]
+enum UnsavedAction {
+    Quit,
+    New,
+    Load(PathBuf),
+}
 
-/// Hash of everything an autosave persists -- the rig, the session's name and
-/// tracks, the loop, and the metronome. Compared each UI tick against the
-/// revision captured at the last save to decide whether the session is dirty.
+impl UnsavedAction {
+    /// A short label for the prompt ("Quit", "Start a new session", "Load Foo").
+    fn label(&self) -> String {
+        match self {
+            UnsavedAction::Quit => "Quit".to_owned(),
+            UnsavedAction::New => "Start a new session".to_owned(),
+            UnsavedAction::Load(dir) => {
+                let name = dir
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("session");
+                format!("Load {name}")
+            }
+        }
+    }
+}
+
+/// The unsaved-changes prompt: choose what to do, or (for a session that has never
+/// been saved) type a name to save it under.
+enum UnsavedPrompt {
+    Choice(UnsavedAction),
+    Naming { action: UnsavedAction, text: String },
+}
+
+/// Hash of everything a save persists -- the rig, the session's name and tracks,
+/// the loop, and the metronome. Compared each UI tick against the revision captured
+/// at the last save/load/new to decide whether the session is dirty.
 /// Playhead/seek are excluded so playback alone never dirties it.
 fn session_revision(
     params: &Params,
@@ -487,9 +515,12 @@ pub fn run(
         // so the next tick re-baselines. `quit_confirm` blocks `q` on an unnamed,
         // dirty session until the user decides.
         let mut saved_revision = session_revision(&params, &practice_ui, &practice, &metronome);
-        let mut last_edit: Option<std::time::Instant> = None;
         let mut sync_revision = false;
-        let mut quit_confirm = false;
+        // Set when the user tries to quit or change session with unsaved changes;
+        // the prompt blocks it until they save, discard, or cancel.
+        let mut unsaved_prompt: Option<UnsavedPrompt> = None;
+        // An action the prompt committed, run at the top of the next loop pass.
+        let mut pending_action: Option<UnsavedAction> = None;
         loop {
             tick = tick.wrapping_add(1);
             let blink = (tick / 15).is_multiple_of(2);
@@ -497,6 +528,58 @@ pub fn run(
 
             // Install finished background decodes / capture results before drawing.
             practice_ui.poll(&mut engine, &practice, &capture, &calibration);
+
+            // Run an action the unsaved-changes prompt committed once the user
+            // decided. `Quit` leaves the loop; `New`/`Load` take effect here so the
+            // logic lives in one place rather than twice.
+            if let Some(action) = pending_action.take() {
+                match action {
+                    UnsavedAction::Quit => {
+                        if practice_ui.is_recording() {
+                            practice_ui.abort_capture(&capture);
+                        }
+                        break;
+                    }
+                    UnsavedAction::New => {
+                        practice_ui.new_session(&mut engine, &practice, &metronome, &capture);
+                        apply_factory_defaults(&params, &mut board, &mut focus, &panels);
+                        session_browser.refresh();
+                        sync_revision = true;
+                    }
+                    UnsavedAction::Load(dir) => {
+                        match practice_ui.load_session(
+                            &dir,
+                            &mut engine,
+                            &params,
+                            &practice,
+                            &metronome,
+                            &capture,
+                        ) {
+                            Ok(external) => {
+                                sync_revision = true;
+                                if let Some(ext) = external {
+                                    #[cfg(feature = "clap")]
+                                    if let Some(spec) = ext.clap {
+                                        browser.restore(spec, &mut engine);
+                                    }
+                                    #[cfg(all(feature = "au", target_os = "macos"))]
+                                    if let Some(spec) = ext.au {
+                                        amp_browser.restore(spec, &mut engine, &params);
+                                    }
+                                    #[cfg(not(any(
+                                        feature = "clap",
+                                        all(feature = "au", target_os = "macos")
+                                    )))]
+                                    let _ = ext;
+                                }
+                            }
+                            Err(e) => {
+                                practice_ui.set_message(format!("Load failed: {e:#}"));
+                            }
+                        }
+                    }
+                }
+            }
 
             // Poll a running export; reinsert the handle while it is still going.
             if let Some(handle) = export_handle.take() {
@@ -527,54 +610,16 @@ pub fn run(
                 save_msg = None;
             }
 
-            // ── Autosave ─────────────────────────────────────────────────────
-            // A cheap revision hash says whether the rig or session changed. A
-            // named session writes itself a couple of seconds after the edits
-            // settle; an unnamed one just stays dirty (the quit guard covers it).
+            // ── Unsaved-change tracking ───────────────────────────────────────
+            // A cheap revision hash says whether the rig or session changed; it is
+            // compared against the revision captured at the last save/load/new to
+            // decide whether to prompt before quitting or changing session.
             let revision = session_revision(&params, &practice_ui, &practice, &metronome);
             if sync_revision {
                 saved_revision = revision;
-                last_edit = None;
                 sync_revision = false;
-            } else if revision != saved_revision {
-                last_edit = Some(std::time::Instant::now());
             }
-            let session_dirty = revision != saved_revision || last_edit.is_some();
-            if let Some(since) = last_edit
-                && since.elapsed() >= AUTOSAVE_DEBOUNCE
-                && let Some(dir) = practice_ui.session.saved_dir().cloned()
-            {
-                #[allow(unused_mut)]
-                let mut clap_spec: Option<crate::project::ClapSpec> = None;
-                #[allow(unused_mut)]
-                let mut au_spec: Option<crate::project::AuSpec> = None;
-                #[cfg(feature = "clap")]
-                if browser.loaded_name().is_some() {
-                    clap_spec = browser.export_spec();
-                }
-                #[cfg(all(feature = "au", target_os = "macos"))]
-                if params
-                    .amp_external_loaded
-                    .load(std::sync::atomic::Ordering::Relaxed)
-                {
-                    au_spec = amp_browser.export_spec(&params);
-                }
-                if save_current_session(
-                    &mut practice_ui,
-                    &dir,
-                    &params,
-                    &practice,
-                    &metronome,
-                    &ir_browser,
-                    clap_spec,
-                    au_spec,
-                )
-                .is_some_and(|m| !m.starts_with("Save failed"))
-                {
-                    saved_revision = revision;
-                    last_edit = None;
-                }
-            }
+            let session_dirty = revision != saved_revision;
 
             // The footer's left cell: the session name, with `*` while unsaved.
             let session_label = format!(
@@ -635,6 +680,12 @@ pub fn run(
             #[cfg(not(all(feature = "au", target_os = "macos")))]
             let ext_amp_name: Option<&str> = None;
 
+            let unsaved_view: Option<draw::UnsavedPrompt> =
+                unsaved_prompt.as_ref().map(|p| match p {
+                    UnsavedPrompt::Choice(action) => draw::UnsavedPrompt::Choice(action.label()),
+                    UnsavedPrompt::Naming { text, .. } => draw::UnsavedPrompt::Naming(text.clone()),
+                });
+
             terminal.draw(|f| {
                 draw(
                     f,
@@ -653,7 +704,7 @@ pub fn run(
                     chain_cursor,
                     header_on_master,
                     Some((session_label.as_str(), session_dirty)),
-                    quit_confirm,
+                    unsaved_view.as_ref(),
                     Some((&practice, &practice_ui)),
                 );
                 if add_open {
@@ -773,24 +824,118 @@ pub fn run(
                     continue;
                 }
 
-                // Quit guard: an unnamed session with unsaved changes blocks the
-                // quit until the user saves, discards, or cancels.
-                if quit_confirm {
-                    match key.code {
-                        KeyCode::Esc => quit_confirm = false,
-                        KeyCode::Char('d') | KeyCode::Char('D') => {
-                            if practice_ui.is_recording() {
-                                practice_ui.abort_capture(&capture);
+                // Unsaved-changes prompt: block the quit or session change until
+                // the user chooses save, discard, or cancel.
+                if let Some(prompt) = unsaved_prompt.take() {
+                    // Only needed if the user chooses to save.
+                    #[allow(unused_mut)]
+                    let mut clap_spec: Option<crate::project::ClapSpec> = None;
+                    #[allow(unused_mut)]
+                    let mut au_spec: Option<crate::project::AuSpec> = None;
+                    #[cfg(feature = "clap")]
+                    if browser.loaded_name().is_some() {
+                        clap_spec = browser.export_spec();
+                    }
+                    #[cfg(all(feature = "au", target_os = "macos"))]
+                    if params
+                        .amp_external_loaded
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                    {
+                        au_spec = amp_browser.export_spec(&params);
+                    }
+
+                    match prompt {
+                        UnsavedPrompt::Choice(action) => match key.code {
+                            KeyCode::Esc => {}
+                            KeyCode::Char('d') | KeyCode::Char('D') => {
+                                // Discard the session's unsaved takes too, so the
+                                // next launch does not offer them back.
+                                if let Some(dir) = practice_ui.session.recovery_dir() {
+                                    let _ = std::fs::remove_dir_all(&dir);
+                                }
+                                pending_action = Some(action);
                             }
-                            break;
-                        }
-                        KeyCode::Char('s') | KeyCode::Char('S') => {
-                            quit_confirm = false;
-                            session_browser.open();
-                            let name = practice_ui.session.name().to_owned();
-                            session_browser.prompt_name(&name);
-                        }
-                        _ => {}
+                            KeyCode::Char('s') | KeyCode::Char('S') => {
+                                let saved = practice_ui.session.saved_dir().cloned();
+                                match saved {
+                                    Some(dir) => {
+                                        let msg = save_current_session(
+                                            &mut practice_ui,
+                                            &dir,
+                                            &params,
+                                            &practice,
+                                            &metronome,
+                                            &ir_browser,
+                                            clap_spec,
+                                            au_spec,
+                                        );
+                                        if msg
+                                            .as_deref()
+                                            .is_some_and(|m| !m.starts_with("Save failed"))
+                                        {
+                                            sync_revision = true;
+                                            pending_action = Some(action);
+                                        } else {
+                                            save_msg = msg.map(|m| (m, std::time::Instant::now()));
+                                            unsaved_prompt = Some(UnsavedPrompt::Choice(action));
+                                        }
+                                    }
+                                    None => {
+                                        let text = practice_ui.session.name().to_owned();
+                                        unsaved_prompt =
+                                            Some(UnsavedPrompt::Naming { action, text });
+                                    }
+                                }
+                            }
+                            _ => unsaved_prompt = Some(UnsavedPrompt::Choice(action)),
+                        },
+                        UnsavedPrompt::Naming { action, mut text } => match key.code {
+                            KeyCode::Esc => {
+                                unsaved_prompt = Some(UnsavedPrompt::Choice(action));
+                            }
+                            KeyCode::Backspace => {
+                                text.pop();
+                                unsaved_prompt = Some(UnsavedPrompt::Naming { action, text });
+                            }
+                            KeyCode::Char(c) => {
+                                text.push(c);
+                                unsaved_prompt = Some(UnsavedPrompt::Naming { action, text });
+                            }
+                            KeyCode::Enter => {
+                                let name = text.trim().to_owned();
+                                if name.is_empty() {
+                                    unsaved_prompt = Some(UnsavedPrompt::Naming { action, text });
+                                } else {
+                                    let dir = crate::project::default_session_dir(&name)
+                                        .unwrap_or_else(|| {
+                                            PathBuf::from("./sessions").join(name.clone())
+                                        });
+                                    practice_ui.session.set_name(name);
+                                    let msg = save_current_session(
+                                        &mut practice_ui,
+                                        &dir,
+                                        &params,
+                                        &practice,
+                                        &metronome,
+                                        &ir_browser,
+                                        clap_spec,
+                                        au_spec,
+                                    );
+                                    if msg
+                                        .as_deref()
+                                        .is_some_and(|m| !m.starts_with("Save failed"))
+                                    {
+                                        sync_revision = true;
+                                        pending_action = Some(action);
+                                    } else {
+                                        save_msg = msg.map(|m| (m, std::time::Instant::now()));
+                                        unsaved_prompt =
+                                            Some(UnsavedPrompt::Naming { action, text });
+                                    }
+                                }
+                            }
+                            _ => {}
+                        },
                     }
                     continue;
                 }
@@ -930,11 +1075,12 @@ pub fn run(
                     match action {
                         SessionAction::None => {}
                         SessionAction::New => {
-                            practice_ui.new_session(&mut engine, &practice, &metronome, &capture);
-                            apply_factory_defaults(&params, &mut board, &mut focus, &panels);
-                            session_browser.refresh();
                             session_browser.open = false;
-                            sync_revision = true;
+                            if session_dirty {
+                                unsaved_prompt = Some(UnsavedPrompt::Choice(UnsavedAction::New));
+                            } else {
+                                pending_action = Some(UnsavedAction::New);
+                            }
                         }
                         SessionAction::Save => {
                             if let Some(dir) = practice_ui.session.saved_dir().cloned() {
@@ -980,37 +1126,13 @@ pub fn run(
                             session_browser.view_list();
                         }
                         SessionAction::Load(dir) => {
-                            match practice_ui.load_session(
-                                &dir,
-                                &mut engine,
-                                &params,
-                                &practice,
-                                &metronome,
-                                &capture,
-                            ) {
-                                Ok(external) => {
-                                    sync_revision = true;
-                                    if let Some(ext) = external {
-                                        #[cfg(feature = "clap")]
-                                        if let Some(spec) = ext.clap {
-                                            browser.restore(spec, &mut engine);
-                                        }
-                                        #[cfg(all(feature = "au", target_os = "macos"))]
-                                        if let Some(spec) = ext.au {
-                                            amp_browser.restore(spec, &mut engine, &params);
-                                        }
-                                        #[cfg(not(any(
-                                            feature = "clap",
-                                            all(feature = "au", target_os = "macos")
-                                        )))]
-                                        let _ = ext;
-                                    }
-                                }
-                                Err(e) => {
-                                    practice_ui.set_message(format!("Load failed: {e:#}"));
-                                }
-                            }
                             session_browser.open = false;
+                            if session_dirty {
+                                unsaved_prompt =
+                                    Some(UnsavedPrompt::Choice(UnsavedAction::Load(dir)));
+                            } else {
+                                pending_action = Some(UnsavedAction::Load(dir));
+                            }
                         }
                         SessionAction::Delete(dir) => {
                             match std::fs::remove_dir_all(&dir) {
@@ -1577,10 +1699,9 @@ pub fn run(
                                 press_number(4, focus, &board, &panels, &params.chain_slots());
                         }
                         KeyCode::Char('q') => {
-                            // Guard an unnamed session with unsaved changes: alert
-                            // instead of dropping the work.
-                            if practice_ui.session.saved_dir().is_none() && session_dirty {
-                                quit_confirm = true;
+                            // Guard unsaved changes: prompt instead of dropping work.
+                            if session_dirty {
+                                unsaved_prompt = Some(UnsavedPrompt::Choice(UnsavedAction::Quit));
                             } else {
                                 if practice_ui.is_recording() {
                                     practice_ui.abort_capture(&capture);
@@ -1592,8 +1713,8 @@ pub fn run(
                             help_open = true;
                         }
                         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            if practice_ui.session.saved_dir().is_none() && session_dirty {
-                                quit_confirm = true;
+                            if session_dirty {
+                                unsaved_prompt = Some(UnsavedPrompt::Choice(UnsavedAction::Quit));
                             } else {
                                 if practice_ui.is_recording() {
                                     practice_ui.abort_capture(&capture);
@@ -1879,4 +2000,20 @@ pub fn run(
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The prompt names the pending action; the load label uses the folder name.
+    #[test]
+    fn unsaved_action_labels_read_well() {
+        assert_eq!(UnsavedAction::Quit.label(), "Quit");
+        assert_eq!(UnsavedAction::New.label(), "Start a new session");
+        assert_eq!(
+            UnsavedAction::Load(PathBuf::from("/x/sessions/My_Set")).label(),
+            "Load My_Set"
+        );
+    }
 }

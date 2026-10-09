@@ -75,7 +75,7 @@ pub fn run(
                 crate::dsp::ChainStage::Amp,
                 false,
                 None,
-                false,
+                None,
                 None,
             );
             match step_ref {

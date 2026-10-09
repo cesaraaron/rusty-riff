@@ -151,13 +151,11 @@ factory rig. Abandoned dry takes also appear here as "recoverable takes" you can
 restore into the current session.
 
 The session's name is shown at the bottom-left, with a `*` while there are unsaved
-changes. Once a session has been named, it **autosaves** — a couple of seconds
-after you stop changing things (a knob, a pedal, a cab, a track, the metronome) the
-manifest is rewritten, so there is nothing to remember to save. A session that has
-never been saved has no name to save to, so it stays `Untitled*`; quitting with one
-of those opens a guard (`S` save · `D` discard & quit · `Esc` cancel) rather than
-dropping the work. Recoverable takes are therefore only offered after a crash, not
-after a normal quit.
+changes. Quitting (`Q` / Ctrl-C), starting a new session (`N`), or loading another
+(`Enter`) while there are unsaved changes asks first — `S` save · `D` discard ·
+`Esc` cancel — rather than silently dropping the work. Saving a session that has
+never been named asks for a name. Discard also drops that session's unsaved takes,
+so abandoned recordings are only offered back after a crash.
 
 ## Practice & recording
 
