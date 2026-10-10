@@ -2380,3 +2380,21 @@ run-to-run noise (bench 5.13–5.66%). Baseline **re-blessed**.
 audio-thread-safe stereo-linked GR readout, and oversampling the limiter's own corner.
 The ceiling clamp is a sub-percent safety on the first sample of a transient, not a
 steady-state clipper.
+
+### E1 + E2 — the harshest pedal nonlinearities were under-oversampled
+
+**E1.** The fuzz ran its two cascaded near-square clippers (`fuzz_clip`, up to
+`1 + 120·fuzz` gain) at **4×**, while the strictly less aggressive ML-2 already ran at
+8×. Square-ish clipping is the richest harmonic generator in the pedal section, so it
+was the one stage that most needed the wider margin. Now `Oversampler8`.
+
+**E2.** The tape/Echorec delay applied `tape_sat` (`tanh`) at base rate **on the
+feedback path**, so alias products recirculated through the loop rather than passing
+once. Wrapped in `Oversampler4` per channel (`Delay::tape_sat_os`); 4× rather than 8×
+because `TAPE_SAT = 0.8` keeps the `tanh` gentle, and the loop's group delay is
+negligible against a delay time of up to 500 ms.
+
+**Measured.** LUFS-I unchanged to within 0.03 dB; the re-bless moved only the
+aliasing-sensitive LTAS bands (0.1–0.7 dB, bidirectional) — the signature of removing
+fold-back rather than a level or voicing change. Bench: the delay-heavy preset went
+5.66% → 6.64% of the realtime budget; other presets unchanged. Baseline re-blessed.

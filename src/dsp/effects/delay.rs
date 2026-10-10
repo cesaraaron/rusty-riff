@@ -1,6 +1,7 @@
 use std::f32::consts::TAU;
 
 use crate::dsp::biquad::Biquad;
+use crate::dsp::oversample::Oversampler4;
 
 use super::SmoothedGain;
 /// Stereo delay with two voicings selected by `kind`.
@@ -32,6 +33,11 @@ pub struct Delay {
     ec_lp_r: Biquad,
     ec_hp_l: Biquad,
     ec_hp_r: Biquad,
+    // 4× oversamplers around the tape/echorec `tanh`, one per channel. The
+    // saturation sits on the *feedback* path, so any aliasing would recirculate and
+    // could self-sustain; oversampling keeps the repeats clean.
+    sat_os_l: Oversampler4,
+    sat_os_r: Oversampler4,
 }
 
 /// Tape speed modulation: a slow wow plus a faster flutter, as fractions of the
@@ -76,9 +82,19 @@ impl Delay {
             ec_lp_r: Biquad::lowpass(sr, ECHOREC_LP_HZ, 0.707),
             ec_hp_l: Biquad::highpass(sr, ECHOREC_HP_HZ, 0.707),
             ec_hp_r: Biquad::highpass(sr, ECHOREC_HP_HZ, 0.707),
+            sat_os_l: Oversampler4::new(sr),
+            sat_os_r: Oversampler4::new(sr),
             // `DEFAULT_DELAY_MIX`.
             mix: SmoothedGain::new(0.30, sr),
         }
+    }
+
+    /// Oversampled tape saturation on the feedback path, one instance per channel.
+    #[inline]
+    fn tape_sat_os(&mut self, l: f32, r: f32) -> (f32, f32) {
+        let sl = self.sat_os_l.process(l, tape_sat);
+        let sr = self.sat_os_r.process(r, tape_sat);
+        (sl, sr)
     }
 
     /// `time`, `feedback`, `mix` 0–1; `kind` 0 = digital ping-pong, 0.5 = Echorec
@@ -122,8 +138,9 @@ impl Delay {
                 wr += w * read_tap(&self.buf_r, self.write, len, p * frac);
             }
             let norm = 1.0 / ECHOREC_HEADS.iter().map(|&(_, w)| w).sum::<f32>();
-            let wl = tape_sat(self.ec_hp_l.process(self.ec_lp_l.process(wl * norm)));
-            let wr = tape_sat(self.ec_hp_r.process(self.ec_lp_r.process(wr * norm)));
+            let fl = self.ec_hp_l.process(self.ec_lp_l.process(wl * norm));
+            let fr = self.ec_hp_r.process(self.ec_lp_r.process(wr * norm));
+            let (wl, wr) = self.tape_sat_os(fl, fr);
             self.buf_l[self.write] = l + wl * feedback * ECHOREC_FB;
             self.buf_r[self.write] = r + wr * feedback * ECHOREC_FB;
             self.write = (self.write + 1) % len;
@@ -141,8 +158,9 @@ impl Delay {
 
         if tape {
             let fb = feedback * 0.7;
-            let dl = tape_sat(self.damp_l.process(delayed_l));
-            let dr = tape_sat(self.damp_r.process(delayed_r));
+            let dl = self.damp_l.process(delayed_l);
+            let dr = self.damp_r.process(delayed_r);
+            let (dl, dr) = self.tape_sat_os(dl, dr);
             self.buf_l[self.write] = l + dl * fb;
             self.buf_r[self.write] = r + dr * fb;
         } else {
@@ -172,8 +190,9 @@ fn read_tap(buf: &[f32], write: usize, len: usize, delay: f32) -> f32 {
     buf[r0] * (1.0 - frac) + buf[r1] * frac
 }
 
-/// Soft tape saturation on the feedback path — thickens the repeats and tames
-/// the runaway without an audible fuzz.
+/// Soft tape saturation, applied under 4× oversampling on the feedback path
+/// (see `Delay::tape_sat_os`) — thickens the repeats and tames the runaway without
+/// an audible fuzz, and without alias products recirculating through the loop.
 #[inline]
 fn tape_sat(x: f32) -> f32 {
     (x * TAPE_SAT).tanh() / TAPE_SAT

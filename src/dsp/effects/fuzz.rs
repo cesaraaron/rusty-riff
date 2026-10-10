@@ -1,11 +1,11 @@
 use super::{OnePoleLp, param_changed};
 use crate::dsp::biquad::Biquad;
-use crate::dsp::oversample::Oversampler4;
+use crate::dsp::oversample::Oversampler8;
 
 /// Multi-voice fuzz pedal (Big Muff / Fuzz Face / Tone Bender MkII).
 ///
 /// Signal path:
-///   DC block → input HP (~70 Hz) → [4× OS: two cascaded asymmetric soft-clip
+///   DC block → input HP (~70 Hz) → [8× OS: two cascaded asymmetric soft-clip
 ///   stages] → DC block → (Muff mid scoop) → variable tone LP → level
 ///
 /// Fuzz character & authenticity:
@@ -24,13 +24,13 @@ use crate::dsp::oversample::Oversampler4;
 ///     thicker, more compressed midrange bite (no scoop).
 ///   • The tone control is a simple dark→bright low-pass sweep, like the passive
 ///     tone stage feeding the output buffer.
-///   • 4× oversampling is essential here: square-ish clipping is extremely rich
+///   • 8× oversampling is essential here: square-ish clipping is extremely rich
 ///     in harmonics, so the alias products must be pushed well above the band.
 pub struct Fuzz {
     sr: f32,
     dc_block: Biquad,
     input_hp: Biquad,
-    os: Oversampler4,
+    os: Oversampler8,
     // Removes the DC the asymmetric clipper injects before it reaches the amp.
     post_dc: Biquad,
     // Fixed mid scoop — the Big Muff "smiley" voicing.
@@ -54,7 +54,7 @@ impl Fuzz {
             // Tighten the very low end before the huge gain so the fuzz doesn't
             // turn to mud, but keep the guitar fundamental intact.
             input_hp: Biquad::highpass(sr, 70.0, 0.707),
-            os: Oversampler4::new(sr),
+            os: Oversampler8::new(sr),
             post_dc: Biquad::highpass(sr, 45.0, 0.707),
             // −9 dB dip at 700 Hz: the scooped Muff midrange.
             scoop: Biquad::peak_eq(sr, 700.0, 0.7, -9.0),
