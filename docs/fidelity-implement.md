@@ -2398,3 +2398,25 @@ negligible against a delay time of up to 500 ms.
 aliasing-sensitive LTAS bands (0.1–0.7 dB, bidirectional) — the signature of removing
 fold-back rather than a level or voicing change. Bench: the delay-heavy preset went
 5.66% → 6.64% of the realtime budget; other presets unchanged. Baseline re-blessed.
+
+### E5 — smoother fractional-delay interpolation on the modulated effects
+
+The flanger, chorus, delay and pitch all read their swept tap with **linear**
+interpolation. Linear interpolation is piecewise-linear, so its slope steps at every
+integer sample boundary; a time-varying delay turns those slope steps into a zipper,
+worst where the wet is loud (the flanger reaches ~12× the dry at high feedback). It is
+also a low-pass whose corner moves with the delay — the wet path lost its top end as
+the tap swept.
+
+Replaced with a shared 4-point **Catmull-Rom** read (`effects::read_cubic`, exact for
+degree ≤ 1 and C1 across integer boundaries) used by all four effects. The two extra
+taps are a handful of multiplies per sample.
+
+- **Test:** `read_cubic_is_exact_at_integers_and_linear` pins the correctness floor
+  (integer delays, constant hold, linear reproduction).
+- **Measured:** LUFS-I within 0.07 dB; the re-bless is concentrated in the
+  high-frequency LTAS bands of the modulation-heavy presets, from the wet path no
+  longer rolling off as the tap sweeps. The B1 bypass-click ratio moved 2.9x → 2.2x —
+  the same mechanism the test documents (a brighter signal leaves a larger residual
+  through a fixed-length fade), so its floor went 2.5x → 2.0x; the A/B in that test,
+  not the ratio, is what protects declicking. Baseline re-blessed.

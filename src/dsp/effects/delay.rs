@@ -134,8 +134,8 @@ impl Delay {
             let p = (base * wobble).clamp(1.0, (len - 2) as f32);
             let (mut wl, mut wr) = (0.0f32, 0.0f32);
             for &(frac, w) in &ECHOREC_HEADS {
-                wl += w * read_tap(&self.buf_l, self.write, len, p * frac);
-                wr += w * read_tap(&self.buf_r, self.write, len, p * frac);
+                wl += w * read_tap(&self.buf_l, self.write, p * frac);
+                wr += w * read_tap(&self.buf_r, self.write, p * frac);
             }
             let norm = 1.0 / ECHOREC_HEADS.iter().map(|&(_, w)| w).sum::<f32>();
             let fl = self.ec_hp_l.process(self.ec_lp_l.process(wl * norm));
@@ -153,8 +153,8 @@ impl Delay {
         }
 
         let delay = base * wobble;
-        let delayed_l = read_tap(&self.buf_l, self.write, len, delay);
-        let delayed_r = read_tap(&self.buf_r, self.write, len, delay);
+        let delayed_l = read_tap(&self.buf_l, self.write, delay);
+        let delayed_r = read_tap(&self.buf_r, self.write, delay);
 
         if tape {
             let fb = feedback * 0.7;
@@ -181,13 +181,8 @@ impl Delay {
 /// Fractional read of `buf` at `delay` samples behind `write` (linear
 /// interpolation), clamped so it never reads the future or wraps past the buffer.
 #[inline]
-fn read_tap(buf: &[f32], write: usize, len: usize, delay: f32) -> f32 {
-    let d = delay.clamp(1.0, (len - 2) as f32);
-    let i0 = d.floor() as usize;
-    let frac = d - i0 as f32;
-    let r0 = (write + len - i0) % len;
-    let r1 = (write + len - i0 - 1) % len;
-    buf[r0] * (1.0 - frac) + buf[r1] * frac
+fn read_tap(buf: &[f32], write: usize, delay: f32) -> f32 {
+    super::read_cubic(buf, write, delay)
 }
 
 /// Soft tape saturation, applied under 4× oversampling on the feedback path

@@ -67,6 +67,34 @@ pub fn param_changed(new: f32, last: f32) -> bool {
     (new - last).abs() > PARAM_EPSILON
 }
 
+/// Fractional read `delay` samples behind `write`, with 4-point Catmull-Rom
+/// interpolation.
+///
+/// Smoother than linear for a **time-varying** delay: linear interpolation is a
+/// piecewise-linear approximation whose slope steps at every integer boundary, and a
+/// swept delay turns those steps into a zipper (worst where the wet is loud — the
+/// flanger reaches ~12× the dry at high feedback). The two extra taps cost a handful
+/// of multiplies. `delay` is clamped so all four taps stay in the ring.
+#[inline]
+pub(super) fn read_cubic(buf: &[f32], write: usize, delay: f32) -> f32 {
+    let len = buf.len();
+    if len < 5 {
+        return buf.get(write % len.max(1)).copied().unwrap_or(0.0);
+    }
+    // Taps at delays i-1, i, i+1, i+2 must all be in range.
+    let d = delay.clamp(1.0, (len - 3) as f32);
+    let i = d.floor() as usize;
+    let t = d - i as f32;
+    // `idx(k)` is `k` samples behind the write head; larger k = older.
+    let idx = |k: usize| buf[(write + len - k) % len];
+    let (p0, p1, p2, p3) = (idx(i - 1), idx(i), idx(i + 1), idx(i + 2));
+    // Catmull-Rom between p1 (t = 0) and p2 (t = 1).
+    let a = -0.5 * p0 + 1.5 * p1 - 1.5 * p2 + 0.5 * p3;
+    let b = p0 - 2.5 * p1 + 2.0 * p2 - 0.5 * p3;
+    let c = -0.5 * p0 + 0.5 * p2;
+    ((a * t + b) * t + c) * t + p1
+}
+
 /// Default smoothing time for an output-scaling coefficient.
 ///
 /// Long enough that no single-sample step is audible, short enough that a knob
@@ -276,9 +304,34 @@ impl ThreeBandEq {
 
 #[cfg(test)]
 mod tests {
-    use super::SmoothedGain;
+    use super::{SmoothedGain, read_cubic};
 
     const SR: f32 = 48_000.0;
+
+    /// `read_cubic` is exact at integer delays, holds a constant at any fractional
+    /// delay, and reproduces a linear ramp (Catmull-Rom is exact for degree ≤ 1) —
+    /// the correctness floor under the smoother modulation reads.
+    #[test]
+    fn read_cubic_is_exact_at_integers_and_linear() {
+        let buf: Vec<f32> = (0..64).map(|i| i as f32).collect();
+        let write = 0usize;
+        let at = |k: usize| buf[(write + buf.len() - k) % buf.len()];
+        for d in 1..20usize {
+            assert!((read_cubic(&buf, write, d as f32) - at(d)).abs() < 1e-4);
+        }
+        let flat = vec![0.25f32; 64];
+        for k in 0..40 {
+            let d = 1.0 + k as f32 * 0.1;
+            assert!((read_cubic(&flat, write, d) - 0.25).abs() < 1e-5);
+        }
+        for i in 2..20usize {
+            for f in [0.0f32, 0.25, 0.5, 0.75, 1.0] {
+                let want = at(i) * (1.0 - f) + at(i + 1) * f;
+                let got = read_cubic(&buf, write, i as f32 + f);
+                assert!((got - want).abs() < 1e-3, "i={i} f={f}: {got} vs {want}");
+            }
+        }
+    }
 
     /// The smoother must not step: a hard target change should be spread over
     /// the smoothing time, not applied in one sample.

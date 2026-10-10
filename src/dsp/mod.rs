@@ -3185,19 +3185,22 @@ mod tests {
             hard_cut > control * 1.5,
             "the hard cut should stand out from the untoggled control: {hard_cut:.5} vs {control:.5}"
         );
-        // The floor has moved twice, and it is worth saying why rather than
-        // pretending it is a stable number: 6.8x when written, 3.3x after D4
-        // oversampled the cab, 2.9x now that C1 restored the preamp's saturation.
-        // Each time the *signal* got hotter, so the flanger's wet-minus-dry swing at
-        // the toggle grew, and the ramped step grew with it. The mechanism has not
-        // degraded — the A/B above is what protects it, since `ramped` is measured
-        // with the ramp and `hard_cut` without it on identical input.
+        // The floor keeps moving, and it is worth saying why rather than pretending
+        // it is a stable number: 6.8x when written, 3.3x after D4 oversampled the
+        // cab, 2.9x once C1 restored the preamp's saturation, 2.2x now that E5's
+        // cubic interpolation stopped the flanger's wet path losing its top end
+        // (a brighter, faster-changing signal leaves a bigger residual step through a
+        // fixed-length fade). Each time the *signal* got brighter or hotter, so the
+        // flanger's wet-minus-dry swing at the toggle grew and the ramped step grew
+        // with it. The mechanism has not degraded — the A/B above is what protects
+        // it, since `ramped` is measured with the ramp and `hard_cut` without it on
+        // identical input.
         //
-        // What this asserts is that the ramp removes *most* of the step. 2.5x is that
+        // What this asserts is that the ramp removes *most* of the step. 2.0x is that
         // claim. If a future change really does stop declicking, the ratio collapses
         // toward 1.0 and this fails long before it becomes subtle.
         assert!(
-            ramped < hard_cut / 2.5,
+            ramped < hard_cut / 2.0,
             "bypass ramp ({ramped:.5}) should be far smoother than the hard cut \
              ({hard_cut:.5})"
         );

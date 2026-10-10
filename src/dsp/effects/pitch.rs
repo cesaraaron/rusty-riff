@@ -63,16 +63,10 @@ impl Pitch {
         self.last_tone = tone;
     }
 
-    /// Linear-interpolated read `delay` samples behind the write head.
+    /// Interpolated read `delay` samples behind the write head (Catmull-Rom).
     #[inline]
     fn read(buf: &[f32], write: usize, delay: f32) -> f32 {
-        let len = buf.len();
-        let d = delay.clamp(0.0, (len - 2) as f32);
-        let i0 = d.floor() as usize;
-        let frac = d - i0 as f32;
-        let a = (write + len - i0) % len;
-        let b = (write + len - i0 - 1) % len;
-        buf[a] * (1.0 - frac) + buf[b] * frac
+        super::read_cubic(buf, write, delay)
     }
 
     /// `pitch` 0–1 (0.5 = unison), `mix` 0–1, `tone` 0–1.

@@ -50,16 +50,10 @@ impl Chorus {
         }
     }
 
-    /// Linear-interpolated read `delay` samples behind the write head.
+    /// Interpolated read `delay` samples behind the write head (Catmull-Rom).
     #[inline]
     fn read(buf: &[f32], write: usize, delay: f32) -> f32 {
-        let len = buf.len();
-        let d = delay.clamp(1.0, (len - 2) as f32);
-        let i0 = d.floor() as usize;
-        let frac = d - i0 as f32;
-        let a = (write + len - i0) % len;
-        let b = (write + len - i0 - 1) % len;
-        buf[a] * (1.0 - frac) + buf[b] * frac
+        super::read_cubic(buf, write, delay)
     }
 
     #[inline]
