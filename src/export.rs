@@ -513,10 +513,11 @@ mod tests {
         // The onset lands where the input was, plus the cab convolver's 128-sample
         // latency, the master limiter's lookahead, and a few samples of amp
         // front-end phase. A leaked preroll would push it out by
-        // (48_000 * PREROLL_SECS) = 24 000 samples.
+        // (48_000 * PREROLL_SECS) = 24 000 samples. The threshold sits above the
+        // amp's hum/noise floor (C5), which is no longer bit-exact zero.
         let onset = out
             .iter()
-            .position(|&(l, r)| l.abs() > 1e-6 || r.abs() > 1e-6)
+            .position(|&(l, r)| l.abs() > 0.01 || r.abs() > 0.01)
             .expect("render is entirely silent");
         let limiter_latency = crate::dsp::limiter::Limiter::new(48_000.0).latency();
         let expected = PLUCK_AT + 128 + limiter_latency;

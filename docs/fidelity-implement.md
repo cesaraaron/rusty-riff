@@ -2484,3 +2484,26 @@ latter shows the master's drive-ratio (5.05x input swing at 0.2→1.0) compresse
 **Measured.** The four master amps were re-trimmed to the mid-band target (the
 non-master five needed none). Baseline re-blessed: LUFS within ~0.3 dB, the re-bless
 concentrated in the mid/LF bands of the master-amp presets. Baseline check green.
+
+### C5b — the amps hum on a silent input (they no longer output bit-exact zero)
+
+A silent input produced **bit-exact zero** out of all nine models. Only five had
+supply ripple at all, and that modulates the *signal* (ghost notes) — none of them
+hummed in silence, which the one thing every real amp does (the Vox most of all).
+
+`AmpBank` now injects a quiet **hum + noise floor** at the amp input, so the gain
+stages amplify it exactly as a real amp does (a cranked model hums more than a clean
+one, for free):
+
+- **Hum:** the mains fundamental (60 Hz) plus 2nd/3rd harmonics, generated from one
+  rotating unit phasor via Chebyshev (`sin2θ = 2sc`, `sin3θ = 3s − 4s³`) — no
+  per-sample transcendentals.
+- **Noise:** a cheap xorshift broadband floor.
+
+Both are linear-level constants (`HUM_LEVEL`, `NOISE_LEVEL`); the high-gain models
+amplify them to a **−53 dBFS** floor, the clean ones to **−66 dB**, and the noise gate
+sweeps it up. `amp_hums_on_a_silent_input` pins that the floor is present but quiet.
+
+Two knock-ons: the export preroll test's onset detector now triggers above the floor
+(threshold `0.01`, not `1e-6`), and the baseline re-blesses the `noise_floor_db`
+metric (from −210 dB).

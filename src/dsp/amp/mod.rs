@@ -953,6 +953,66 @@ pub trait Amplifier {
     fn set_load(&mut self, load: (f32, f32));
 }
 
+/// Mains frequency the hum source runs at. 60 Hz (the model of a US amp);
+/// switch to 50 for Europe.
+const HUM_HZ: f32 = 60.0;
+/// Hum level injected at the amp input (linear). Kept low — the high-gain models
+/// amplify it to a realistic ~-55 dBFS floor.
+const HUM_LEVEL: f32 = 0.00035;
+/// Broadband noise-floor level injected at the amp input (linear).
+const NOISE_LEVEL: f32 = 0.00012;
+
+/// A quiet mains-hum + thermal-noise floor, injected at the amp's input so the gain
+/// stages amplify it the way a real amp does.
+///
+/// Without this a silent input produced **bit-exact zero** from every model — an amp
+/// that hums (all of them do; the Vox most of all) was the one thing the models could
+/// not do. The hum is the mains fundamental plus its 2nd/3rd harmonics, generated
+/// from one rotating unit phasor (Chebyshev, so no per-sample transcendentals); the
+/// noise is a cheap xorshift broadband floor. Both are small enough to sit under the
+/// playing signal and be swept up by the noise gate.
+struct HumNoise {
+    c: f32,
+    s: f32,
+    cos_w: f32,
+    sin_w: f32,
+    rng: u32,
+}
+
+impl HumNoise {
+    fn new(sr: f32) -> Self {
+        let w = std::f32::consts::TAU * HUM_HZ / sr.max(1.0);
+        Self {
+            c: 1.0,
+            s: 0.0,
+            cos_w: w.cos(),
+            sin_w: w.sin(),
+            rng: 0x9e37_79b9,
+        }
+    }
+
+    #[inline]
+    fn next(&mut self) -> f32 {
+        // Rotate the phasor one step; sin θ, sin 2θ and sin 3θ fall out of (c, s).
+        let (c, s) = (
+            self.c * self.cos_w - self.s * self.sin_w,
+            self.s * self.cos_w + self.c * self.sin_w,
+        );
+        self.c = c;
+        self.s = s;
+        // Chebyshev: sin2θ = 2sc, sin3θ = 3s − 4s³.
+        let hum = s + 0.5 * (2.0 * s * c) + 0.25 * (3.0 * s - 4.0 * s * s * s);
+        // xorshift32 broadband noise, mapped to [-1, 1).
+        let mut x = self.rng;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        self.rng = x;
+        let noise = x as f32 * (2.0 / u32::MAX as f32) - 1.0;
+        hum * HUM_LEVEL + noise * NOISE_LEVEL
+    }
+}
+
 /// Owns all amp instances simultaneously so filter state is preserved across
 /// model switches (no audible click from zeroed delay lines on switch).
 pub struct AmpBank {
@@ -965,6 +1025,7 @@ pub struct AmpBank {
     fender: Fender,
     supro: Supro,
     tweed: Tweed,
+    hum: HumNoise,
 }
 
 impl AmpBank {
@@ -979,6 +1040,7 @@ impl AmpBank {
             fender: Fender::new(sr),
             supro: Supro::new(sr),
             tweed: Tweed::new(sr),
+            hum: HumNoise::new(sr),
         }
     }
 
@@ -1003,6 +1065,8 @@ impl AmpBank {
         self.fender.set_load(load);
         self.supro.set_load(load);
         self.tweed.set_load(load);
+        // Inject the hum/noise floor at the input so the gain stages amplify it.
+        let sample = sample + self.hum.next();
         match model {
             AmpModel::Marshall => self.marshall.process(sample, knobs),
             AmpModel::Mesa => self.mesa.process(sample, knobs),
@@ -1109,6 +1173,30 @@ mod tests {
             ratio > 2.0,
             "the master must still control level: {ratio:.3}x"
         );
+    }
+
+    /// C5 — a real amp hums on a silent input; the models must not output bit-exact
+    /// zero. The floor must be present but quiet.
+    #[test]
+    fn amp_hums_on_a_silent_input() {
+        let mut amp = AmpBank::new(48_000.0);
+        let knobs = standard_knobs(AmpModel::Marshall, 0.75, 0.5, 0.5, 0.6, 0.4, 0.55);
+        let out: Vec<f32> = (0..48_000)
+            .map(|_| {
+                amp.process(
+                    AmpModel::Marshall,
+                    0.0,
+                    &knobs,
+                    crate::dsp::CabModel::Marshall.speaker_load(),
+                )
+            })
+            .collect();
+        let rms = nfb_rms(&out[24_000..]);
+        assert!(
+            rms > 1e-5,
+            "silent input produced no hum/noise (rms {rms:.2e})"
+        );
+        assert!(rms < 0.05, "the hum/noise floor is too loud (rms {rms:.4})");
     }
 
     /// C2 — the loop must be unconditionally stable at every amp's gain staging.
