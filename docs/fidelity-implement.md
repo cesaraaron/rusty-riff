@@ -2341,3 +2341,42 @@ The mechanism is not degrading — the A/B in that test measures ramped against
 hard-cut on identical input, which is what actually protects the property. What the
 floor asserts is only that the ramp removes *most* of the step; if declicking ever
 truly broke, the ratio would collapse toward 1.0 and fail long before it got subtle.
+
+### F1 (part 1) — a real master limiter, and the master knob becomes an output gain
+
+Reported symptom: the rig "saturates very fast when chaining a couple of pedals" and
+"lacks power" — quieter and dirtier than GarageBand on the same performance. Traced to
+the output path, not to the pedals:
+
+- The amps are trimmed to **0.0650 mid-band RMS** (−23.7 dBFS), while presets measure
+  a **crest factor of 13–17 dB** — lots of peak, little average.
+- `soft_limit` was a **memoryless rational clip** at base rate: unity below 0.95, a
+  hard asymptote at 1.0. Under a tall-crest signal it *distorts* peaks instead of
+  turning them down. That is the harshness.
+- The master output knob sat **before** the limiter (`widen → output → dc → limit`),
+  so turning it up only drove the limiter harder — saturated and still quiet. That is
+  why a workaround gain stage was needed.
+- The pedestal pedals add real gain (clean boost 0–24 dB, TS shelf up to ~41 dB, fuzz
+  `1 + 120·fuzz`), so a "low" chain still stacks 15–20 dB into the ceiling.
+
+**Fix.** `src/dsp/limiter.rs` is a stereo-linked feed-forward **lookahead limiter**:
+1.5 ms lookahead, 0.15 ms gain-application and 150 ms release time constants, a
+`0.891` (−1 dBFS) ceiling, and a **+3 dB makeup** so the rig lands at a consumer-loud
+level instead of the low trim target. One gain from the larger channel, so a
+hard-panned peak cannot shift the image (the old per-channel clip did). The master bus
+is now `widen → dc → limit → output`, so the master knob is a **genuine output gain
+after the limiter** and cannot re-saturate the rig. `output_stage` stays as the final
+safety for the monitor sums and stacked takes.
+
+The lookahead adds **1.5 ms** of latency (72 samples at 48 kHz) — accepted, and added
+to the cab's 2.67 ms; the export's onset test now accounts for it.
+
+**Measured.** LUFS-I up ~3 dB across the bundled set (e.g. `stairway_solo` −9.7 →
+−6.5, `numb_solo_2` −15.3 → −12.2) with crest essentially unchanged
+(13–17 dB), i.e. louder *without* being squashed. `process_block` cost is inside
+run-to-run noise (bench 5.13–5.66%). Baseline **re-blessed**.
+
+**Still open (F1 remainder), deliberately:** true-peak / inter-sample detection, an
+audio-thread-safe stereo-linked GR readout, and oversampling the limiter's own corner.
+The ceiling clamp is a sub-percent safety on the first sample of a transient, not a
+steady-state clipper.

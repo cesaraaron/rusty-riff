@@ -3,6 +3,7 @@ pub mod biquad;
 pub mod cab;
 pub mod conv;
 pub mod effects;
+pub mod limiter;
 pub mod metronome;
 pub mod oversample;
 pub mod player;
@@ -27,6 +28,7 @@ use effects::{
     Chorus, CleanBoost, Compressor, Delay, Distortion, Flanger, Fuzz, GraphicEq, MetalCore,
     NoiseGate, ParametricEq, Phaser, Pitch, PreampEq, Reverb, Tremolo, TubeScreamer, UniVibe, Wah,
 };
+use limiter::Limiter;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
@@ -606,10 +608,10 @@ pub const DEFAULT_MASTER_OUTPUT: f32 = 0.5;
 /// The master-output knob's full span in dB, symmetric about unity so the control
 /// is a monitor level rather than a one-way boost.
 ///
-/// Held to +/-6 dB deliberately: the rig peaks around 0.45 while the limiter knee is
-/// 0.95, so the top of the range reaches the knee without ever compressing and
-/// turning the master up cannot change the tone. Widening this means revisiting the
-/// limiter, not just this constant.
+/// The knob sits *after* the master [`Limiter`](limiter::Limiter), so it is a
+/// genuine output gain: it scales the already-limited program and cannot re-saturate
+/// the rig. Pushing it above unity into the device ceiling is caught by the final
+/// output stage, exactly as winding up a real master would be.
 pub const MASTER_OUTPUT_RANGE_DB: f32 = 6.0;
 
 /// Map the normalized master-output knob to a linear gain.
@@ -1628,6 +1630,9 @@ pub struct DspChain {
     declick_step: f32,
     /// Master-bus DC blockers, one per channel.
     master_dc: MasterDc,
+    /// Master-bus lookahead limiter. Replaces the old memoryless clip so peaks
+    /// are turned down cleanly instead of distorted.
+    master_limiter: Limiter,
     /// Per-stage bypass crossfade position, 0 = fully bypassed and 1 = fully
     /// engaged. See [`Self::run_ordered_stage`].
     bypass_ramp: [f32; CHAIN_LEN],
@@ -1672,6 +1677,7 @@ impl DspChain {
             declick_target: 1.0,
             declick_step: 1.0 / (DECLICK_SECS * sr).max(1.0),
             master_dc: MasterDc::new(sr),
+            master_limiter: Limiter::new(sr),
             bypass_ramp: [0.0; CHAIN_LEN],
             bypass_step: 1.0 / (BYPASS_DECLICK_SECS * sr).max(1.0),
         }
@@ -2150,7 +2156,14 @@ impl DspChain {
     pub fn process(&mut self, sample: f32) -> (f32, f32) {
         let route = self.route_for_block(false);
         let (l, r) = self.process_core(sample, &route);
-        master_bus(l, r, route.width, route.output, &mut self.master_dc)
+        master_bus(
+            l,
+            r,
+            route.width,
+            route.output,
+            &mut self.master_dc,
+            &mut self.master_limiter,
+        )
     }
 
     /// Process a block of mono input samples into stereo output buffers.
@@ -2268,7 +2281,14 @@ impl DspChain {
 
         // Master bus, per sample (width read once per block, in the route).
         for (l, r) in out_l.iter_mut().zip(out_r.iter_mut()) {
-            let (wl, wr) = master_bus(*l, *r, route.width, route.output, &mut self.master_dc);
+            let (wl, wr) = master_bus(
+                *l,
+                *r,
+                route.width,
+                route.output,
+                &mut self.master_dc,
+                &mut self.master_limiter,
+            );
             if amp_loaded {
                 // Advance the built-in↔AU declick ramp (identity when steady).
                 if self.declick_gain < self.declick_target {
@@ -2288,33 +2308,41 @@ impl DspChain {
     }
 }
 
-/// Master bus: stereo-widen then soft-limit. `width` pushes the cab/reverb
-/// decorrelation out for a wider, deeper image without losing mono punch (the
-/// mid is untouched); `1.0` is the neutral reference (wire-transparent sides).
-/// The output soft limiter is independent of the coloration and always runs, so
-/// protection never depends on the width setting.
+/// Master bus: stereo-widen, DC-block, limit, then output gain. `width` pushes
+/// the cab/reverb decorrelation out for a wider, deeper image without losing
+/// mono punch (the mid is untouched); `1.0` is the neutral reference
+/// (wire-transparent sides). The lookahead [`Limiter`] turns peaks down cleanly
+/// and lifts the program to a consumer-loud ceiling; the `output` knob is applied
+/// *after* it, so it is a genuine output gain that cannot re-saturate the rig.
 ///
-/// The two DC blockers are the only state in the bus. They are needed because
-/// the built-in amps each end with a ~12 Hz high-pass, but that is *not*
-/// unconditional: when a **full-rig AU** supplies its own cab/mic the built-in
-/// amp is skipped entirely (`skip_cab`), so a plugin's DC offset would reach the
-/// output with nothing removing it. It also gives the offline export the same
-/// guarantee as the live path.
+/// The DC blockers and the limiter are the state in the bus. The blockers are
+/// needed because the built-in amps each end with a ~12 Hz high-pass, but that is
+/// *not* unconditional: when a **full-rig AU** supplies its own cab/mic the
+/// built-in amp is skipped entirely (`skip_cab`), so a plugin's DC offset would
+/// reach the output with nothing removing it. It also gives the offline export the
+/// same guarantee as the live path.
 ///
 /// The state is per-[`DspChain`], so [`process`](DspChain::process) and
 /// [`process_block`](DspChain::process_block) remain bit-identical for a given
-/// input: each drives its own blockers deterministically, one sample at a time.
+/// input: each drives its own blockers and limiter deterministically, one sample
+/// at a time.
 #[inline]
-fn master_bus(l: f32, r: f32, width: f32, output: f32, dc: &mut MasterDc) -> (f32, f32) {
+fn master_bus(
+    l: f32,
+    r: f32,
+    width: f32,
+    output: f32,
+    dc: &mut MasterDc,
+    limiter: &mut Limiter,
+) -> (f32, f32) {
     let (l, r) = widen(l, r, width);
-    // Master output sits after the widener and before the limiter, so the limiter
-    // still guards the ceiling and turning the knob up can never clip. Placing it
-    // here also keeps it ahead of the monitor-only buses, which are summed outside
-    // the chain: backing tracks, the metronome and the looper are untouched by it,
-    // which is the whole point of using it to balance the guitar against a track.
-    let (l, r) = (l * output, r * output);
     let (l, r) = (dc.l.process(l), dc.r.process(r));
-    (soft_limit(l), soft_limit(r))
+    // The limiter turns peaks down cleanly and lifts the program to a
+    // consumer-loud ceiling. The master output knob sits *after* it, so it is a
+    // genuine output gain — turning it up cannot re-saturate the rig, it only
+    // scales the already-limited signal.
+    let (l, r) = limiter.process(l, r);
+    (l * output, r * output)
 }
 
 /// Mid/side stereo widener. `width` 1.0 = unchanged, > 1.0 spreads the sides.
@@ -3230,13 +3258,14 @@ mod tests {
         // area (`sum(x·R^n) ≈ x/(1-R)`), so a window that includes it reads a
         // transient, not leakage. 0.25 s is >12 time constants at 8 Hz.
         let mut dc = MasterDc::new(sr);
+        let mut lim = Limiter::new(sr);
         for _ in 0..(sr as usize / 4) {
-            master_bus(0.25, -0.25, 1.0, 1.0, &mut dc);
+            master_bus(0.25, -0.25, 1.0, 1.0, &mut dc, &mut lim);
         }
         let mut sum = 0.0f64;
         let n = sr as usize;
         for _ in 0..n {
-            let (l, _r) = master_bus(0.25, -0.25, 1.0, 1.0, &mut dc);
+            let (l, _r) = master_bus(0.25, -0.25, 1.0, 1.0, &mut dc, &mut lim);
             sum += l as f64;
         }
         let mean = (sum / n as f64) as f32;
@@ -3276,15 +3305,32 @@ mod tests {
     }
 
     /// The studio master: width `1.0` is the neutral reference (below the limiter
-    /// knee it is wire-transparent), the widener preserves the mid, and the
-    /// output limiter still catches peaks at every width.
+    /// ceiling it is wire-transparent), the widener preserves the mid, and the
+    /// limiter bounds peaks at every width.
     #[test]
     fn master_bus_width_is_neutral_at_one_and_limiter_is_independent() {
-        let mut dc = MasterDc::new(48_000.0);
-        let (nl, nr) = master_bus(0.5, -0.2, 1.0, 1.0, &mut dc);
+        let sr = 48_000.0;
+        // Width 1.0 is transparent below the ceiling: a quiet 1 kHz tone keeps its
+        // magnitude (RMS, so the DC blocker's tiny phase shift cannot masquerade as
+        // gain).
+        let mut dc = MasterDc::new(sr);
+        let mut lim = Limiter::new(sr);
+        let (mut in_sq, mut out_sq) = (0.0f64, 0.0f64);
+        for n in 0..16_000usize {
+            let x = (2.0 * PI * 1000.0 * n as f32 / sr).sin() * 0.3;
+            let (l, _r) = master_bus(x, x, 1.0, 1.0, &mut dc, &mut lim);
+            if n > 8_000 {
+                in_sq += (x as f64).powi(2);
+                out_sq += (l as f64).powi(2);
+            }
+        }
+        let ratio = (out_sq / in_sq).sqrt();
+        // Width 1.0 must not colour the tone: the bus gain is exactly the
+        // limiter's makeup (the tone is under the ceiling, so no reduction).
         assert!(
-            (nl - 0.5).abs() < 1e-6 && (nr + 0.2).abs() < 1e-6,
-            "width 1.0 must be neutral, got ({nl}, {nr})"
+            (ratio - limiter::MAKEUP as f64).abs() < 0.02,
+            "width 1.0 coloured a quiet tone: ratio {ratio:.4}, expected {:.4}",
+            limiter::MAKEUP
         );
 
         let (wl, wr) = widen(0.5, -0.2, 1.3);
@@ -3296,12 +3342,20 @@ mod tests {
             "widener did not spread sides"
         );
 
+        // A hard AC drive (a constant would just be removed by the DC blocker)
+        // must be bounded at the ceiling for every width.
         for width in [0.0, 1.0, 1.3, 2.0] {
-            let mut dc = MasterDc::new(48_000.0);
-            let (l, r) = master_bus(4.0, -4.0, width, 1.0, &mut dc);
+            let mut dc = MasterDc::new(sr);
+            let mut lim = Limiter::new(sr);
+            let mut worst = 0.0f32;
+            for i in 0..(lim.latency() + 4000) {
+                let x = if i % 2 == 0 { 4.0 } else { -4.0 };
+                let (l, r) = master_bus(x, x, width, 1.0, &mut dc, &mut lim);
+                worst = worst.max(l.abs()).max(r.abs());
+            }
             assert!(
-                l.abs() <= 1.0 && r.abs() <= 1.0,
-                "limiter failed to bound output at width {width}: ({l}, {r})"
+                worst <= limiter::CEILING + 1e-3,
+                "limiter failed to bound output at width {width}: {worst}"
             );
         }
     }
@@ -3430,23 +3484,13 @@ mod tests {
         );
     }
 
-    /// The master must raise level by exactly the knob's dB, and must never push the
-    /// output past the ceiling.
+    /// The master knob is a genuine **output gain**: it sits after the limiter, so
+    /// it scales the already-limited program and raises level by exactly the knob's
+    /// dB. The limiter, not the knob, owns the ceiling — its output is bounded at
+    /// [`limiter::CEILING`] at every knob position, and the knob scales that.
     ///
-    /// The second half is the important one, and it is worth recording why the range
-    /// is not what a first pass suggests. The boot rig is *hot*: a 0.1-amplitude tone
-    /// -- about the calibrated humbucker reference -- already comes out at 0.72 peak,
-    /// and a mere 0.3 comes out at 0.935, sitting on the limiter knee. So a +6 dB
-    /// boost (x2) does not land at 1.0, it lands at ~0.997 after soft clipping: at
-    /// the top of the knob the limiter is working on essentially every note.
-    ///
-    /// Clean boost is therefore only available in the first fraction of the knob's
-    /// travel, not across the whole +6 dB. That is a deliberate consequence of
-    /// leaving `MASTER_OUTPUT_RANGE_DB` at 6 rather than trimming it: a master that
-    /// cannot reach unity-plus-loud is useless for balancing against a backing track,
-    /// and the limiter is the right thing to be doing at the top of a volume control
-    /// -- it is exactly what a power amp does when you wind it up. Users who want the
-    /// boost to stay clean everywhere should turn the amp's own master down instead.
+    /// (The device ceiling of 1.0 is the final output stage's job in the audio
+    /// engine; here we pin the limiter's own bound, which is what protects the rig.)
     #[test]
     fn master_output_never_passes_the_ceiling_and_is_exact_while_clear() {
         let sr = 48_000.0;
@@ -3455,19 +3499,20 @@ mod tests {
             p.master_output.store(out, Relaxed);
             DspChain::new(sr, p)
         };
-        // Sweep the knob, checking the ceiling holds at every position.
+        // Sweep the knob: the limiter's output stays at its ceiling; the knob scales it.
         for step in 0..=20 {
             let out = step as f32 / 20.0;
             let mut c = chain(out);
             let mut peak = 0.0f32;
-            for n in 0..2000 {
+            for n in 0..4000 {
                 let x = (2.0 * PI * 110.0 * n as f32 / sr).sin() * 0.5;
                 let (l, r) = c.process(x);
                 peak = peak.max(l.abs()).max(r.abs());
             }
+            let bound = limiter::CEILING * master_output_gain(out) + 1e-3;
             assert!(
-                peak <= 1.0,
-                "master at {out:.2} passed the ceiling: {peak:.4}"
+                peak <= bound,
+                "master at {out:.2} passed the limiter ceiling: {peak:.4} > {bound:.4}"
             );
         }
         // And with the signal low enough to stay clear of the knee, the boost is the

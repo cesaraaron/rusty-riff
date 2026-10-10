@@ -737,8 +737,10 @@ fn with_buffer(cfg: &StreamConfig, buffer_size: cpal::BufferSize) -> StreamConfi
 /// them. Before this existed, the converter clipped and the overload grew with
 /// every take layer.
 ///
-/// The ceiling is the same [`soft_limit`] the master bus uses, so live and
-/// exported audio are conditioned identically.
+/// This is the final *safety* only: each chain already left its own lookahead
+/// limiter at `−1 dBFS`, so the sum is normally well under the ceiling. It exists
+/// for the monitor-only mixes (metronome/backing/looper) and for stacking a take on
+/// the live rig, where two limited buses add and can exceed full scale.
 #[inline]
 fn output_stage(live_l: f32, live_r: f32, take_l: f32, take_r: f32) -> (f32, f32) {
     (soft_limit(live_l + take_l), soft_limit(live_r + take_r))

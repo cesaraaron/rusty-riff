@@ -510,18 +510,21 @@ mod tests {
             "export is silent over the take: {head_rms}"
         );
 
-        // The onset lands where the input was, plus the cab convolver's
-        // 128-sample latency and a few samples of amp front-end phase. A leaked
-        // preroll would push it out by (48_000 * PREROLL_SECS) = 24 000 samples.
+        // The onset lands where the input was, plus the cab convolver's 128-sample
+        // latency, the master limiter's lookahead, and a few samples of amp
+        // front-end phase. A leaked preroll would push it out by
+        // (48_000 * PREROLL_SECS) = 24 000 samples.
         let onset = out
             .iter()
             .position(|&(l, r)| l.abs() > 1e-6 || r.abs() > 1e-6)
             .expect("render is entirely silent");
-        let expected = PLUCK_AT + 128;
+        let limiter_latency = crate::dsp::limiter::Limiter::new(48_000.0).latency();
+        let expected = PLUCK_AT + 128 + limiter_latency;
         assert!(
             onset.abs_diff(expected) < 64,
             "onset at {onset}, expected ~{expected} (input {PLUCK_AT} + 128 cab \
-             convolution). A large offset means the preroll leaked into the output."
+             convolution + {limiter_latency} limiter). A large offset means the \
+             preroll leaked into the output."
         );
         let preroll_frames = (48_000.0 * PREROLL_SECS) as i64;
         assert!(
