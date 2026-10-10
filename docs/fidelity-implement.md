@@ -2420,3 +2420,25 @@ taps are a handful of multiplies per sample.
   the same mechanism the test documents (a brighter signal leaves a larger residual
   through a fixed-length fade), so its floor went 2.5x → 2.0x; the A/B in that test,
   not the ratio, is what protects declicking. Baseline re-blessed.
+
+### E4 — constant-power wet/dry for the reverb and delay
+
+The reverb and delay used a **linear** crossfade (`dry·(1−m) + wet·m`). For an
+uncorrelated wet that dips ~3 dB in total power at the middle of the knob (a
+`0.5`/`0.5` split is 0.5 power, not 1), so the effect audibly thinned as you brought
+it up. Replaced with a constant-power law — `dry = √(1−m)`, `wet = √(m)`, chosen over
+`cos/sin` because it needs one `sqrt` each instead of two transcendentals and has the
+same constant-power property.
+
+**Deliberately not applied to the flanger/chorus/phaser:** their wet is a (modulated)
+copy of the dry, so the two paths are correlated and the linear fader is the right
+curve there. `equal_power` documents that boundary, and `equal_power_holds_constant_power`
+pins the law.
+
+**Measured, and it is a real level change.** The reverb/delay-heavy presets come up
+**~2–3 dB** (e.g. `time_chorus` −12.0 → −11.2, `comfortably_numb_solo_2` −13.2 → −10.0,
+`clean` −9.1 → −7.0) because removing the centre dip *is* the loudness increase; crest
+stays healthy (13.7–17.4 dB), so this is level, not compression. Baseline re-blessed.
+If the wet now reads too hot at low mix (the constant-power wet is up to 2× the old
+linear wet at `m = 0.25`), the reverb `SCALE_WET` or the master makeup is the knob to
+re-balance.

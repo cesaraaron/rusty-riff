@@ -67,6 +67,19 @@ pub fn param_changed(new: f32, last: f32) -> bool {
     (new - last).abs() > PARAM_EPSILON
 }
 
+/// Constant-power wet/dry gains for a **decorrelated** wet path (reverb, delay):
+/// returns `(dry, wet)` with `dry² + wet² = 1`, so a `0.5` mix is neither the −3 dB
+/// dip of a linear crossfade nor a boost. The `sqrt` law rather than `cos/sin` —
+/// same constant-power property, one hardware sqrt each instead of two transcendentals.
+///
+/// Not for the flanger/chorus/phaser, whose wet is a (modulated) copy of the dry:
+/// there the two paths are correlated and the linear fader is the right curve.
+#[inline]
+pub(super) fn equal_power(mix: f32) -> (f32, f32) {
+    let m = mix.clamp(0.0, 1.0);
+    ((1.0 - m).sqrt(), m.sqrt())
+}
+
 /// Fractional read `delay` samples behind `write`, with 4-point Catmull-Rom
 /// interpolation.
 ///
@@ -304,9 +317,30 @@ impl ThreeBandEq {
 
 #[cfg(test)]
 mod tests {
-    use super::{SmoothedGain, read_cubic};
+    use super::{SmoothedGain, equal_power, read_cubic};
 
     const SR: f32 = 48_000.0;
+
+    /// The reverb/delay crossfade must hold constant power across the knob and be a
+    /// pure passthrough at mix 0.
+    #[test]
+    fn equal_power_holds_constant_power() {
+        let (d0, w0) = equal_power(0.0);
+        assert!(
+            (d0 - 1.0).abs() < 1e-6 && w0.abs() < 1e-6,
+            "mix 0 passthrough"
+        );
+        for k in 0..=100 {
+            let m = k as f32 / 100.0;
+            let (d, w) = equal_power(m);
+            assert!(
+                (d * d + w * w - 1.0).abs() < 1e-5,
+                "mix {m}: power {}",
+                d * d + w * w
+            );
+        }
+        assert!(equal_power(1.0).0.abs() < 1e-6, "mix 1 is all wet");
+    }
 
     /// `read_cubic` is exact at integer delays, holds a constant at any fractional
     /// delay, and reproduces a linear ramp (Catmull-Rom is exact for degree ≤ 1) —
