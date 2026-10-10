@@ -1,7 +1,7 @@
 use super::{
     AMP_MAX, AmpKnob, Amplifier, Bloom, BrightCap, Cached, CathodeBias, DynamicPresence, FrontEnd,
-    GlobalNfb, GridBlock, INSERTION_LOSS, OutputTransformer, PowerOs, SpeakerLoad, SupplyRipple,
-    ToneCache, TubeClip, VoiceBalance, sagged_rail, split_gain3,
+    GlobalNfb, GridBlock, INSERTION_LOSS, MASTER_DRIVE_REF, OutputTransformer, PowerOs,
+    SpeakerLoad, SupplyRipple, ToneCache, TubeClip, VoiceBalance, sagged_rail, split_gain3,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::oversample::Oversampler8;
@@ -12,7 +12,6 @@ use crate::dsp::tonestack::{Components, ToneStack};
 /// rail, so the knob spans clean to slammed on every model.
 /// Global negative feedback around the power stage -- solid-state global loop; the Recto's is generous.
 const NFB_BETA: f32 = 0.45;
-const NFB_FLOOR: f32 = 0.35;
 const NFB_LF_CORNER: f32 = 240.0;
 
 const PREAMP_GAIN_COEFF: f32 = 6.0 / 210.0;
@@ -63,7 +62,8 @@ pub const KNOBS: &[AmpKnob] = &[
 ///   • Presence shelf at 4 kHz — Recto's presence is brighter/tighter than the JCM800
 pub struct Mesa {
     sr: f32,
-    /// Global NFB around the power stage, with the master pot in the divider.
+    /// Global NFB around the power stage, with a fixed divider (the master is a
+    /// pre-phase-inverter volume, not part of the loop).
     nfb: GlobalNfb,
     /// The power stage's previous output — the divider reads this.
     pf_out: f32,
@@ -124,7 +124,7 @@ impl Mesa {
         let sr8 = sr * 8.0;
         let mut m = Self {
             sr,
-            nfb: GlobalNfb::new(sr, NFB_BETA, NFB_FLOOR, NFB_LF_CORNER),
+            nfb: GlobalNfb::new(sr, NFB_BETA, NFB_LF_CORNER),
             pf_out: 0.0,
             front: FrontEnd::new(sr, 60.0),
             os: Oversampler8::new(sr),
@@ -193,7 +193,7 @@ impl Mesa {
 
     /// Silicon rectifier sag: tight attack (0.5 ms), moderate release (80 ms).
     #[inline]
-    fn power_amp(&mut self, x: f32, master: f32, presence: f32) -> f32 {
+    fn power_amp(&mut self, x: f32, presence: f32) -> f32 {
         let abs_x = x.abs();
         let coeff = if abs_x > self.envelope {
             1.0 - (-1.0 / (0.0005 * self.sr)).exp()
@@ -217,7 +217,7 @@ impl Mesa {
         // comes back down, so sag compresses *harder* under load. See `sagged_rail`.
         // Subtract the divider's feedback from the stage's own input, read from
         // `pf_out` so the loop stays causal.
-        let fb = self.nfb.feedback(self.pf_out, master, presence);
+        let fb = self.nfb.feedback(self.pf_out, presence);
         let out = self.os_power.shape(x - fb, |u| {
             TubeClip::PUSH_PULL.shape(u * drive_up) * rail * 0.9964
         });
@@ -291,7 +291,9 @@ impl Amplifier for Mesa {
         // Subsonic cut before the power stage so the silicon clipper can't fold
         // sub-bass into difference-tone mud.
         let x = self.power_hp.process(x);
-        let x = self.power_amp(x, master, presence);
+        // The master drives the power stage's input (real master-volume behaviour).
+        let drive = (master / MASTER_DRIVE_REF).clamp(0.0, 2.0);
+        let x = self.power_amp(x * drive, presence);
         // Output transformer: low-frequency core saturation + push-pull crossover.
         let x = self.xfmr.process(x);
         let x = self.speaker.process(x, self.envelope);
@@ -302,8 +304,8 @@ impl Amplifier for Mesa {
         let x = self.presence.process(x, self.envelope);
 
         // Output trim: level-match the Recto to the other models so switching
-        // doesn't jump in volume (re-measured after the power-drive increase).
-        x * master * 3.666
+        // doesn't jump in volume. The master's level is in the power-amp input scale.
+        x * MASTER_DRIVE_REF * 3.453
     }
 }
 

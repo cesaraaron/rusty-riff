@@ -19,7 +19,6 @@ use crate::dsp::tonestack::{Components, ToneStack};
 /// rail, so the knob spans clean to slammed on every model.
 /// Global negative feedback around the power stage -- **the real AC30 has no global NFB loop**, which is why it sags so freely; this small residual stands in for the Top Boost channel's local feedback rather than inventing a global loop it does not have.
 const NFB_BETA: f32 = 0.17;
-const NFB_FLOOR: f32 = 0.25;
 const NFB_LF_CORNER: f32 = 300.0;
 
 const PREAMP_GAIN_COEFF: f32 = 6.0 / 224.0;
@@ -65,7 +64,8 @@ pub const KNOBS: &[AmpKnob] = &[
 ///     stage sags more readily and the speaker-load interaction is more pronounced
 pub struct Vox {
     sr: f32,
-    /// Global NFB around the power stage, with the master pot in the divider.
+    /// Global NFB around the power stage, with a fixed divider (the master is a
+    /// pre-phase-inverter volume, not part of the loop).
     nfb: GlobalNfb,
     /// The power stage's previous output — the divider reads this.
     pf_out: f32,
@@ -120,7 +120,7 @@ impl Vox {
         let sr8 = sr * 8.0;
         let mut v = Self {
             sr,
-            nfb: GlobalNfb::new(sr, NFB_BETA, NFB_FLOOR, NFB_LF_CORNER),
+            nfb: GlobalNfb::new(sr, NFB_BETA, NFB_LF_CORNER),
             pf_out: 0.0,
             front: FrontEnd::new(sr, 70.0),
             os: Oversampler8::new(sr),
@@ -167,7 +167,7 @@ impl Vox {
     }
 
     #[inline]
-    fn power_amp(&mut self, x: f32, master: f32, presence: f32) -> f32 {
+    fn power_amp(&mut self, x: f32, presence: f32) -> f32 {
         let abs_x = x.abs();
         let coeff = if abs_x > self.envelope {
             1.0 - (-260.0 / self.sr).exp()
@@ -185,7 +185,7 @@ impl Vox {
         // comes back down, so sag compresses *harder* under load. See `sagged_rail`.
         // Subtract the divider's feedback from the stage's own input, read from
         // `pf_out` so the loop stays causal.
-        let fb = self.nfb.feedback(self.pf_out, master, presence);
+        let fb = self.nfb.feedback(self.pf_out, presence);
         let out = self.os_power.shape(x - fb, |u| {
             TubeClip::PUSH_PULL.shape(u * drive_up) * rail * 0.4475
         });
@@ -258,9 +258,9 @@ impl Amplifier for Vox {
         let x = self.cut.process(x);
 
         // Power amp: transformer sag + light saturation
-        // The AC30 has no master pot in this model and only a small residual loop,
-        // so the divider runs at full loop gain; treble feeds the HF bleed.
-        let x = self.power_amp(x, 1.0, treble);
+        // The AC30 has no master pot and only a small residual loop; the divider is
+        // fixed and treble feeds the HF bleed.
+        let x = self.power_amp(x, treble);
         // Output transformer: low-frequency core saturation + push-pull crossover.
         let x = self.xfmr.process(x);
 

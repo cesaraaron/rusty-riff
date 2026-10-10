@@ -591,6 +591,15 @@ impl TubeClip {
 /// this out explicitly instead.
 pub(crate) const INSERTION_LOSS: f32 = std::f32::consts::FRAC_2_PI;
 
+/// The master position at which the power stage is driven at full — the default for
+/// every master-equipped model. A real master volume is a pre-phase-inverter control
+/// that scales the signal *into* the power amp, so backing it off reduces power-amp
+/// drive, sag and clipping rather than only the output level. Referencing the default
+/// keeps the boot tone and level exactly as they were and gives the knob real
+/// authority on both sides of it. `power_amp` receives this as a fixed divider input;
+/// the master knob scales the drive separately.
+pub(crate) const MASTER_DRIVE_REF: f32 = 0.55;
+
 /// Global negative feedback around the power stage.
 ///
 /// The engine had no loop gain, no gain reduction and no damping factor anywhere.
@@ -606,11 +615,11 @@ pub(crate) const INSERTION_LOSS: f32 = std::f32::consts::FRAC_2_PI;
 /// 2. **Scoops selectively.** The divider is LF-shaped — less feedback at low
 ///    frequency — so closing the loop pulls the midrange down while leaving the bass
 ///    alone. That LF-versus-mid relationship *is* the "scooped and tight" character.
-/// 3. **Puts the master pot in the divider.** On a JCM800 the master is part of the
-///    feedback network, so backing it off reduces loop gain: the amp opens up and
-///    brightens as you turn down. That is why a Marshall at low master sounds
-///    completely different from the same Marshall at high master, and the engine had
-///    no way to express it.
+/// 3. **Runs at a fixed loop gain.** The loop is a fixed resistor network: on a
+///    JCM800 the master volume is a **pre-phase-inverter** control and is *not* part
+///    of the feedback divider (the loop runs from the output tap to the PI tail).
+///    The master therefore scales the power stage's *drive* — see
+///    [`MASTER_DRIVE_REF`] and each model's `power_amp` — not the loop.
 ///
 /// And the loop's authority **falls as the supply sags**, for free: [`sagged_rail`]
 /// reduces the power stage's drive as the rails fall, so less signal reaches the
@@ -619,37 +628,32 @@ pub(crate) const INSERTION_LOSS: f32 = std::f32::consts::FRAC_2_PI;
 ///
 /// Presence is wired *into* the divider rather than sitting after it, which is where
 /// it lives on a real amp: the pot bleeds high frequencies out of the feedback path.
-/// The consequence is that its range narrows as the loop opens up, which is exactly
-/// what a real NFB presence pot does.
 pub(crate) struct GlobalNfb {
     /// Lowpass forming the LF-shaping of the divider. Feedback below its corner is
     /// reduced, so the loop pulls the midrange down without scooping the bass.
     lf: Biquad,
     /// Highpass used to bleed the top out of the divider for the presence pot.
     bleed: Biquad,
-    /// Loop gain at full master.
+    /// Fixed loop gain.
     beta: f32,
-    /// Loop gain at master = 0, as a fraction of `beta`.
-    floor: f32,
 }
 
 impl GlobalNfb {
-    pub fn new(sr: f32, beta: f32, floor: f32, lf_corner: f32) -> Self {
+    pub fn new(sr: f32, beta: f32, lf_corner: f32) -> Self {
         Self {
             lf: Biquad::lowpass(sr, lf_corner, 0.707),
             bleed: Biquad::highpass(sr, 4000.0, 0.707),
             beta,
-            floor,
         }
     }
 
     /// The feedback signal to subtract from the power stage's input.
     ///
-    /// `v_out` is the power stage's **previous** output, `master` its output control
-    /// (0-1, which is part of the divider on a real amp), and `presence` the pot,
-    /// which bleeds the top out of the loop path.
+    /// `v_out` is the power stage's **previous** output and `presence` the pot, which
+    /// bleeds the top out of the loop path. The loop gain is fixed; the master is not
+    /// in the divider.
     #[inline]
-    pub fn feedback(&mut self, v_out: f32, master: f32, presence: f32) -> f32 {
+    pub fn feedback(&mut self, v_out: f32, presence: f32) -> f32 {
         // LF-shaping: subtract the low band so the loop does not act on the bass.
         let shaped = v_out - self.lf.process(v_out);
         // Presence bleed: `presence` 0.5 = neutral, so the bleed is symmetric about
@@ -657,8 +661,7 @@ impl GlobalNfb {
         let bled = shaped - self.bleed.process(shaped);
         let bleed_amt = (presence - 0.5) * 2.0;
         let looped = shaped - bleed_amt * bled;
-        // The master pot is in the divider: backing it off opens the loop.
-        self.beta * (self.floor + (1.0 - self.floor) * master.clamp(0.0, 1.0)) * looped
+        self.beta * looped
     }
 }
 
@@ -1069,47 +1072,42 @@ mod tests {
         );
     }
 
-    /// C2 — the master pot is **in** the divider, so backing it off changes the
-    /// *character*, not only the level. Without this the loop is just a fixed EQ.
+    /// C2 — presence bleeds the top out of the divider, so the pot must change the
+    /// top end (the master no longer moves the loop, so this is measured at one
+    /// setting).
     #[test]
-    fn nfb_master_is_in_the_divider() {
-        let f = 400.0;
-        // At master 1.0 the loop is closed; at 0.2 it is largely open. The ratio
-        // between the two must differ from a pure 5:1 level scaling, because the
-        // loop's gain reduction itself depends on where the master sits.
-        let hi = nfb_tone(AmpModel::Marshall, 0.9, 1.0, 0.5, f);
-        let lo = nfb_tone(AmpModel::Marshall, 0.9, 0.2, 0.5, f);
-        let hi = &hi[hi.len() / 2..];
-        let lo = &lo[lo.len() / 2..];
-        let ratio = nfb_rms(hi) / nfb_rms(lo);
-        // A pure output scaling of 0.2 -> 1.0 is 5.0x (14.0 dB). The loop makes
-        // the closed-loop (high-master) end quieter, so the ratio is *below* 5.0.
+    fn presence_changes_the_top_end() {
+        let f = 2000.0;
+        let tone = |hf: f32| {
+            let v = nfb_tone(AmpModel::Marshall, 0.9, 0.55, hf, f);
+            nfb_rms(&v[v.len() / 2..])
+        };
+        let ratio = tone(0.9) / tone(0.1);
         assert!(
-            ratio < 4.6,
-            "expected the closed loop to pull the high-master end down; got {ratio:.3}x"
+            (ratio - 1.0).abs() > 0.2,
+            "presence did not change the top end: {ratio:.3}x"
         );
     }
 
-    /// C2 — presence bleeds the top out of the divider, so its range **narrows**
-    /// as the loop opens up. That narrowing is the audible signature of a real
-    /// NFB presence pot and is what the old post-transformer shelf could not do.
+    /// C5 — the master scales the power stage's **input** (real master-volume
+    /// behaviour), so it changes drive and compression, not just level. Its level
+    /// authority now comes from the power amp, not a post-clip multiply.
     #[test]
-    fn nfb_presence_range_narrows_as_the_loop_opens() {
-        let f = 2000.0;
-        let tone = |master: f32, hf: f32| {
-            let v = nfb_tone(AmpModel::Marshall, 0.9, master, hf, f);
-            nfb_rms(&v[v.len() / 2..])
-        };
-        // Loop nearly closed (master 1.0) vs nearly open (master 0.1).
-        let wide_closed = tone(1.0, 0.9) / tone(1.0, 0.1);
-        let wide_open = tone(0.1, 0.9) / tone(0.1, 0.1);
-        // A narrower range means the ratio moves *toward* 1.0: with the loop open
-        // the divider is doing less work, so there is less of the top for the
-        // presence pot to bleed and its swing shrinks.
+    fn master_drives_the_power_stage() {
+        let f = 300.0;
+        // Master 0.2 -> drive 0.36, master 1.0 -> drive 1.82: a 5.05x input swing.
+        // A post-clip multiply would scale the output by ~5.05x; driving the power
+        // stage into compression keeps the swing measurably below the linear ratio.
+        let lo = nfb_rms(&nfb_tone(AmpModel::Marshall, 0.9, 0.2, 0.5, f)[24000..]);
+        let hi = nfb_rms(&nfb_tone(AmpModel::Marshall, 0.9, 1.0, 0.5, f)[24000..]);
+        let ratio = hi / lo;
         assert!(
-            wide_open > wide_closed,
-            "presence should swing less with the loop open: closed {wide_closed:.3}x, \
-             open {wide_open:.3}x"
+            ratio < 4.8,
+            "higher master did not compress the power stage: {ratio:.3}x vs linear 5.05x"
+        );
+        assert!(
+            ratio > 2.0,
+            "the master must still control level: {ratio:.3}x"
         );
     }
 

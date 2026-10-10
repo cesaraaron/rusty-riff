@@ -18,7 +18,6 @@ use crate::dsp::tonestack::{Components, ToneStack};
 /// Global negative feedback around the power stage -- a Twin is loosely feedbacked,
 /// of the spring-reverb era.
 const NFB_BETA: f32 = 0.4;
-const NFB_FLOOR: f32 = 0.3;
 const NFB_LF_CORNER: f32 = 250.0;
 
 const PREAMP_GAIN_COEFF: f32 = 6.0 / 84.0;
@@ -82,7 +81,8 @@ pub const KNOBS: &[AmpKnob] = &[
 ///     the supply is stiff and the compression is soft, not valve-rectifier sag.
 pub struct Fender {
     sr: f32,
-    /// Global NFB around the power stage, with the master pot in the divider.
+    /// Global NFB around the power stage, with a fixed divider (the master is a
+    /// pre-phase-inverter volume, not part of the loop).
     nfb: GlobalNfb,
     /// The power stage's previous output — the divider reads this.
     pf_out: f32,
@@ -121,7 +121,7 @@ impl Fender {
         let sr8 = sr * 8.0;
         let mut f = Self {
             sr,
-            nfb: GlobalNfb::new(sr, NFB_BETA, NFB_FLOOR, NFB_LF_CORNER),
+            nfb: GlobalNfb::new(sr, NFB_BETA, NFB_LF_CORNER),
             pf_out: 0.0,
             front: FrontEnd::new(sr, 50.0),
             os: Oversampler8::new(sr),
@@ -160,7 +160,7 @@ impl Fender {
 
     /// 6L6 power section: gentle sag (a stiff-ish supply that compresses softly).
     #[inline]
-    fn power_amp(&mut self, x: f32, master: f32, presence: f32) -> f32 {
+    fn power_amp(&mut self, x: f32, presence: f32) -> f32 {
         let abs_x = x.abs();
         let coeff = if abs_x > self.envelope {
             1.0 - (-180.0 / self.sr).exp()
@@ -175,7 +175,7 @@ impl Fender {
         // comes back down, so sag compresses *harder* under load. See `sagged_rail`.
         // Subtract the divider's feedback from the stage's own input, read from
         // `pf_out` so the loop stays causal.
-        let fb = self.nfb.feedback(self.pf_out, master, presence);
+        let fb = self.nfb.feedback(self.pf_out, presence);
         let out = self.os_power.shape(x - fb, |u| {
             TubeClip::PUSH_PULL.shape(u * drive_up) * rail * 0.7554
         });
@@ -240,10 +240,10 @@ impl Amplifier for Fender {
         let (tl, tr) = self.trem.process(x, x, speed, intensity, 0.0, 0.0);
         let x = 0.5 * (tl + tr);
 
-        // The Twin has no presence pot: `volume` is the master (and so part of
-        // the divider), and `treble` feeds the loop's high-frequency bleed. The bleed
+        // The Twin has no master volume and no presence pot: `volume` is the preamp
+        // gain (above), and `treble` feeds the loop's high-frequency bleed. The bleed
         // is neutral at centre, so the tone stack's nominal behaviour is unchanged.
-        let x = self.power_amp(x, volume, treble);
+        let x = self.power_amp(x, treble);
         let x = self.xfmr.process(x);
         let x = self.speaker.process(x, self.envelope);
         let x = self.out_hp.process(x);

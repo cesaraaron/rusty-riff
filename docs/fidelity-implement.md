@@ -2442,3 +2442,37 @@ stays healthy (13.7–17.4 dB), so this is level, not compression. Baseline re-b
 If the wet now reads too hot at low mix (the constant-power wet is up to 2× the old
 linear wet at `m = 0.25`), the reverb `SCALE_WET` or the master makeup is the knob to
 re-balance.
+
+### C5 — the master volume now drives the power stage (and C2's divider goes fixed)
+
+The master pot was a post-clip `x * master * TRIM` multiply: it changed level but not
+the power stage's drive, sag or clipping. A real master (a JCM800's is pre-phase-
+inverter) scales the signal *into* the power amp.
+
+Doing this exposed a conflict with **C2**, which had put the master *inside* the NFB
+divider ("turning the master down opens the loop"). That premise is questionable: the
+JCM800 master is not in the feedback network — the loop runs from the output tap to
+the PI tail and is a fixed divider. Attempting to do both (master in the divider *and*
+scaling the drive) flipped the presence behaviour and broke the loudness match, so C2
+was revised as part of this:
+
+- **`GlobalNfb` is now a fixed divider** — `feedback(v_out, presence)` drops the
+  `master` argument and the `floor` concept; the loop gain is `beta`, always.
+- **The master scales the power-stage input** in every master-equipped model:
+  `power_amp(x * (master / MASTER_DRIVE_REF), presence)`, and the old post-clip
+  `* master` is replaced by the fixed `MASTER_DRIVE_REF * TRIM`. `MASTER_DRIVE_REF =
+  0.55` (the model default) keeps the boot tone and level exactly as they were.
+- Fender: the Twin has no master, and its `volume` (the preamp gain) was wrongly in
+  the divider; it is now a plain non-master amp.
+- Non-master amps (Plexi/Vox/Supro/Tweed) were already at full loop gain and are
+  unchanged — the loudness test confirmed them within tolerance with no re-trim.
+
+**Tests.** `nfb_master_is_in_the_divider` and
+`nfb_presence_range_narrows_as_the_loop_opens` encoded the old premise and were
+replaced by `presence_changes_the_top_end` and `master_drives_the_power_stage`. The
+latter shows the master's drive-ratio (5.05x input swing at 0.2→1.0) compresses to
+~4.5x at the output, which a post-clip multiply could not do.
+
+**Measured.** The four master amps were re-trimmed to the mid-band target (the
+non-master five needed none). Baseline re-blessed: LUFS within ~0.3 dB, the re-bless
+concentrated in the mid/LF bands of the master-amp presets. Baseline check green.

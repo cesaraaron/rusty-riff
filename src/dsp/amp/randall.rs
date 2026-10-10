@@ -1,6 +1,6 @@
 use super::{
-    AMP_MAX, AmpKnob, Amplifier, Bloom, Cached, FrontEnd, GlobalNfb, PowerOs, SpeakerLoad,
-    ToneCache, VoiceBalance, split_gain,
+    AMP_MAX, AmpKnob, Amplifier, Bloom, Cached, FrontEnd, GlobalNfb, MASTER_DRIVE_REF, PowerOs,
+    SpeakerLoad, ToneCache, VoiceBalance, split_gain,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::oversample::Oversampler8;
@@ -11,7 +11,6 @@ use crate::dsp::oversample::Oversampler8;
 /// Global negative feedback around the power stage -- a Warhead is the most
 /// "modern" amp in the bank, with the least loop and the widest LF corner.
 const NFB_BETA: f32 = 0.3;
-const NFB_FLOOR: f32 = 0.30;
 const NFB_LF_CORNER: f32 = 300.0;
 
 const PREAMP_GAIN_COEFF: f32 = 6.0 / 238.0;
@@ -70,7 +69,8 @@ pub struct Randall {
     front: FrontEnd,
     os: Oversampler8,
     os_power: PowerOs,
-    /// Global NFB around the power stage, with the master pot in the divider.
+    /// Global NFB around the power stage, with a fixed divider (the master is a
+    /// pre-phase-inverter volume, not part of the loop).
     nfb: GlobalNfb,
     /// The power stage's previous output — the divider reads this.
     pf_out: f32,
@@ -117,7 +117,7 @@ impl Randall {
             front: FrontEnd::new(sr, 75.0),
             os: Oversampler8::new(sr),
             os_power: PowerOs::new(sr),
-            nfb: GlobalNfb::new(sr, NFB_BETA, NFB_FLOOR, NFB_LF_CORNER),
+            nfb: GlobalNfb::new(sr, NFB_BETA, NFB_LF_CORNER),
             pf_out: 0.0,
             // Warhead pre-clip HP: 55 Hz — tighter than Marshall/Mesa but below 82 Hz
             pre_clip_hp: Biquad::highpass(sr8, 55.0, 0.707),
@@ -235,10 +235,15 @@ impl Amplifier for Randall {
         // 8× like the tube power stages — base-rate clipping here folded
         // harmonics back as harshness.
         let x = self.power_hp.process(x);
+        // The master drives the power stage's input (real master-volume behaviour)
+        // before the rail clip, so backing it off lightens the drive.
+        let drive = (master / MASTER_DRIVE_REF).clamp(0.0, 2.0);
         // Subtract the divider's feedback from the stage's own input, read from
         // `pf_out` so the loop stays causal.
-        let fb = self.nfb.feedback(self.pf_out, master, treble);
-        let out = self.os_power.shape(x - fb, |u| (u * 1.85).tanh() * 0.5997);
+        let fb = self.nfb.feedback(self.pf_out, treble);
+        let out = self
+            .os_power
+            .shape(x * drive - fb, |u| (u * 1.85).tanh() * 0.5997);
         self.pf_out = out;
         let x = out;
         let x = self.speaker.process(x, 0.0);
@@ -252,7 +257,8 @@ impl Amplifier for Randall {
         // breakup + mic saturation), and starving it buries E2's fundamental
         // under overtones (`fundamental_is_not_buried_under_overtones`) and
         // breaks the DS-chain level match. Re-tuning it means re-tuning the cab.
-        x * master * 0.762
+        // The master's level is in the power-amp input scale above.
+        x * MASTER_DRIVE_REF * 0.823
     }
 }
 

@@ -1,7 +1,7 @@
 use super::{
     AMP_MAX, AmpKnob, Amplifier, Bloom, BrightCap, Cached, CathodeBias, DynamicPresence, FrontEnd,
-    GlobalNfb, GridBlock, OutputTransformer, PowerOs, SpeakerLoad, SupplyRipple, ToneCache,
-    TubeClip, VoiceBalance, sagged_rail, split_gain,
+    GlobalNfb, GridBlock, MASTER_DRIVE_REF, OutputTransformer, PowerOs, SpeakerLoad, SupplyRipple,
+    ToneCache, TubeClip, VoiceBalance, sagged_rail, split_gain,
 };
 use crate::dsp::biquad::Biquad;
 use crate::dsp::oversample::Oversampler8;
@@ -18,22 +18,18 @@ const PREAMP_GAIN_COEFF: f32 = 6.0 / 280.0;
 
 /// Global negative feedback around the power stage.
 ///
-/// `NFB_BETA` is the loop gain at full master, measured: 0.50 is the strongest
-/// loop that still produces a musical result here, giving about -3 dB at 400 Hz
-/// against -1.3 dB at 80 Hz. Above roughly 1.5 the LF filter's phase delay turns
-/// the loop net-positive at low frequency and the amp runs away, so there is
-/// little headroom and `GlobalNfb::feedback` is the only place to raise it.
-///
-/// `NFB_FLOOR` is how much of that survives at master = 0, and it is what puts the
-/// master pot *in* the divider: turning down opens the loop rather than merely
-/// getting quieter, which is why a Marshall at low master sounds like a different
-/// amplifier from the same Marshall at full master.
+/// `NFB_BETA` is the fixed loop gain, measured: 0.50 is the strongest loop that
+/// still produces a musical result here, giving about -3 dB at 400 Hz against
+/// -1.3 dB at 80 Hz. Above roughly 1.5 the LF filter's phase delay turns the loop
+/// net-positive at low frequency and the amp runs away, so there is little headroom
+/// and `GlobalNfb::feedback` is the only place to raise it. The master is **not** in
+/// the divider (a JCM800's master is pre-phase-inverter); it scales the power-stage
+/// drive instead. See [`MASTER_DRIVE_REF`].
 ///
 /// `NFB_LF_CORNER` is where the divider stops acting on the bass. Feedback below it
 /// is reduced, so the loop tightens the midrange and leaves the low end alone --
 /// that LF-versus-mid relationship is the "scooped and tight" JCM800 character.
 const NFB_BETA: f32 = 0.5;
-const NFB_FLOOR: f32 = 0.35;
 const NFB_LF_CORNER: f32 = 220.0;
 
 /// JCM800 front-panel controls, in the order `process` decodes them.
@@ -88,7 +84,8 @@ pub const KNOBS: &[AmpKnob] = &[
 ///   • Presence shelf in the power-amp NFB loop adds air and cut at 3.5 kHz
 pub struct Marshall {
     sr: f32,
-    /// Global NFB around the power stage, with the master pot in the divider.
+    /// Global NFB around the power stage, with a fixed divider (the master is a
+    /// pre-phase-inverter volume, not part of the loop).
     nfb: GlobalNfb,
     /// The power stage's previous output — the feedback divider reads this.
     pf_out: f32,
@@ -148,7 +145,7 @@ impl Marshall {
         let sr8 = sr * 8.0;
         let mut m = Self {
             sr,
-            nfb: GlobalNfb::new(sr, NFB_BETA, NFB_FLOOR, NFB_LF_CORNER),
+            nfb: GlobalNfb::new(sr, NFB_BETA, NFB_LF_CORNER),
             pf_out: 0.0,
             front: FrontEnd::new(sr, 60.0),
             os: Oversampler8::new(sr),
@@ -248,7 +245,7 @@ impl Marshall {
     }
 
     #[inline]
-    fn power_amp(&mut self, x: f32, master: f32, presence: f32) -> f32 {
+    fn power_amp(&mut self, x: f32, presence: f32) -> f32 {
         let supply = self.power_supply(x);
         // Power clipper at 8×: the envelope is slow (ms) so `supply` is held
         // across subsamples; only the memoryless curve runs hot, killing
@@ -265,7 +262,7 @@ impl Marshall {
         let (drive_up, rail) = sagged_rail(supply, 2.2);
         // Subtract the divider's feedback from the stage's own input. Read from
         // `pf_out` (the previous sample) so the loop is causal.
-        let fb = self.nfb.feedback(self.pf_out, master, presence);
+        let fb = self.nfb.feedback(self.pf_out, presence);
         let out = self.os_power.shape(x - fb, |u| {
             TubeClip::PUSH_PULL.shape(u * drive_up) * rail * 0.7992
         });
@@ -348,8 +345,10 @@ impl Amplifier for Marshall {
         // Structural voicing balance: restore low-mid body, tame the upper-mid tilt.
         let x = self.voice.process(x);
 
-        // Power amp: transformer sag + light saturation
-        let x = self.power_amp(x, master, presence);
+        // Power amp: transformer sag + light saturation. The master drives the power
+        // stage's input (real master-volume behaviour), not just the output level.
+        let drive = (master / MASTER_DRIVE_REF).clamp(0.0, 2.0);
+        let x = self.power_amp(x * drive, presence);
         // Output transformer: low-frequency core saturation + push-pull crossover.
         let x = self.xfmr.process(x);
 
@@ -366,7 +365,8 @@ impl Amplifier for Marshall {
         let x = self.out_hp.process(x);
 
         // Output trim: level-matches the JCM800 to the other models so switching
-        // doesn't jump in volume (re-measured after the power-drive increase).
-        x * master * 5.271
+        // doesn't jump in volume. The master's level comes from the power-amp input
+        // scale above; this is a fixed trim referenced to the default.
+        x * MASTER_DRIVE_REF * 5.427
     }
 }

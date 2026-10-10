@@ -18,7 +18,6 @@ use crate::dsp::tonestack::{Components, ToneStack};
 /// on every model regardless of how much range its `pregain` law has.
 /// Global negative feedback around the power stage -- Plexi is the tightest-feedback JCM800 variant.
 const NFB_BETA: f32 = 0.53;
-const NFB_FLOOR: f32 = 0.35;
 const NFB_LF_CORNER: f32 = 200.0;
 
 const PREAMP_GAIN_COEFF: f32 = 6.0 / 168.0;
@@ -82,7 +81,8 @@ pub const KNOBS: &[AmpKnob] = &[
 ///     rectifier sag.
 pub struct Plexi {
     sr: f32,
-    /// Global NFB around the power stage, with the master pot in the divider.
+    /// Global NFB around the power stage, with a fixed divider (the master is a
+    /// pre-phase-inverter volume, not part of the loop).
     nfb: GlobalNfb,
     /// The power stage's previous output — the divider reads this.
     pf_out: f32,
@@ -123,7 +123,7 @@ impl Plexi {
         let sr8 = sr * 8.0;
         let mut p = Self {
             sr,
-            nfb: GlobalNfb::new(sr, NFB_BETA, NFB_FLOOR, NFB_LF_CORNER),
+            nfb: GlobalNfb::new(sr, NFB_BETA, NFB_LF_CORNER),
             pf_out: 0.0,
             front: FrontEnd::new(sr, 60.0),
             os: Oversampler8::new(sr),
@@ -182,7 +182,7 @@ impl Plexi {
     /// quick attack/release), so the Plexi's compression comes from the output
     /// stage and transformer rather than a sagging valve rectifier.
     #[inline]
-    fn power_amp(&mut self, x: f32, master: f32, presence: f32) -> f32 {
+    fn power_amp(&mut self, x: f32, presence: f32) -> f32 {
         let abs_x = x.abs();
         let coeff = if abs_x > self.envelope {
             // ~4.5 ms attack: the silicon rail tracks the signal quickly.
@@ -200,7 +200,7 @@ impl Plexi {
         // comes back down, so sag compresses *harder* under load. See `sagged_rail`.
         // Subtract the divider's feedback from the stage's own input, read from
         // `pf_out` so the loop stays causal.
-        let fb = self.nfb.feedback(self.pf_out, master, presence);
+        let fb = self.nfb.feedback(self.pf_out, presence);
         let out = self.os_power.shape(x - fb, |u| {
             TubeClip::PUSH_PULL.shape(u * drive_up) * rail * 0.7545
         });
@@ -257,9 +257,9 @@ impl Amplifier for Plexi {
 
         let x = self.tone.process(x);
         let x = self.voice.process(x);
-        // The Plexi has no master pot in this model, so the divider runs at its
-        // full loop gain; presence bleeds the top out of the loop path.
-        let x = self.power_amp(x, 1.0, presence);
+        // The Plexi has no master pot; the divider is fixed and presence bleeds the
+        // top out of the loop path.
+        let x = self.power_amp(x, presence);
         let x = self.xfmr.process(x);
         let x = self.speaker.process(x, self.envelope);
         let x = self.presence.process(x, self.envelope);

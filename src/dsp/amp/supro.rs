@@ -17,7 +17,6 @@ use crate::dsp::tonestack::{Components, ToneStack};
 /// on every model regardless of how much range its `pregain` law has.
 /// Global negative feedback around the power stage.
 const NFB_BETA: f32 = 0.5;
-const NFB_FLOOR: f32 = 0.35;
 const NFB_LF_CORNER: f32 = 230.0;
 
 const PREAMP_GAIN_COEFF: f32 = 6.0 / 154.0;
@@ -58,7 +57,8 @@ pub const KNOBS: &[AmpKnob] = &[
 ///     nasal, boxy mid — modelled in the speaker load, not a 4×12.
 pub struct Supro {
     sr: f32,
-    /// Global NFB around the power stage, with the master pot in the divider.
+    /// Global NFB around the power stage, with a fixed divider (the master is a
+    /// pre-phase-inverter volume, not part of the loop).
     nfb: GlobalNfb,
     /// The power stage's previous output — the divider reads this.
     pf_out: f32,
@@ -94,7 +94,7 @@ impl Supro {
         let sr8 = sr * 8.0;
         let mut s = Self {
             sr,
-            nfb: GlobalNfb::new(sr, NFB_BETA, NFB_FLOOR, NFB_LF_CORNER),
+            nfb: GlobalNfb::new(sr, NFB_BETA, NFB_LF_CORNER),
             pf_out: 0.0,
             // Small amp: a slightly tighter input HP than the big heads.
             front: FrontEnd::new(sr, 70.0),
@@ -136,7 +136,7 @@ impl Supro {
     /// Valve-rectified sag: a shallow-but-slow give — a small combo's supply
     /// compresses under load and recovers over the note.
     #[inline]
-    fn power_amp(&mut self, x: f32, master: f32, presence: f32) -> f32 {
+    fn power_amp(&mut self, x: f32, presence: f32) -> f32 {
         let abs_x = x.abs();
         let coeff = if abs_x > self.envelope {
             1.0 - (-140.0 / self.sr).exp()
@@ -153,7 +153,7 @@ impl Supro {
         // comes back down, so sag compresses *harder* under load. See `sagged_rail`.
         // Subtract the divider's feedback from the stage's own input, read from
         // `pf_out` so the loop stays causal.
-        let fb = self.nfb.feedback(self.pf_out, master, presence);
+        let fb = self.nfb.feedback(self.pf_out, presence);
         let out = self.os_power.shape(x - fb, |u| {
             TubeClip::PUSH_PULL.shape(u * drive_up) * rail * 0.6794
         });
@@ -203,9 +203,9 @@ impl Amplifier for Supro {
 
         let x = self.tone.process(x);
         let x = self.voice.process(x);
-        // No master pot on the Supro, so the divider runs at full loop gain; the
-        // tone pot feeds the loop's high-frequency bleed (neutral at centre).
-        let x = self.power_amp(x, 1.0, tone);
+        // No master pot on the Supro; the divider is fixed and the tone pot feeds the
+        // loop's high-frequency bleed (neutral at centre).
+        let x = self.power_amp(x, tone);
         let x = self.xfmr.process(x);
         let x = self.speaker.process(x, self.envelope);
         let x = self.out_hp.process(x);

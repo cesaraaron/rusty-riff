@@ -17,7 +17,6 @@ use crate::dsp::oversample::Oversampler8;
 /// on every model regardless of how much range its `pregain` law has.
 /// Global negative feedback around the power stage -- classic 'pin the tail' feedback: strong, LF rolled off.
 const NFB_BETA: f32 = 0.6;
-const NFB_FLOOR: f32 = 0.4;
 const NFB_LF_CORNER: f32 = 170.0;
 
 const PREAMP_GAIN_COEFF: f32 = 6.0 / 154.0;
@@ -56,7 +55,8 @@ pub const KNOBS: &[AmpKnob] = &[
 ///     compression and a tight, vocal midrange.
 pub struct Tweed {
     sr: f32,
-    /// Global NFB around the power stage, with the master pot in the divider.
+    /// Global NFB around the power stage, with a fixed divider (the master is a
+    /// pre-phase-inverter volume, not part of the loop).
     nfb: GlobalNfb,
     /// The power stage's previous output — the divider reads this.
     pf_out: f32,
@@ -92,7 +92,7 @@ impl Tweed {
         let sr8 = sr * 8.0;
         let mut t = Self {
             sr,
-            nfb: GlobalNfb::new(sr, NFB_BETA, NFB_FLOOR, NFB_LF_CORNER),
+            nfb: GlobalNfb::new(sr, NFB_BETA, NFB_LF_CORNER),
             pf_out: 0.0,
             front: FrontEnd::new(sr, 60.0),
             os: Oversampler8::new(sr),
@@ -129,7 +129,7 @@ impl Tweed {
     /// 5Y3-rectified sag: a deep-but-slow give — the supply compresses under load
     /// and recovers over the note.
     #[inline]
-    fn power_amp(&mut self, x: f32, master: f32, presence: f32) -> f32 {
+    fn power_amp(&mut self, x: f32, presence: f32) -> f32 {
         let abs_x = x.abs();
         let coeff = if abs_x > self.envelope {
             1.0 - (-120.0 / self.sr).exp()
@@ -146,7 +146,7 @@ impl Tweed {
         // comes back down, so sag compresses *harder* under load. See `sagged_rail`.
         // Subtract the divider's feedback from the stage's own input, read from
         // `pf_out` so the loop stays causal.
-        let fb = self.nfb.feedback(self.pf_out, master, presence);
+        let fb = self.nfb.feedback(self.pf_out, presence);
         let out = self.os_power.shape(x - fb, |u| {
             TubeClip::PUSH_PULL.shape(u * drive_up) * rail * 0.764
         });
@@ -193,9 +193,9 @@ impl Amplifier for Tweed {
 
         let x = self.tone.process(x);
         let x = self.voice.process(x);
-        // No master pot on the Tweed, so the divider runs at full loop gain; the
-        // tone pot feeds the loop's high-frequency bleed (neutral at centre).
-        let x = self.power_amp(x, 1.0, tone);
+        // No master pot on the Tweed; the divider is fixed and the tone pot feeds the
+        // loop's high-frequency bleed (neutral at centre).
+        let x = self.power_amp(x, tone);
         let x = self.xfmr.process(x);
         let x = self.speaker.process(x, self.envelope);
         let x = self.out_hp.process(x);
