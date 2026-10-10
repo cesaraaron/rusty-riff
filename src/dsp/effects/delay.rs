@@ -146,7 +146,7 @@ impl Delay {
             self.write = (self.write + 1) % len;
             // One `next()` for the pair: calling it twice would advance the
             // smoother twice and give L and R different mix values.
-            let (dg, wg) = super::equal_power(self.mix.step());
+            let (dg, wg) = super::constant_power_mix(self.mix.step());
             let out_l = l * dg + wl * wg;
             let out_r = r * dg + wr * wg;
             return (out_l, out_r);
@@ -172,8 +172,9 @@ impl Delay {
         self.write = (self.write + 1) % len;
 
         // Constant-power crossfade: the repeat is decorrelated from the dry, so a
-        // linear fader would scoop ~3 dB out of the middle of the knob.
-        let (dg, wg) = super::equal_power(self.mix.step());
+        // linear fader would scoop ~3 dB out of the middle of the knob. This keeps
+        // the linear wet/dry ratio, so the tuned balance is unchanged.
+        let (dg, wg) = super::constant_power_mix(self.mix.step());
         let out_l = l * dg + delayed_l * wg;
         let out_r = r * dg + delayed_r * wg;
         (out_l, out_r)

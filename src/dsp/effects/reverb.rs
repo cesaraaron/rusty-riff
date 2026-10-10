@@ -207,8 +207,9 @@ impl Reverb {
         // rewrites this every few samples; unsmoothed that is a staircase.
         self.mix.set(mix.clamp(0.0, 1.0));
         // Constant-power crossfade: the tail is decorrelated from the dry, so a
-        // linear fader would scoop ~3 dB out of the middle of the knob.
-        let (dg, wg) = super::equal_power(self.mix.step());
+        // linear fader would scoop ~3 dB out of the middle of the knob. This keeps
+        // the linear wet/dry ratio, so the tuned balance is unchanged.
+        let (dg, wg) = super::constant_power_mix(self.mix.step());
         let out_l = dry_l * dg + wet_l * SCALE_WET * wg * mod_l;
         let out_r = dry_r * dg + wet_r * SCALE_WET * wg * mod_r;
         (out_l, out_r)
