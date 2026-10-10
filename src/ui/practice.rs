@@ -938,23 +938,25 @@ impl PracticeUi {
     // ── Capture lifecycle ───────────────────────────────────────────────────────
 
     /// Handle `R`: arm a fresh raw-take row, or stop the active take.
+    /// Arm a new take, or stop the one in flight. Returns `true` when a take was
+    /// just started, so the caller can bring the timeline panel forward.
     pub(super) fn arm_or_stop(
         &mut self,
         engine: &mut AudioEngine,
         practice: &Practice,
         capture: &CaptureState,
-    ) {
+    ) -> bool {
         let _ = engine;
         if self.recording_id.is_some() {
             // Stop: silence the callback, ask the writer to finalize, and park the
             // transport where the take ended.
             self.finalize_capture(capture, practice);
-            return;
+            return false;
         }
-        self.arm(capture, practice);
+        self.arm(capture, practice)
     }
 
-    fn arm(&mut self, capture: &CaptureState, practice: &Practice) {
+    fn arm(&mut self, capture: &CaptureState, practice: &Practice) -> bool {
         let ready = self
             .session
             .tracks()
@@ -963,11 +965,11 @@ impl PracticeUi {
             .count();
         if ready >= MAX_TRACKS {
             self.note(format!("Timeline is full ({MAX_TRACKS} tracks)"));
-            return;
+            return false;
         }
         let Some(cmd) = &self.capture_cmd else {
             self.note("Capture writer unavailable".to_owned());
-            return;
+            return false;
         };
         let id = self.session.alloc_id();
         let start_ticks = self
@@ -1015,7 +1017,7 @@ impl PracticeUi {
             self.note("Capture writer unavailable".to_owned());
             self.session.remove(id);
             self.reselect_after_removal();
-            return;
+            return false;
         }
         self.capture_result = Some(rx);
         self.recording_id = Some(id);
@@ -1024,6 +1026,7 @@ impl PracticeUi {
         // Start transport if paused so the take follows the playhead.
         practice.playing.store(true, Relaxed);
         self.note("Recording…".to_owned());
+        true
     }
 
     fn finalize_capture(&mut self, capture: &CaptureState, practice: &Practice) {
@@ -1492,6 +1495,9 @@ impl PracticeUi {
 
     // ── Browser / gain modal input ──────────────────────────────────────────────
 
+    /// Handle a key while the track browser is open. Returns `true` when the key
+    /// added a backing track to the timeline, so the caller can bring the timeline
+    /// panel forward.
     pub(super) fn handle_browser_key(&mut self, code: KeyCode, practice: &Practice) -> bool {
         if self.library_open {
             self.handle_library_key(code);
@@ -1516,7 +1522,7 @@ impl PracticeUi {
                     let n = self.visible_file_indices().len();
                     self.browser_cursor = (self.browser_cursor + 1).min(n.saturating_sub(1));
                 }
-                KeyCode::Enter => self.import_selected(practice),
+                KeyCode::Enter => return self.import_selected(practice),
                 _ => {}
             }
             return false;
@@ -1542,13 +1548,13 @@ impl PracticeUi {
                     let p = self.path_input.trim().to_owned();
                     if p.is_empty() {
                         self.note("Type a file path first".to_owned());
-                    } else {
-                        self.import_at_playhead(PathBuf::from(p), practice);
-                        self.browser_open = false;
+                        return false;
                     }
-                } else {
-                    self.import_selected(practice);
+                    self.import_at_playhead(PathBuf::from(p), practice);
+                    self.browser_open = false;
+                    return true;
                 }
+                return self.import_selected(practice);
             }
             KeyCode::Backspace if self.field == 1 => {
                 self.path_input.pop();
@@ -1582,8 +1588,9 @@ impl PracticeUi {
             .collect()
     }
 
-    /// Import the highlighted file, honoring the active filter.
-    fn import_selected(&mut self, practice: &Practice) {
+    /// Import the highlighted file, honoring the active filter. Returns `true`
+    /// when a track was added.
+    fn import_selected(&mut self, practice: &Practice) -> bool {
         let path = self
             .visible_file_indices()
             .get(self.browser_cursor)
@@ -1592,7 +1599,9 @@ impl PracticeUi {
             self.import_at_playhead(path, practice);
             self.browser_open = false;
             self.searching = false;
+            return true;
         }
+        false
     }
 
     /// Library settings sub-view: edit the import path and its flags.
@@ -3119,6 +3128,45 @@ mod tests {
         );
         assert!(ui.references_recovery(&wav));
         assert!(!ui.references_recovery(Path::new("/other/take-2.wav")));
+    }
+
+    /// Importing a backing track from the browser reports `true` so the caller can
+    /// focus the timeline; keys that add nothing report `false`.
+    #[test]
+    fn browser_enter_reports_an_added_track() {
+        let practice = Practice::new();
+        let mut ui = PracticeUi::new();
+        ui.files.push(TrackFile {
+            path: PathBuf::from("/tmp/backing.wav"),
+            label: "backing".to_owned(),
+            detail: String::new(),
+        });
+        ui.browser_open = true;
+        let before = ui.session.tracks().len();
+        assert!(ui.handle_browser_key(KeyCode::Enter, &practice));
+        assert_eq!(ui.session.tracks().len(), before + 1, "the track was added");
+        assert!(!ui.browser_open, "the browser closes on import");
+
+        // A key that adds nothing must not request a focus change.
+        ui.browser_open = true;
+        assert!(!ui.handle_browser_key(KeyCode::Esc, &practice));
+    }
+
+    /// Starting a take reports `true` so the caller can focus the timeline; a
+    /// failed arm (no capture writer) reports `false` and adds no row.
+    #[test]
+    fn arming_reports_a_started_take() {
+        let practice = Practice::new();
+        let capture = CaptureState::new();
+
+        let mut ui = PracticeUi::new();
+        assert!(!ui.arm(&capture, &practice), "no writer → did not start");
+        assert!(ui.session.tracks().is_empty(), "nothing was added");
+
+        let (tx, _rx) = std::sync::mpsc::channel();
+        ui.capture_cmd = Some(tx);
+        assert!(ui.arm(&capture, &practice), "with a writer → started");
+        assert_eq!(ui.session.tracks().len(), 1, "the take row was added");
     }
 
     /// A track whose recovery source vanished (e.g. the recovery row was discarded

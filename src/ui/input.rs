@@ -221,6 +221,14 @@ fn focus_after_hide(
     first_visible_entry(panels, board, order)
 }
 
+/// Put the practice timeline in front: show it if it was hidden and move focus
+/// onto it. Used when a backing track is added or a take starts/loads, so the user
+/// lands on the pane that just changed instead of the panel they came from.
+pub(super) fn focus_practice_timeline(panels: &mut Panels, focus: &mut Option<usize>) {
+    panels.timeline = true;
+    *focus = Some(PRACTICE_TILE);
+}
+
 // `Tab` / `Shift-Tab` cycle the visible panels (see `cycle_panel`).
 // switched with the number keys, so the old global panel walk is gone.
 
@@ -645,6 +653,26 @@ mod tests {
             jump_group(Some(PRACTICE_TILE), &b, &o, -1),
             Some(PRACTICE_TILE)
         );
+    }
+
+    /// Adding a backing track or starting a take brings the timeline forward, even
+    /// when it was hidden.
+    #[test]
+    fn focus_practice_timeline_shows_and_focuses_it() {
+        let mut panels = Panels {
+            amp: true,
+            rig: true,
+            timeline: false,
+        };
+        let mut focus = Some(AMP_START);
+        focus_practice_timeline(&mut panels, &mut focus);
+        assert!(panels.timeline, "the timeline must be shown");
+        assert_eq!(focus, Some(PRACTICE_TILE));
+
+        // Idempotent: focusing it again must not hide it or move focus.
+        focus_practice_timeline(&mut panels, &mut focus);
+        assert!(panels.timeline);
+        assert_eq!(focus, Some(PRACTICE_TILE));
     }
 
     /// `Tab` cycles through the visible panels and wraps at both ends.

@@ -42,9 +42,9 @@ use draw::{
 };
 use input::{
     PanelMemory, add_pedal, amp_choices, cab_choices, cycle_panel, ensure_focus_visible,
-    init_amp_cursor, init_cab_cursor, jump_group, move_selected_stage, nudge, nudge_master,
-    panel_of, press_number, remove_pedal, select_amp, select_cab, step_header, step_knob_in_panel,
-    toggle_pedal, toggle_stage,
+    focus_practice_timeline, init_amp_cursor, init_cab_cursor, jump_group, move_selected_stage,
+    nudge, nudge_master, panel_of, press_number, remove_pedal, select_amp, select_cab, step_header,
+    step_knob_in_panel, toggle_pedal, toggle_stage,
 };
 use practice::{PracticeUi, SaveContext};
 use presets::{
@@ -581,6 +581,8 @@ pub fn run(
                                 );
                                 chain_cursor = ChainStage::Amp;
                                 header_on_master = false;
+                                // A load restores the timeline; land on it.
+                                focus_practice_timeline(&mut panels, &mut focus);
                                 if let Some(ext) = external {
                                     #[cfg(feature = "clap")]
                                     if let Some(spec) = ext.clap {
@@ -982,7 +984,9 @@ pub fn run(
                 }
 
                 if practice_ui.browser_open {
-                    practice_ui.handle_browser_key(key.code, &practice);
+                    if practice_ui.handle_browser_key(key.code, &practice) {
+                        focus_practice_timeline(&mut panels, &mut focus);
+                    }
                     continue;
                 }
 
@@ -1745,7 +1749,9 @@ pub fn run(
                             break;
                         }
                         KeyCode::Char('r') | KeyCode::Char('R') => {
-                            practice_ui.arm_or_stop(&mut engine, &practice, &capture);
+                            if practice_ui.arm_or_stop(&mut engine, &practice, &capture) {
+                                focus_practice_timeline(&mut panels, &mut focus);
+                            }
                         }
                         KeyCode::Char('p') | KeyCode::Char('P') => {
                             preset_open = true;
