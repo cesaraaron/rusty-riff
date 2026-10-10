@@ -518,7 +518,10 @@ pub fn run(
         if !recovery_prompted {
             recovery_prompted = true;
             if !crate::project::list_recovery().is_empty() {
-                session_browser.open();
+                session_browser.open(
+                    practice_ui.session.recovery_dir().as_deref(),
+                    &practice_ui.recovery_in_use(),
+                );
                 session_browser.message =
                     Some("Recoverable takes found — Enter restore · D discard".to_owned());
             }
@@ -559,7 +562,10 @@ pub fn run(
                     UnsavedAction::New => {
                         practice_ui.new_session(&mut engine, &practice, &metronome, &capture);
                         apply_factory_defaults(&params, &mut board, &mut focus, &panels);
-                        session_browser.refresh();
+                        session_browser.refresh(
+                            practice_ui.session.recovery_dir().as_deref(),
+                            &practice_ui.recovery_in_use(),
+                        );
                         sync_revision = true;
                     }
                     UnsavedAction::Load(dir) => {
@@ -1126,7 +1132,10 @@ pub fn run(
                                     .as_deref()
                                     .is_some_and(|m| !m.starts_with("Save failed"));
                                 session_browser.message = msg;
-                                session_browser.refresh();
+                                session_browser.refresh(
+                                    practice_ui.session.recovery_dir().as_deref(),
+                                    &practice_ui.recovery_in_use(),
+                                );
                             } else {
                                 let name = practice_ui.session.name().to_owned();
                                 session_browser.prompt_name(&name);
@@ -1150,7 +1159,10 @@ pub fn run(
                                 .as_deref()
                                 .is_some_and(|m| !m.starts_with("Save failed"));
                             session_browser.message = msg;
-                            session_browser.refresh();
+                            session_browser.refresh(
+                                practice_ui.session.recovery_dir().as_deref(),
+                                &practice_ui.recovery_in_use(),
+                            );
                             session_browser.view_list();
                         }
                         SessionAction::Load(dir) => {
@@ -1172,7 +1184,10 @@ pub fn run(
                                     session_browser.message = Some(format!("Delete failed: {e}"));
                                 }
                             }
-                            session_browser.refresh();
+                            session_browser.refresh(
+                                practice_ui.session.recovery_dir().as_deref(),
+                                &practice_ui.recovery_in_use(),
+                            );
                         }
                         SessionAction::Restore(take) => {
                             practice_ui.restore_recovery(&take);
@@ -1192,7 +1207,10 @@ pub fn run(
                                 session_browser.message =
                                     Some(format!("Discarded {}", take.label()));
                             }
-                            session_browser.refresh();
+                            session_browser.refresh(
+                                practice_ui.session.recovery_dir().as_deref(),
+                                &practice_ui.recovery_in_use(),
+                            );
                         }
                     }
                     continue;
@@ -1666,7 +1684,10 @@ pub fn run(
                             practice_ui.open_browser();
                         }
                         KeyCode::Char('j') | KeyCode::Char('J') => {
-                            session_browser.open();
+                            session_browser.open(
+                                practice_ui.session.recovery_dir().as_deref(),
+                                &practice_ui.recovery_in_use(),
+                            );
                         }
                         KeyCode::Char('e') | KeyCode::Char('E') => {
                             // Timeline export. (Preset export is handled inside the

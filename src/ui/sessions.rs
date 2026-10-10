@@ -1,8 +1,15 @@
 //! Session (project) browser modal: New / Save / Save As / Load / Delete for
 //! portable session folders under `~/.config/rusty-riff/sessions/`, plus
 //! recovery of dry takes abandoned in `~/.config/rusty-riff/recovery/`.
+//!
+//! The recovery section is meant for takes left behind by a crash. A normal exit
+//! saves or discards the running session's takes (which cleans its recovery
+//! folder), so the only folders that survive are crash leftovers. The browser is
+//! told which recovery assets the live session already owns and hides them, so a
+//! take that is simply part of the current session is never offered back.
 
-use std::path::PathBuf;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 
 use crossterm::event::KeyCode;
 use ratatui::{
@@ -64,6 +71,10 @@ pub(super) struct SessionBrowser {
     searching: bool,
     name_input: String,
     pub message: Option<String>,
+    /// The running session's own recovery folder, hidden from the recovery list.
+    live_dir: Option<PathBuf>,
+    /// Recovery WAVs the running session already references, hidden likewise.
+    in_use: HashSet<PathBuf>,
 }
 
 impl SessionBrowser {
@@ -77,11 +88,29 @@ impl SessionBrowser {
             searching: false,
             name_input: String::new(),
             message: None,
+            live_dir: None,
+            in_use: HashSet::new(),
         }
     }
 
+    /// Record which recovery assets belong to the live session so they are not
+    /// listed as crash leftovers. `live_dir` is the session's recovery folder;
+    /// `in_use` is the recovery WAVs its tracks reference.
+    fn set_context(&mut self, live_dir: Option<&Path>, in_use: &HashSet<PathBuf>) {
+        self.live_dir = live_dir.map(Path::to_path_buf);
+        self.in_use = in_use.clone();
+    }
+
+    /// True when `take` must stay hidden: it lives in the live session's recovery
+    /// folder (covers an in-progress recording, whose track has no asset yet) or a
+    /// live-session track already references it (a crash take already restored).
+    fn is_excluded(&self, take: &RecoveryTake) -> bool {
+        self.live_dir.as_deref() == Some(take.dir.as_path()) || self.in_use.contains(&take.wav)
+    }
+
     /// Open the modal, rescanning saved sessions and recoverable takes.
-    pub(super) fn open(&mut self) {
+    pub(super) fn open(&mut self, live_dir: Option<&Path>, in_use: &HashSet<PathBuf>) {
+        self.set_context(live_dir, in_use);
         self.reload();
         self.cursor = 0;
         self.view = View::List;
@@ -93,10 +122,9 @@ impl SessionBrowser {
     }
 
     /// Rebuild the row list from disk, keeping the cursor in range.
-    pub(super) fn refresh(&mut self) {
-        let sessions = project::list_sessions();
-        let recovery = project::list_recovery();
-        self.rows = build_rows(sessions, recovery);
+    pub(super) fn refresh(&mut self, live_dir: Option<&Path>, in_use: &HashSet<PathBuf>) {
+        self.set_context(live_dir, in_use);
+        self.reload();
         let n = self.visible_rows().len();
         self.cursor = self.cursor.min(n.saturating_sub(1));
     }
@@ -133,7 +161,10 @@ impl SessionBrowser {
 
     fn reload(&mut self) {
         let sessions = project::list_sessions();
-        let recovery = project::list_recovery();
+        let recovery = project::list_recovery()
+            .into_iter()
+            .filter(|t| !self.is_excluded(t))
+            .collect();
         self.rows = build_rows(sessions, recovery);
     }
 
@@ -495,5 +526,41 @@ mod tests {
         b.filter = "zzz".into();
         assert!(b.visible_rows().is_empty());
         assert!(b.selected_row().is_none());
+    }
+
+    fn take(dir: &str, stem: &str) -> RecoveryTake {
+        RecoveryTake {
+            wav: PathBuf::from(dir).join(format!("{stem}.wav")),
+            dir: PathBuf::from(dir),
+            meta: project::RecoveryMeta {
+                version: project::RECOVERY_META_VERSION,
+                id: 1,
+                name: stem.to_owned(),
+                start_ticks: 0,
+                project_sample_rate: 48_000,
+                source_sample_rate: 48_000,
+                frames: 0,
+                overflowed: false,
+            },
+        }
+    }
+
+    /// A take in the live session's recovery folder, or one a live-session track
+    /// already references, is hidden; a genuine crash orphan is shown.
+    #[test]
+    fn recovery_hides_the_live_sessions_own_takes() {
+        let mut b = SessionBrowser::new();
+        let live = take("/rec/111", "take-1");
+        let orphan = take("/rec/222", "take-2");
+
+        b.set_context(Some(Path::new("/rec/111")), &HashSet::new());
+        assert!(b.is_excluded(&live), "a take in the live folder is hidden");
+        assert!(!b.is_excluded(&orphan), "a crash orphan is listed");
+
+        // A crash take already restored into the session is hidden too.
+        let mut in_use = HashSet::new();
+        in_use.insert(orphan.wav.clone());
+        b.set_context(Some(Path::new("/rec/111")), &in_use);
+        assert!(b.is_excluded(&orphan), "a restored take is hidden");
     }
 }

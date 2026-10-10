@@ -1370,9 +1370,6 @@ impl PracticeUi {
         Ok(Some(external))
     }
 
-    /// Bring an abandoned recovery take into the current session as a new raw-take
-    /// row, decoding it off-thread. It is not deleted until a session save
-    /// incorporates it (verified incorporation).
     /// True when a session track already plays this recovery WAV, so it must not
     /// be restored twice or discarded out from under the track that uses it.
     pub(super) fn references_recovery(&self, wav: &Path) -> bool {
@@ -1382,6 +1379,22 @@ impl PracticeUi {
             .any(|t| t.asset.as_ref().is_some_and(|a| a.path == wav))
     }
 
+    /// Recovery WAVs the running session already owns -- live takes plus takes
+    /// restored from a crash. The session browser hides these so they are not
+    /// offered back as if they were still crash leftovers.
+    pub(super) fn recovery_in_use(&self) -> std::collections::HashSet<PathBuf> {
+        self.session
+            .tracks()
+            .iter()
+            .filter_map(|t| t.asset.as_ref())
+            .map(|a| a.path.clone())
+            .filter(|p| project::is_recovery_asset(p))
+            .collect()
+    }
+
+    /// Bring an abandoned recovery take into the current session as a new raw-take
+    /// row, decoding it off-thread. It is not deleted until a session save
+    /// incorporates it (verified incorporation).
     pub(super) fn restore_recovery(&mut self, take: &project::RecoveryTake) {
         if self.references_recovery(&take.wav) {
             self.note("That take is already in the session".to_owned());
